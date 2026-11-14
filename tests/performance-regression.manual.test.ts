@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
-  conversationSnapshotsSchema,
   localConversationSaveBatchSchema,
   type ConversationSnapshot,
   type LocalConversationHeader,
@@ -93,15 +92,17 @@ describe.skipIf(!runPerformanceBenchmarks)(
       const database = new AssistantDatabase(databasePath)
       database.initialize('C:\\Workspace')
       const project = database.listProjects()[0]!
-      const conversations = conversationSnapshotsSchema.parse(
-        createConversations(project.id)
-      )
+      const conversations = createConversations(project.id)
+      const fullBatch: LocalConversationSaveBatch =
+        localConversationSaveBatchSchema.parse(conversations.map(conversation => ({
+          header: localHeader(conversation), messages: conversation.messages
+        })))
 
       const initialReplaceMs = measure(() => {
-        database.replaceConversations(conversations)
+        database.saveLocalConversations(fullBatch)
       })
       const unchangedReplaceMs = measure(() => {
-        database.replaceConversations(conversations)
+        database.saveLocalConversations(fullBatch)
       })
       const updated = conversations.map((conversation, index) =>
         index === 0
@@ -117,7 +118,9 @@ describe.skipIf(!runPerformanceBenchmarks)(
           : conversation
       )
       const legacySingleConversationUpdateMs = measure(() => {
-        database.replaceConversations(updated)
+        database.saveLocalConversations(updated.map(conversation => ({
+          header: localHeader(conversation), messages: conversation.messages
+        })))
       })
       const incrementallyUpdated = {
         ...updated[0]!,

@@ -385,7 +385,7 @@ export type ObsidianConnectionTestResult = z.infer<typeof obsidianConnectionTest
 
 export const capabilitySnapshotSchema = z
   .object({
-    skills: z.array(skillSummarySchema).max(256),
+    skills: z.array(skillSummarySchema),
     imageGeneration: z
       .object({
         modelProfiles: z.array(z.object({
@@ -401,7 +401,7 @@ export const capabilitySnapshotSchema = z
       .max(6)
       .optional(),
     obsidian: obsidianSettingsSchema.default({ vaultPath: '' }),
-    mcpServers: z.array(mcpServerSummarySchema).max(64),
+    mcpServers: z.array(mcpServerSummarySchema),
     webSearch: webSearchCapabilitySchema.optional(),
     computerCapabilities: z
       .array(computerCapabilityConfigSummarySchema)

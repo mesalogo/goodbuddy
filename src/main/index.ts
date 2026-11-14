@@ -70,7 +70,7 @@ import {
   showWindow,
   toggleWindow
 } from './window'
-import { createTrayIcon } from './tray-icon'
+import { createTrayIcon, followTraySystemTheme } from './tray-icon'
 import { resolveBundledRuntimePaths } from './agent/bundled-runtimes'
 import type { ContinueHostLauncher } from './agent/continue-host-adapter'
 import { cleanupRuntimeTemporaryDirectories, runtimeTemporaryRoot } from './runtime-temporary-directory'
@@ -532,6 +532,8 @@ const launchWechatSidecar: WechatSidecarLauncher = () => {
 
 function buildTray(): Tray {
   const nextTray = new Tray(createTrayIcon())
+  const stopFollowingTheme = followTraySystemTheme(nextTray)
+  app.once('will-quit', stopFollowingTheme)
   nextTray.setToolTip('GoodBuddy')
   nextTray.setContextMenu(
     Menu.buildFromTemplate([

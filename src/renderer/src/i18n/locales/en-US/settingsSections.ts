@@ -540,10 +540,9 @@ export const settingsSections = {
       routingPlaceholder:
         'For example: code review, TypeScript, performance analysis',
       routingHelp:
-        'Separate keywords with commas or line breaks. They are normalized and deduplicated when saved. Up to 32 keywords, each 2–48 characters.'
+        'Separate keywords with commas or line breaks. They are normalized and deduplicated when saved. Each keyword must be 2–48 characters.'
     },
     validation: {
-      tooManyKeywords: 'Use no more than 32 routing keywords.',
       invalidKeyword: 'Keyword “{{keyword}}” must be 2–48 characters.'
     },
     errors: {

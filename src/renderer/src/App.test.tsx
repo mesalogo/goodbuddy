@@ -595,7 +595,6 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     listSummaries: vi.fn(async () => api.conversations.list()),
     get: vi.fn(),
     search: vi.fn(async () => []),
-    replace: vi.fn(async () => {}),
     saveLocal: vi.fn(async () => {}),
     setPinned: vi.fn(async () => {}),
     setStoryGraph: vi.fn(async () => {}),
@@ -677,6 +676,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
   },
   tasks: {
     list: vi.fn(async () => []),
+    listPage: vi.fn(async () => ({ tasks: [] })),
     getExecutionStats: vi.fn(async () => ({
       durationMs: 0, runningCount: 0, incomplete: false,
       asOf: Date.now(), taskDurations: [],
@@ -719,6 +719,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
   },
   artifacts: {
     list: vi.fn(async () => []),
+    listPage: vi.fn(async () => ({ artifacts: [] })),
     get: vi.fn(async () => {
       throw new Error("Artifact not found");
     }),
@@ -1340,9 +1341,6 @@ describe("App", () => {
         snapshot.title.toLocaleLowerCase().includes(query) ||
         snapshot.messages.some(message => message.content.toLocaleLowerCase().includes(query))
       ).map(snapshot => snapshot.id));
-    vi.mocked(api.conversations.replace).mockReset().mockImplementation(async snapshots => {
-      snapshots.forEach(snapshot => conversationFixtures.set(snapshot.id, snapshot));
-    });
     vi.mocked(api.conversations.saveLocal).mockReset().mockImplementation(async batch => {
       for (const { header, messages } of batch) {
         const existing = conversationFixtures.get(header.id);
@@ -2106,7 +2104,6 @@ describe("App", () => {
     expect(await screen.findByText("Rare searchable history")).toBeInTheDocument();
     expect(api.conversations.get).toHaveBeenNthCalledWith(1, second.id);
     expect(api.conversations.get).toHaveBeenNthCalledWith(2, second.id);
-    expect(api.conversations.replace).not.toHaveBeenCalled();
   });
 
   it("copies a complete unopened conversation instead of exporting its empty summary", async () => {
@@ -3245,6 +3242,48 @@ describe("App", () => {
       }),
     ).toBe(heading);
     expect(route).not.toHaveAttribute("hidden");
+  });
+
+  it("shows the conversation column only on the chat page in the workbench layout", async () => {
+    localStorage.setItem("goodbuddy.interface-layout", "workbench");
+    try {
+      const { container } = render(<App />);
+      const sidebar = container.querySelector<HTMLElement>(".sidebar")!;
+      const frame = container.querySelector<HTMLElement>(".app-frame")!;
+      expect(sidebar).not.toHaveClass("sidebar--closed");
+      expect(screen.getByRole("button", { name: "切换侧栏" })).toHaveAttribute("aria-expanded", "true");
+
+      fireEvent.click(await screen.findByRole("button", { name: "知识库" }));
+      await screen.findByRole("heading", { level: 1, name: "知识库" });
+      expect(frame).toHaveAttribute("data-view", "knowledge");
+      expect(sidebar).toHaveClass("sidebar--closed");
+      expect(sidebar).toHaveAttribute("inert");
+      expect(screen.queryByRole("button", { name: "切换侧栏" })).not.toBeInTheDocument();
+      expect(container.querySelector(".primary-sidebar-resize-handle")).toBeNull();
+
+      // The column was hidden, not closed: chat restores it with its state.
+      fireEvent.click(screen.getByRole("button", { name: "对话" }));
+      expect(frame).toHaveAttribute("data-view", "chat");
+      expect(sidebar).not.toHaveClass("sidebar--closed");
+
+      // A column the user closed on chat stays closed after visiting a page.
+      fireEvent.click(screen.getByRole("button", { name: "切换侧栏" }));
+      expect(sidebar).toHaveClass("sidebar--closed");
+      fireEvent.click(screen.getByRole("button", { name: "知识库" }));
+      fireEvent.click(screen.getByRole("button", { name: "对话" }));
+      expect(sidebar).toHaveClass("sidebar--closed");
+    } finally {
+      localStorage.removeItem("goodbuddy.interface-layout");
+    }
+  });
+
+  it("keeps the conversation column beside other pages in the classic layout", async () => {
+    const { container } = render(<App />);
+    const sidebar = container.querySelector<HTMLElement>(".sidebar")!;
+    fireEvent.click(await screen.findByRole("button", { name: "知识库" }));
+    await screen.findByRole("heading", { level: 1, name: "知识库" });
+    expect(sidebar).not.toHaveClass("sidebar--closed");
+    expect(screen.getByRole("button", { name: "切换侧栏" })).toBeInTheDocument();
   });
 
   it("isolates hidden Activity renders from composer and streaming updates", async () => {
@@ -6961,7 +7000,8 @@ describe("App", () => {
         type: "done",
       });
     });
-    expect(await screen.findByText("查看 20 条证据引用")).toBeInTheDocument();
+    // Every distinct reference is kept; none are trimmed to a display cap.
+    expect(await screen.findByText("查看 125 条证据引用")).toBeInTheDocument();
     vi.mocked(api.knowledge.getReferenceContext).mockResolvedValueOnce({
       knowledgeBaseId: libraryId,
       documentId: "document-context",
@@ -6974,7 +7014,7 @@ describe("App", () => {
       contextChunkIds: ["chunk-context"],
       truncated: false,
     });
-    fireEvent.click(screen.getByText("查看 20 条证据引用"));
+    fireEvent.click(screen.getByText("查看 125 条证据引用"));
     fireEvent.click(screen.getAllByRole("button", { name: "查看上下文" })[0]!);
     expect(
       await screen.findByRole("dialog", { name: "引用上下文" }),
@@ -7000,8 +7040,8 @@ describe("App", () => {
           .filter((message) => message.role === "assistant")
           .slice()
           .reverse()
-          .find((message) => message.sourceReferences?.length === 20);
-        expect(persisted?.sourceReferences).toHaveLength(20);
+          .find((message) => message.sourceReferences?.length === 125);
+        expect(persisted?.sourceReferences).toHaveLength(125);
         expect(persisted?.sources).toBeUndefined();
       },
       { timeout: 2_000 },
@@ -7816,7 +7856,7 @@ describe("App", () => {
     expect(api.context.selectFiles).not.toHaveBeenCalled();
   });
 
-  it("shows file paste failures without clearing the draft and rejects oversized batches", async () => {
+  it("shows file paste failures without clearing the draft and imports large batches", async () => {
     render(<App />);
     const input = await screen.findByLabelText("向 GoodBuddy 提问");
     fireEvent.change(input, { target: { value: "Keep this draft" } });
@@ -7831,9 +7871,12 @@ describe("App", () => {
     expect(input).not.toHaveAttribute("aria-invalid", "true");
     expect(input).toHaveValue("Keep this draft");
     await waitFor(() => expect(screen.getByLabelText("添加附件")).toBeEnabled());
+    vi.mocked(api.context.getFilePath).mockReturnValue("C:\\archive.zip");
     fireEvent.paste(input, { clipboardData: { files: Array(9).fill(file) } });
-    expect(api.context.importFiles).toHaveBeenCalledOnce();
-    expect(input).toHaveAttribute("aria-invalid", "true");
+    await waitFor(() => expect(api.context.importFiles).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.context.importFiles).mock.calls[1]![0]).toHaveLength(9);
+    await waitFor(() => expect(screen.getByLabelText("添加附件")).toBeEnabled());
+    vi.mocked(api.context.getFilePath).mockReturnValue("");
     fireEvent.paste(input, { clipboardData: { files: [file] } });
     expect(await screen.findByRole("alert", {
       name: "无法读取此剪贴板文件，请保存到本地后通过附件按钮添加",
@@ -11778,12 +11821,17 @@ describe("App", () => {
     expect(
       screen.getByText("本次调用 9.0K · 压缩线 12.0K"),
     ).toBeInTheDocument();
+    const { messages: legacyMessages, ...legacyHeader } = legacyConversation;
     await waitFor(() =>
-      expect(api.conversations.replace).toHaveBeenCalledWith([
-        expect.objectContaining({
-          ...legacyConversation,
+      expect(api.conversations.saveLocal).toHaveBeenCalledWith(expect.arrayContaining([
+        {
+          header: expect.objectContaining({
+            ...legacyHeader,
+            contextMetrics: normalizedContextMetrics,
+            projectId,
+          }),
           messages: [expect.objectContaining({
-            ...legacyConversation.messages[0],
+            ...legacyMessages[0],
             subagents: [{
               childTaskId: '00000000-0000-4000-8000-000000000463',
               actor: { kind: 'direct-model', label: '编程 Subagent' },
@@ -11791,13 +11839,63 @@ describe("App", () => {
               output: '/ask Keep Execute and workMode in user content',
             }],
           })],
-          contextMetrics: normalizedContextMetrics,
-          projectId,
-        }),
-      ]),
+        },
+      ])),
     );
-    expect(vi.mocked(api.conversations.replace).mock.calls[0]![0][0]).not.toHaveProperty('workMode');
-    expect(api.conversations.saveLocal).not.toHaveBeenCalled();
+    const migrated = vi.mocked(api.conversations.saveLocal).mock.calls.flatMap(([batch]) => batch)
+      .find(save => save.header.id === legacyConversation.id)!;
+    expect(migrated.header).not.toHaveProperty('workMode');
+    await waitFor(() => expect(localStorage.getItem("goodbuddy.conversations.v1")).toBeNull());
+    expect(localStorage.getItem("goodbuddy.conversations.v1.unmigrated-backup")).toBeNull();
+  });
+
+  it("migrates every legacy conversation beyond 100 without dropping over-cap fields", async () => {
+    const id = (prefix: number, index: number) =>
+      `00000000-0000-4000-${8000 + prefix}-${String(index).padStart(12, "0")}`;
+    const legacyConversations = Array.from({ length: 150 }, (_, index) => ({
+      id: id(0, index),
+      title: `旧会话 ${index}`,
+      updatedAt: 1_775_000_000_000 + index,
+      messages: [{
+        id: id(1, index),
+        role: "assistant" as const,
+        content: `旧消息 ${index}`,
+        createdAt: 1_775_000_000_000 + index,
+        state: "complete" as const,
+        artifactIds: Array.from({ length: 12 }, (_, artifact) => id(2, index * 100 + artifact)),
+        contextCompressions: Array.from({ length: 3 }, () => ({
+          state: "completed" as const, estimatedBeforeTokens: 10,
+        })),
+      }],
+    }));
+    localStorage.setItem("goodbuddy.conversations.v1", JSON.stringify(legacyConversations));
+    render(<App />);
+
+    await waitFor(() => expect(localStorage.getItem("goodbuddy.conversations.v1")).toBeNull());
+    const saved = vi.mocked(api.conversations.saveLocal).mock.calls.flatMap(([batch]) => batch);
+    const savedIds = new Set(saved.map(save => save.header.id));
+    expect(legacyConversations.every(conversation => savedIds.has(conversation.id))).toBe(true);
+    const last = saved.find(save => save.header.id === legacyConversations[149]!.id)!;
+    expect(last.messages[0]!.artifactIds).toHaveLength(12);
+    expect(last.messages[0]!.contextCompressions).toHaveLength(3);
+    expect(localStorage.getItem("goodbuddy.conversations.v1.unmigrated-backup")).toBeNull();
+  });
+
+  it("keeps a backup of legacy conversations that could not be migrated", async () => {
+    const valid = {
+      id: "00000000-0000-4000-8000-000000000481",
+      title: "可迁移旧会话",
+      updatedAt: 1_775_000_000_000,
+      messages: [],
+    };
+    const payload = JSON.stringify([valid, { id: 7, title: "损坏的旧会话" }]);
+    localStorage.setItem("goodbuddy.conversations.v1", payload);
+    render(<App />);
+
+    await waitFor(() => expect(localStorage.getItem("goodbuddy.conversations.v1")).toBeNull());
+    expect(localStorage.getItem("goodbuddy.conversations.v1.unmigrated-backup")).toBe(payload);
+    expect(vi.mocked(api.conversations.saveLocal).mock.calls.flatMap(([batch]) => batch)
+      .some(save => save.header.id === valid.id)).toBe(true);
   });
 
   it("does not let remote rows displace legacy local conversations during migration", async () => {
@@ -11837,7 +11935,6 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => expect(api.conversations.saveLocal).toHaveBeenCalled());
-    expect(api.conversations.replace).not.toHaveBeenCalled();
     const migrated =
       vi.mocked(api.conversations.saveLocal).mock.calls[0]?.[0] ?? [];
     expect(migrated.map((conversation) => conversation.header.id)).toEqual(
@@ -11898,7 +11995,6 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/本次调用 9\.0K/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/压缩线/u)).not.toBeInTheDocument();
-    expect(api.conversations.replace).not.toHaveBeenCalled();
     expect(api.conversations.saveLocal).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText("向 GoodBuddy 提问"), {
@@ -11967,7 +12063,6 @@ describe("App", () => {
     expect(within(runtimeMenuColumns().menu).getByRole("status")).toHaveTextContent(
       "所选模型连接已删除，已回退到 默认模型",
     );
-    expect(api.conversations.replace).not.toHaveBeenCalled();
     expect(api.conversations.saveLocal).not.toHaveBeenCalled();
   });
 
@@ -15244,14 +15339,15 @@ describe("App", () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     const dialog = screen.getByRole('dialog', { name: '应用中心' })
     expect(within(dialog).queryByRole('button', { name: /上移|下移/u })).not.toBeInTheDocument()
-    const pin = within(dialog).getByRole('switch', { name: '本机推理监控常驻左侧菜单' })
+    expect(within(dialog).queryByRole('switch', { name: '本机推理监控常驻左侧菜单' })).not.toBeInTheDocument()
+    const pin = within(dialog).getByRole('switch', { name: '主机管理常驻左侧菜单' })
     await waitFor(() => expect(pin).toBeEnabled())
     fireEvent.click(pin)
-    await waitFor(() => expect(within(dialog).getByRole('switch', { name: '本机推理监控常驻左侧菜单' })).toBeChecked())
+    await waitFor(() => expect(within(dialog).getByRole('switch', { name: '主机管理常驻左侧菜单' })).toBeChecked())
     fireEvent.click(within(dialog).getByRole('switch', { name: '知识库常驻左侧菜单' }))
     await waitFor(() => expect(within(dialog).getByRole('switch', { name: '知识库常驻左侧菜单' })).not.toBeChecked())
     fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
-    expect(nav()).toEqual(['对话', '魔法笔记', '监督者', '本机推理监控', '运行记录'])
+    expect(nav()).toEqual(['对话', '魔法笔记', '监督者', '主机管理', '运行记录'])
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
     expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['魔法笔记', '知识库', '监督者', '主机管理', '本机推理监控', '管理应用'])
   })
@@ -15324,33 +15420,33 @@ describe("App", () => {
       applicationNavigation: {
         ...original.applicationNavigation,
         order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'] as const,
-        pinned: { ...original.applicationNavigation.pinned, 'local-inference': true },
+        pinned: { ...original.applicationNavigation.pinned, 'local-inference': true, 'remote-hosts': true },
       },
     }
     vi.mocked(updates.getSettings).mockResolvedValue({ ...external, applicationNavigation: { ...external.applicationNavigation, order: [...external.applicationNavigation.order] } })
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-    fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '主机管理 应用设置' }))
     const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
     expect(pin).toBeDisabled()
     await waitFor(() => expect(pin).not.toBeDisabled())
     // The saved order is ignored: pinned apps follow applicationDisplayOrder.
     const nav = screen.getByRole('navigation', { name: '主导航' })
     expect(within(nav).getAllByRole('button').map(button => button.textContent)).toEqual([
-      '对话', '知识库', '监督者', '本机推理监控', '运行记录',
+      '对话', '知识库', '监督者', '主机管理', '运行记录',
     ])
     fireEvent.click(pin)
     await waitFor(() => expect(updates.updateSettings).toHaveBeenCalledWith({
       applicationNavigation: {
         order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'],
-        pinned: { ...original.applicationNavigation.pinned, 'local-inference': false },
+        pinned: { ...original.applicationNavigation.pinned, 'local-inference': true, 'remote-hosts': false },
       },
     }))
   })
 
   it.each(['read', 'mutation'] as const)('keeps a settings event authoritative over a stale %s reply', async (operation) => {
     const updates = api.updates!
-     await updates.updateSettings({ applicationNavigation: { ...defaultTestApplicationNavigation, pinned: { ...defaultTestApplicationNavigation.pinned, 'local-inference': true } } })
+     await updates.updateSettings({ applicationNavigation: { ...defaultTestApplicationNavigation, pinned: { ...defaultTestApplicationNavigation.pinned, 'remote-hosts': true } } })
     const original = await updates.getSettings()
     let changed!: Parameters<typeof updates.onSettingsChanged>[0]
     vi.mocked(updates.onSettingsChanged).mockImplementation(listener => {
@@ -15363,7 +15459,7 @@ describe("App", () => {
     if (operation === 'read') vi.mocked(updates.getSettings).mockReturnValueOnce(reply.promise)
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-    fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '主机管理 应用设置' }))
     const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
     if (operation === 'mutation') {
       await waitFor(() => expect(pin).not.toBeDisabled())
@@ -15374,7 +15470,7 @@ describe("App", () => {
       ...original,
       applicationNavigation: {
         order: ['local-inference', 'heartbeat', 'magic-notes', 'knowledge'],
-        pinned: { ...original.applicationNavigation.pinned, 'local-inference': false },
+        pinned: { ...original.applicationNavigation.pinned, 'remote-hosts': false },
       },
     }
     await act(async () => changed(external))
@@ -15382,11 +15478,11 @@ describe("App", () => {
     await act(async () => reply.resolve(original))
     await waitFor(() => expect(pin).not.toBeDisabled())
     expect(pin).not.toBeChecked()
-    expect(within(screen.getByRole('navigation', { name: '主导航' })).queryByRole('button', { name: '本机推理监控' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('navigation', { name: '主导航' })).queryByRole('button', { name: '主机管理' })).not.toBeInTheDocument()
     expect(within(screen.getByRole('navigation', { name: '主导航' })).getByRole('button', { name: '监督者' })).toBeInTheDocument()
     fireEvent.click(pin)
     expect(updates.updateSettings).toHaveBeenLastCalledWith({
-      applicationNavigation: { ...external.applicationNavigation, pinned: { ...external.applicationNavigation.pinned, 'local-inference': true } },
+      applicationNavigation: { ...external.applicationNavigation, pinned: { ...external.applicationNavigation.pinned, 'remote-hosts': true } },
     })
   })
 
@@ -15679,25 +15775,19 @@ describe("App", () => {
     expect(api.heartbeats.update).not.toHaveBeenCalled()
   })
 
-  it.each(['sidebar', 'menu', 'center'])('opens local inference from %s as a modal preserving the workspace', async (entry) => {
-     if (entry === 'sidebar') await api.updates!.updateSettings({ applicationNavigation: { ...defaultTestApplicationNavigation, pinned: { ...defaultTestApplicationNavigation.pinned, 'local-inference': true } } })
+  it.each(['menu', 'center'])('opens local inference from %s as a modal preserving the workspace', async (entry) => {
     render(<App />)
     await waitFor(() => expect(api.updates!.getSettings).toHaveBeenCalled())
-    const nav = entry === 'sidebar' ? await screen.findByRole('button', { name: '本机推理监控' }) : screen.getByRole('button', { name: '应用' })
-    if (entry !== 'sidebar') expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('button').map(button => button.textContent)).toEqual(['对话', '知识库', '监督者', '运行记录'])
+    const nav = screen.getByRole('button', { name: '应用' })
+    expect(within(screen.getByRole('navigation', { name: '主导航' })).getAllByRole('button').map(button => button.textContent)).toEqual(['对话', '知识库', '监督者', '运行记录'])
     fireEvent.click(screen.getByRole('button', { name: '知识库' }))
     const workspace = await screen.findByLabelText('知识工作区')
-    if (entry === 'sidebar') {
-      nav.focus()
-      fireEvent.click(nav)
-    } else {
-      fireEvent.click(screen.getByRole('button', { name: '应用' }))
-      if (entry === 'menu') fireEvent.click(screen.getByRole('menuitem', { name: '本机推理监控' }))
-      else {
-        fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-        const item = screen.getByRole('button', { name: '本机推理监控 应用设置' }).closest('article')!
-        fireEvent.click(within(item).getByRole('button', { name: '打开本机推理监控' }))
-      }
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    if (entry === 'menu') fireEvent.click(screen.getByRole('menuitem', { name: '本机推理监控' }))
+    else {
+      fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
+      const item = screen.getByRole('button', { name: '本机推理监控 应用设置' }).closest('article')!
+      fireEvent.click(within(item).getByRole('button', { name: '打开本机推理监控' }))
     }
     const dialog = screen.getByRole('dialog', { name: '本机推理监控' })
     expect(workspace).toBeInTheDocument()
@@ -15710,7 +15800,20 @@ describe("App", () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByLabelText('知识工作区')).toBe(workspace)
     expect(workspace.closest('.app-shell')).toHaveProperty('inert', false)
-    expect(entry === 'sidebar' ? nav : screen.getByRole('button', { name: '应用' })).toHaveFocus()
+    expect(nav).toHaveFocus()
+  })
+
+  it('never shows local inference in the left navigation, even with a saved pin', async () => {
+    await api.updates!.updateSettings({ applicationNavigation: { ...defaultTestApplicationNavigation, pinned: { ...defaultTestApplicationNavigation.pinned, 'local-inference': true } } })
+    render(<App />)
+    await screen.findByRole('button', { name: '监督者' })
+    expect(within(screen.getByRole('navigation', { name: '主导航' })).queryByRole('button', { name: '本机推理监控' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    expect(screen.getByRole('menuitem', { name: '本机推理监控' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
+    fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
+    await waitFor(() => expect(screen.getByRole('switch', { name: '启用应用' })).not.toBeDisabled())
+    expect(screen.queryByRole('switch', { name: '常驻左侧菜单' })).not.toBeInTheDocument()
   })
 
   it('saves Supervisor timeouts and concurrency through application settings and restores them on reopen', async () => {
@@ -15790,21 +15893,21 @@ describe("App", () => {
   })
 
   it('opens an unpinned app and recovers a disabled current page without remounting it', async () => {
-     await api.updates!.updateSettings({ applicationNavigation: { ...defaultTestApplicationNavigation, pinned: { ...defaultTestApplicationNavigation.pinned, 'local-inference': true } } })
+     await api.updates!.updateSettings({ applicationNavigation: { ...defaultTestApplicationNavigation, pinned: { ...defaultTestApplicationNavigation.pinned, 'remote-hosts': true } } })
     let changed!: Parameters<NonNullable<typeof api.updates>['onSettingsChanged']>[0]
     vi.mocked(api.updates!.onSettingsChanged).mockImplementation(listener => {
       changed = listener
       return vi.fn()
     })
     render(<App />)
-    const inferenceNav = await screen.findByRole('button', { name: '本机推理监控' })
+    const hostsNav = await screen.findByRole('button', { name: '主机管理' })
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
-    fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '主机管理 应用设置' }))
     const pin = screen.getByRole('switch', { name: '常驻左侧菜单' })
     await waitFor(() => expect(pin).not.toBeDisabled())
     fireEvent.click(pin)
-    await waitFor(() => expect(inferenceNav).not.toBeInTheDocument())
+    await waitFor(() => expect(hostsNav).not.toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: '关闭应用中心' }))
     const trigger = screen.getByRole('button', { name: '应用', expanded: false })
     expect(trigger).toHaveFocus()
@@ -15824,7 +15927,7 @@ describe("App", () => {
     await act(async () => changed(await api.updates!.updateSettings({ localInferenceEnabled: true })))
     expect(screen.getByRole('region', { name: '本机推理服务' })).toBe(workspace)
     expect(workspace.closest('.local-inference-workspace')).not.toHaveAttribute('hidden')
-    expect((await api.updates!.getSettings()).applicationNavigation.pinned['local-inference']).toBe(false)
+    expect((await api.updates!.getSettings()).applicationNavigation.pinned['remote-hosts']).toBe(false)
     await act(async () => changed(await api.updates!.updateSettings({ localInferenceEnabled: false })))
     fireEvent.click(screen.getByRole('button', { name: '关闭本机推理监控' }))
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
@@ -15845,7 +15948,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '管理应用' }))
     const updates = api.updates!
-    fireEvent.click(screen.getByRole('button', { name: '本机推理监控 应用设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '主机管理 应用设置' }))
     await waitFor(() => expect(screen.getByRole('switch', { name: '常驻左侧菜单' })).not.toBeDisabled())
     vi.mocked(updates.updateSettings).mockRejectedValueOnce(new Error('response lost'))
     vi.mocked(updates.getSettings).mockRejectedValueOnce(new Error('read unavailable'))

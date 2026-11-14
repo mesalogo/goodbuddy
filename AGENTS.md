@@ -348,6 +348,12 @@ npm run typecheck
 npm run lint
 ```
 
+`npm test` runs all three Vitest projects (`unit`, `integration`, `electron`).
+While iterating, `npm run test:fast` skips the real-Electron UI tests; run
+`npm run test:electron` before finishing any change that touches renderer UI,
+overlays/windows, or the Main/Preload paths they exercise. See
+[BUILD.md](./BUILD.md) for the project split.
+
 Run `npm run build` for production build changes during development, but not
 solely as a release-preparation step; release candidates use the main-branch CI
 production build before tagging. Use `npm run portable` only when a current

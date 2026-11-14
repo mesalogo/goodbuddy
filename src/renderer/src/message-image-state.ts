@@ -29,7 +29,7 @@ export function mergeMessageImageState(
     ...(base === local ? local?.artifactIds ?? [] : []),
     ...(persisted.artifactIds ?? []),
     ...imageOperations.flatMap(operation => operation.artifactIds)
-  ])].slice(-8)
+  ])]
   if (sameItems(base.imageOperations, imageOperations) &&
     sameItems(base.imageSourceArtifactIds, imageSourceArtifactIds) &&
     sameItems(base.artifactIds, artifactIds)) return base

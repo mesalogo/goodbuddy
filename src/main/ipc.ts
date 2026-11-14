@@ -27,7 +27,6 @@ import { randomUUID } from 'node:crypto'
 import { basename, extname } from 'node:path'
 import { z } from 'zod'
 import { documentResourceInputSchema } from '../shared/document-result-contracts'
-import { maximumAttachmentsPerMessage } from '../shared/attachment-limits'
 import { conversationMessageOutputHandles, conversationMessageResourceIds } from '../shared/conversation-output'
 import { readConversationOutput } from './agent/conversation-output'
 import {
@@ -142,10 +141,11 @@ import {
   activityHistoryPageRequestSchema,
   activityHistoryReconcileRequestSchema,
   activityHistorySummaryRequestSchema,
+  artifactListPageRequestSchema,
   assistantIdSchema,
   executionStatsInputSchema,
+  taskListPageRequestSchema,
   conversationBranchInputSchema,
-  conversationSnapshotsSchema,
   conversationListRequestSchema,
   conversationSearchRequestSchema,
   conversationSetPinnedSchema,
@@ -6132,7 +6132,7 @@ export function registerIpcHandlers(
   })
   registerHandler(ipcChannels.contextAddResultImages, (event, input: unknown) => {
     assertTrustedSender(event, window)
-    const { conversationId, resultId, imageIds } = z.object({ conversationId: z.string().uuid(), resultId: z.string().uuid(), imageIds: z.array(z.string().uuid()).min(1).max(maximumAttachmentsPerMessage) }).strict().parse(input)
+    const { conversationId, resultId, imageIds } = z.object({ conversationId: z.string().uuid(), resultId: z.string().uuid(), imageIds: z.array(z.string().uuid()).min(1) }).strict().parse(input)
     const operation = selectedImageOperation.then(async () => {
       const conversation = await assistantDatabase.getConversation(conversationId)
       if (conversation.remote) throw new Error('请选择可编辑的本地或托管 SSH 会话')
@@ -6148,7 +6148,7 @@ export function registerIpcHandlers(
   })
   registerHandler(ipcChannels.contextSaveDraft, async (event, input: unknown) => {
     assertTrustedSender(event, window)
-    const { conversationId, ids } = z.object({ conversationId: z.string().uuid(), ids: z.array(z.string().uuid()).max(maximumAttachmentsPerMessage) }).strict().parse(input)
+    const { conversationId, ids } = z.object({ conversationId: z.string().uuid(), ids: z.array(z.string().uuid()) }).strict().parse(input)
     await contextManager.saveDraft(conversationId, ids)
     window.webContents.send(ipcChannels.contextDraftChanged, conversationId, await contextManager.getDraft(conversationId))
   })
@@ -6494,16 +6494,6 @@ export function registerIpcHandlers(
     const { query } = conversationSearchRequestSchema.parse(input)
     return await assistantDatabase.searchConversations(query)
   })
-
-  registerHandler(
-    ipcChannels.conversationsReplace,
-    async (event, input: unknown) => {
-      assertTrustedSender(event, window)
-      await assistantDatabase.replaceConversations(
-        conversationSnapshotsSchema.parse(input)
-      )
-    }
-  )
 
   registerHandler(
     ipcChannels.conversationsSaveLocal,
@@ -7011,6 +7001,10 @@ export function registerIpcHandlers(
     assertTrustedSender(event, window)
     return await assistantDatabase.listTasks()
   })
+  registerHandler(ipcChannels.tasksListPage, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return await assistantDatabase.listTaskPage(taskListPageRequestSchema.parse(input ?? {}))
+  })
   registerHandler(ipcChannels.tasksExecutionStats, async (event, input: unknown) => {
     assertTrustedSender(event, window)
     return await assistantDatabase.getExecutionStats(executionStatsInputSchema.parse(input))
@@ -7070,6 +7064,11 @@ export function registerIpcHandlers(
     return await assistantDatabase.listArtifacts(projectId)
   })
 
+  registerHandler(ipcChannels.artifactsListPage, async (event, input: unknown) => {
+    assertTrustedSender(event, window)
+    return await assistantDatabase.listArtifactPage(artifactListPageRequestSchema.parse(input ?? {}))
+  })
+
   registerHandler(ipcChannels.artifactsGet, async (event, input: unknown) => {
     assertTrustedSender(event, window)
     return await assistantDatabase.getArtifact(assistantIdSchema.parse(input))
@@ -7106,7 +7105,7 @@ export function registerIpcHandlers(
         return []
       }
       const artifacts: AssistantArtifact[] = []
-      for (const filePath of result.filePaths.slice(0, 10)) {
+      for (const filePath of result.filePaths) {
         const canonicalPath = await realpath(filePath)
         const extension = extname(canonicalPath).toLowerCase()
         const name = basename(canonicalPath)

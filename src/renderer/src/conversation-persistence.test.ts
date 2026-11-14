@@ -185,6 +185,37 @@ describe("conversation persistence", () => {
     expect(await persistence.ensureHistory("a")).toBe(store.getConversation("a"));
   });
 
+  it("does not let one rejected conversation block the others in its batch", async () => {
+    const saveLocal = vi.fn<SaveLocal>(async (batch) => {
+      if (batch.some(entry => entry.header.id === "bad")) throw new Error("invalid conversation");
+    });
+    const onSaveFailed = vi.fn();
+    const { store, persistence } = setup([conversation("a"), conversation("bad"), conversation("c")], saveLocal);
+    persistence.connect({
+      retainedConversationIds: () => new Set(["a", "bad", "c"]),
+      hasBusyTask: () => false,
+      pinState: () => ({ revision: 0, pending: false }),
+      historyUnavailableError: () => new Error("unavailable"),
+      onSaveFailed,
+    });
+    await expect(persistence.persist()).rejects.toThrow("invalid conversation");
+    expect([...persistence.acknowledged().keys()].sort()).toEqual(["a", "c"]);
+    await vi.waitFor(() => expect(onSaveFailed).toHaveBeenCalledTimes(1));
+
+    // Later saves of other conversations still go through.
+    store.set(current => current.map(item => item.id === "a" ? { ...item, updatedAt: 2 } : item));
+    await expect(persistence.persist()).rejects.toThrow("invalid conversation");
+    expect(persistence.acknowledged().get("a")).toBe(store.getConversation("a"));
+
+    // A quit flush drains the valid conversations and still reports the rejected one.
+    store.set(current => current.map(item => item.id === "c" ? { ...item, updatedAt: 3 } : item));
+    const stop = persistence.start();
+    await expect(persistence.flushForQuit()).rejects.toThrow("invalid conversation");
+    expect(persistence.acknowledged().get("c")).toBe(store.getConversation("c"));
+    expect(persistence.acknowledged().has("bad")).toBe(false);
+    stop();
+  });
+
   it("reports a failed save", async () => {
     const onSaveFailed = vi.fn();
     const { persistence } = setup([conversation("a")], vi.fn(async () => { throw new Error("disk"); }));

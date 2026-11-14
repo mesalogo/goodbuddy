@@ -28,7 +28,7 @@ import { parseDocument } from './knowledge/document-parser'
 import type { ParsedDocument } from './knowledge/document-parser'
 import type { AttachmentStorageAccess, DocumentResultStorageAccess } from './desktop-storage-files'
 import { originalImageMime, parsedCompleteness } from './document-result-storage'
-import { maximumAttachmentsPerMessage, maximumContextBytes, maximumContextCount } from '../shared/attachment-limits'
+import { maximumContextBytes } from '../shared/attachment-limits'
 
 type StoredTextContext = ContextAttachment & {
   kind: 'text'
@@ -173,9 +173,6 @@ export class ContextManager {
   }
 
   private assertCapacity(size: number): void {
-    if (this.contexts.size >= maximumContextCount) {
-      throw new Error('最多可暂存 16 个上下文项目')
-    }
     if (this.totalBytes + size > maximumContextBytes) {
       throw new Error('上下文总大小不能超过 12MB')
     }
@@ -377,10 +374,7 @@ export class ContextManager {
     this.importInterrupted = false
     const pending: string[] = []
     const attachments: ContextAttachment[] = []
-    const selectedPaths = paths.slice(
-      0,
-      maximumAttachmentsPerMessage
-    )
+    const selectedPaths = paths
     try {
       for (const [index, selectedPath] of selectedPaths.entries()) {
         controller.signal.throwIfAborted()
@@ -694,9 +688,6 @@ export class ContextManager {
   }
 
   async serializeForQueue(contextIds: string[]): Promise<string> {
-    if (contextIds.length > maximumAttachmentsPerMessage) {
-      throw new Error('单次消息最多添加 8 个附件')
-    }
     const contexts: StoredContext[] = []
     for (const contextId of contextIds) {
       await this.restoreAsset(contextId)
@@ -717,10 +708,7 @@ export class ContextManager {
       throw new Error('待发送附件数据超过恢复上限')
     }
     const parsed = JSON.parse(serialized) as unknown
-    if (
-      !Array.isArray(parsed) ||
-      parsed.length > maximumAttachmentsPerMessage
-    ) {
+    if (!Array.isArray(parsed)) {
       throw new Error('待发送附件数据无效')
     }
     const restoredContexts: StoredContext[] = []
@@ -828,12 +816,6 @@ export class ContextManager {
       (total, context) => total + context.size,
       0
     )
-    if (
-      this.contexts.size + missing.length >
-      maximumContextCount
-    ) {
-      throw new Error('最多可暂存 16 个上下文项目')
-    }
     if (this.totalBytes + restoredBytes > maximumContextBytes) {
       throw new Error('上下文总大小不能超过 12MB')
     }
@@ -907,7 +889,6 @@ export class ContextManager {
 
   async copyToDraft(conversationId: string, id: string, parse: (name: string, data: Buffer) => Promise<ParsedDocument>, signal?: AbortSignal, validateTarget?: () => void | Promise<void>): Promise<ContextAttachment[]> {
     if (!this.assets) throw new Error('附件资源存储不可用')
-    if ((await this.getDraft(conversationId)).length >= maximumAttachmentsPerMessage) throw new Error('草稿附件已满，请先整理附件')
     const previous = await this.assets.get(id)
     const original = await this.assets.original(id)
     const parsed = await parse(original.name, original.data)
@@ -927,8 +908,6 @@ export class ContextManager {
 
   async retryParsing(conversationId: string, id: string, signal?: AbortSignal): Promise<ContextAttachment[]> {
     if (!this.assets || !(await this.assets.pendingParsing(conversationId)).some((item) => item.id === id)) throw new Error('中断记录不存在')
-    const current = await this.getDraft(conversationId)
-    if (current.length >= maximumAttachmentsPerMessage) throw new Error('草稿附件已满，请先整理附件')
     const original = await this.assets.original(id)
     const parsed = await this.documentParser(original.name, original.data, 'chat-attachment', signal)
     const next = await this.storeParsed(original.name, original.data, parsed)
@@ -943,7 +922,6 @@ export class ContextManager {
 
   async saveDraft(conversationId: string, ids: string[]): Promise<void> {
     await this.validateConversation?.(conversationId)
-    if (ids.length > maximumAttachmentsPerMessage) throw new Error('单次消息最多添加 8 个附件')
     await this.serializeForQueue(ids)
     await this.assets?.reference(conversationId, 'draft', conversationId, ids)
     await this.assets?.collect([...this.contexts.keys()])
@@ -953,7 +931,6 @@ export class ContextManager {
     if (!this.assets) throw new Error('附件资源存储不可用')
     const draft = await this.getDraft(conversationId)
     const selected = [...new Set(imageIds)].filter((id) => !draft.some((attachment) => attachment.provenance?.resultId === resultId && attachment.provenance.imageId === id))
-    if (draft.length + selected.length > maximumAttachmentsPerMessage) throw new Error(`草稿已有 ${draft.length} 个附件，本次选择 ${selected.length} 张；每条消息最多 8 个附件`)
     const result = await results.get(resultId)
     const images = selected.map((id) => {
       const image = result.images.find((image) => image.id === id)

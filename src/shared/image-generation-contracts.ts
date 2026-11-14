@@ -4,7 +4,7 @@ export const imageToolInputSchema = z.object({
   prompt: z.string().trim().min(1).max(32_000),
   intent: z.enum(['create', 'edit']),
   modelProfileId: z.string().uuid().optional(),
-  sourceArtifactIds: z.array(z.string().uuid()).max(8).default([]),
+  sourceArtifactIds: z.array(z.string().uuid()).default([]),
   quality: z.enum(['auto', 'low', 'medium', 'high']).optional()
 }).strict().superRefine((input, context) => {
   if ((input.intent === 'edit') !== (input.sourceArtifactIds.length > 0)) {

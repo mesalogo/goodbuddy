@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, it } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
 import { SupervisorService, type StoredSupervisionResult } from './supervisor-service'
 import { supervisionGraphViewSchema } from '../../shared/supervision-contracts'
 
@@ -15,7 +16,7 @@ it('supervision preserves result history and protected identities within scope t
   db.initialize(process.cwd())
   try {
     const projects = ['A', 'B'].map((name) => db.createProject({ name, description: name, rootPath: directory }))
-    db.replaceConversations(projects.map((project) => ({ id: project.name, projectId: project.id, title: project.name, updatedAt: Date.now(), messages: [] })))
+    seedConversations(db, projects.map((project) => ({ id: project.name, projectId: project.id, title: project.name, updatedAt: Date.now(), messages: [] })))
     const taskId = randomUUID()
     db.createTask({ id: taskId, projectId: projects[0]!.id, conversationId: 'A', title: 'Task A', instructions: 'Review' })
     const first: StoredSupervisionResult = {

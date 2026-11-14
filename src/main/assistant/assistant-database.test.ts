@@ -17,6 +17,7 @@ import {
   ASSISTANT_DATABASE_SCHEMA_VERSION,
   MESSAGE_RECOVERY_CANDIDATE_SQL
 } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
 import { agentRuntimeSelectionKey } from '../../shared/runtime-selection-contracts'
 import type { ImageOperation } from '../../shared/image-generation-contracts'
 import type { StoredSupervisionResult } from './supervisor-service'
@@ -653,7 +654,7 @@ describe('AssistantDatabase', () => {
     const id = randomUUID()
     const message = { id: randomUUID(), role: 'assistant' as const, state: 'complete' as const, content: '', createdAt: 1,
       runtimeChecklist: { source: 'continue' as const, items: [{ content: 'task'.repeat(1500), status: 'pending' as const }] } }
-    database.replaceConversations([{ id, title: 'Checklist', updatedAt: 1, messages: [message] }])
+    seedConversations(database, [{ id, title: 'Checklist', updatedAt: 1, messages: [message] }])
     database.close()
     const reopened = new AssistantDatabase(path)
     await reopened.initialize(process.cwd())
@@ -663,6 +664,63 @@ describe('AssistantDatabase', () => {
       expect(reopened.getConversation(id).messages[0]?.runtimeChecklist).toEqual({ source: 'continue', items: [] })
     } finally { reopened.close() }
   })
+  it('round trips more than 8 artifactIds, 20 sourceReferences and long status without trimming', async () => {
+    const database = await createDatabase()
+    try {
+      const id = randomUUID()
+      const sourceReferences = Array.from({ length: 30 }, (_, index) => ({
+        libraryId: randomUUID(), libraryName: 'Library', documentName: `Document ${index}`,
+        sourceName: `Source ${index}`, snippet: `Snippet ${index}`, rank: index + 1
+      }))
+      const message = {
+        id: randomUUID(), role: 'assistant' as const, state: 'complete' as const, content: 'answer', createdAt: 1,
+        status: 's'.repeat(5_000),
+        artifactIds: Array.from({ length: 12 }, () => randomUUID()),
+        sources: Array.from({ length: 120 }, (_, index) => `source ${index}`),
+        contextCompressions: Array.from({ length: 3 }, () => ({ state: 'completed' as const, estimatedBeforeTokens: 10 })),
+        sourceReferences
+      }
+      database.saveLocalConversations([{ header: { id, title: 'Caps', updatedAt: 1 }, messages: [message] }])
+      const stored = database.getConversation(id).messages[0]!
+      expect(stored.artifactIds).toEqual(message.artifactIds)
+      expect(stored.sourceReferences).toEqual(sourceReferences)
+      expect(stored.sources).toHaveLength(120)
+      expect(stored.contextCompressions).toHaveLength(3)
+      expect(stored.status).toHaveLength(5_000)
+    } finally { database.close() }
+  })
+
+  it('keeps valid context state fields when one stored field is invalid', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-context-state-'))
+    temporaryDirectories.push(directory)
+    const path = join(directory, 'assistant.sqlite')
+    const database = new AssistantDatabase(path)
+    database.initialize('C:\\Workspace')
+    const id = randomUUID()
+    const libraryIds = Array.from({ length: 25 }, () => randomUUID())
+    database.saveLocalConversations([{ header: {
+      id, title: 'Context', updatedAt: 1, knowledgeLibraryIds: libraryIds, storyGraphEnabled: false,
+      selectedExpertId: 'team'
+    }, messages: [] }])
+    database.close()
+    const sql = new DatabaseSync(path)
+    const stored = JSON.parse((sql.prepare('SELECT context_state_json FROM conversations WHERE id = ?').get(id) as { context_state_json: string }).context_state_json)
+    sql.prepare('UPDATE conversations SET context_state_json = ? WHERE id = ?')
+      .run(JSON.stringify({ ...stored, contextMetrics: { broken: true } }), id)
+    sql.close()
+    const reopened = new AssistantDatabase(path)
+    reopened.initialize('C:\\Workspace')
+    try {
+      expect(reopened.getConversation(id)).toMatchObject({
+        knowledgeLibraryIds: libraryIds, storyGraphEnabled: false, selectedExpertId: 'team'
+      })
+      expect(reopened.getConversation(id).contextMetrics).toBeUndefined()
+      // The next save must not erase the surviving fields.
+      reopened.saveLocalConversations([{ header: { id, title: 'Renamed', updatedAt: 2, knowledgeLibraryIds: libraryIds, selectedExpertId: 'team' }, messages: [] }])
+      expect(reopened.getConversation(id)).toMatchObject({ title: 'Renamed', knowledgeLibraryIds: libraryIds, storyGraphEnabled: false })
+    } finally { reopened.close() }
+  })
+
   it('lists lightweight history without dropping searchable text or full process metadata', async () => {
     const database = await createDatabase()
     try {
@@ -675,7 +733,7 @@ describe('AssistantDatabase', () => {
           createdAt: index * 100 + messageIndex
         }))
       }))
-      database.replaceConversations(snapshots)
+      seedConversations(database, snapshots)
       const summaries = database.listConversationSummaries()
       expect(summaries).toHaveLength(100)
       expect(summaries.every(item => item.messages.length === 0 &&
@@ -776,6 +834,71 @@ describe('AssistantDatabase', () => {
       if (limit === 100) {
         expect(database.listTasks()).toEqual(tasks)
       }
+    } finally {
+      database.close()
+    }
+  })
+
+  it('pages every visible task and artifact with a created_at/id cursor', async () => {
+    const database = await createDatabase()
+    vi.useFakeTimers()
+    try {
+      const projectId = database.listProjects()[0]!.id
+      const created = Array.from({ length: 250 }, (_, index) => {
+        // Pairs share a timestamp so the id tiebreak is exercised.
+        vi.setSystemTime(new Date(Date.UTC(2026, 1, 1) + Math.floor(index / 2) * 1000))
+        const task = database.createTask({
+          id: randomUUID(), projectId, title: `Task ${index}`, instructions: '', status: 'completed'
+        })
+        const artifact = database.createTextArtifact({ projectId, title: `Artifact ${index}`, content: 'x' })
+        return { task, artifact }
+      })
+      database.createTask({ id: randomUUID(), title: 'Hidden', instructions: '', visible: false })
+      expect(database.listTasks()).toHaveLength(100)
+
+      const taskIds: string[] = []
+      let cursor: { createdAt: string; id: string } | undefined
+      let pages = 0
+      do {
+        const page = database.listTaskPage({ limit: 100, ...(cursor ? { before: cursor } : {}) })
+        taskIds.push(...page.tasks.map(task => task.id))
+        cursor = page.nextCursor
+        pages += 1
+      } while (cursor)
+      expect(pages).toBe(3)
+      expect(taskIds).toHaveLength(250)
+      expect(new Set(taskIds)).toEqual(new Set(created.map(item => item.task.id)))
+      expect(database.listTaskPage().tasks.map(task => task.id))
+        .toEqual(database.listTasks().map(task => task.id))
+
+      const artifactIds: string[] = []
+      cursor = undefined
+      do {
+        const page = database.listArtifactPage({ projectId, limit: 120, ...(cursor ? { before: cursor } : {}) })
+        artifactIds.push(...page.artifacts.map(artifact => artifact.id))
+        cursor = page.nextCursor
+      } while (cursor)
+      expect(artifactIds).toHaveLength(250)
+      expect(new Set(artifactIds)).toEqual(new Set(created.map(item => item.artifact.id)))
+      expect(database.listArtifacts()).toHaveLength(100)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('returns all 600 memories without a row cap', async () => {
+    const database = await createDatabase()
+    try {
+      const projectId = database.listProjects()[0]!.id
+      for (let index = 0; index < 600; index += 1) {
+        database.createMemory({
+          scope: index % 2 ? 'global' : 'project',
+          ...(index % 2 ? {} : { scopeId: projectId }),
+          type: 'fact', content: `Memory ${index}`
+        })
+      }
+      expect(database.listMemories()).toHaveLength(600)
+      expect(database.listMemories(projectId)).toHaveLength(600)
     } finally {
       database.close()
     }
@@ -1073,7 +1196,7 @@ describe('AssistantDatabase', () => {
     }
 
     try {
-      database.replaceConversations([{ ...header, messages: [message] }])
+      seedConversations(database, [{ ...header, messages: [message] }])
       expect(database.getConversation(header.id).messages).toEqual([message])
       database.close()
       database.initialize('C:\\Workspace')
@@ -3130,10 +3253,6 @@ describe('AssistantDatabase', () => {
       ]
     })
 
-    database.replaceConversations([])
-    expect(database.getConversation(first.id).remote?.channel).toBe(
-      'weixin'
-    )
     database.close()
   })
 
@@ -3529,7 +3648,7 @@ describe('AssistantDatabase', () => {
     })
     const conversationId = '00000000-0000-4000-8000-000000000111'
     const taskId = '00000000-0000-4000-8000-000000000211'
-    database.replaceConversations([
+    seedConversations(database, [
       {
         id: conversationId,
         projectId: project.id,
@@ -5277,7 +5396,7 @@ describe('AssistantDatabase', () => {
     const project = initial.listProjects()[0]!
     const conversationId =
       '00000000-0000-4000-8000-000000000901'
-    initial.replaceConversations([
+    seedConversations(initial, [
       {
         id: conversationId,
         projectId: project.id,
@@ -5374,7 +5493,7 @@ describe('AssistantDatabase', () => {
       '00000000-0000-4000-8000-000000000912'
     const assistantMessageId =
       '00000000-0000-4000-8000-000000000913'
-    initial.replaceConversations([
+    seedConversations(initial, [
       {
         id: conversationId,
         projectId: project.id,
@@ -5441,6 +5560,70 @@ describe('AssistantDatabase', () => {
         state: 'error',
         status: '上次运行意外中断，可以重新发送问题'
       })
+    ])
+    recovered.close()
+  })
+
+  it.each([
+    ['with an owned resource', { resourceId: '00000000-0000-4000-8000-000000000925' }],
+    ['with a legacy preview-only attachment', {}]
+  ])('keeps the queued copy of an interrupted user input %s and drops only the duplicate message', async (_label, extra) => {
+    const directory = await mkdtemp(
+      join(tmpdir(), 'goodbuddy-conversation-queue-attachment-recovery-')
+    )
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'assistant.sqlite')
+    const initial = new AssistantDatabase(databasePath)
+    initial.initialize('C:\\Workspace')
+    const project = initial.listProjects()[0]!
+    const conversationId = '00000000-0000-4000-8000-000000000921'
+    const otherConversationId = '00000000-0000-4000-8000-000000000926'
+    const userMessageId = '00000000-0000-4000-8000-000000000922'
+    const unrelatedMessageId = '00000000-0000-4000-8000-000000000927'
+    seedConversations(initial, [
+      { id: conversationId, projectId: project.id, title: '附件恢复', updatedAt: 1, messages: [] },
+      { id: otherConversationId, projectId: project.id, title: '其他对话', updatedAt: 1, messages: [] }
+    ])
+    const payloadJson = JSON.stringify({
+      input: { prompt: '带附件', attachments: [{ id: '00000000-0000-4000-8000-000000000925' }] },
+      serializedContexts: '[{"id":"00000000-0000-4000-8000-000000000925"}]'
+    })
+    const queued = initial.enqueueConversationUserInput({ conversationId, label: '带附件', payloadJson })
+    initial.claimConversationQueueItem(conversationId, queued.id)
+    const attachment = {
+      id: '00000000-0000-4000-8000-000000000925',
+      name: '报告.pdf',
+      size: 10,
+      preview: '报告',
+      kind: 'text' as const,
+      ...extra
+    }
+    initial.saveLocalConversations([
+      {
+        header: { id: conversationId, projectId: project.id, title: '附件恢复', updatedAt: 2 },
+        messages: [
+          { id: userMessageId, queueItemId: queued.id, role: 'user', content: '带附件', createdAt: 2, state: 'complete', attachments: [attachment] }
+        ]
+      },
+      {
+        // Same queueItemId in another conversation must never be treated as a duplicate.
+        header: { id: otherConversationId, projectId: project.id, title: '其他对话', updatedAt: 2 },
+        messages: [
+          { id: unrelatedMessageId, queueItemId: queued.id, role: 'user', content: '无关', createdAt: 2, state: 'complete', attachments: [attachment] }
+        ]
+      }
+    ])
+    initial.close()
+
+    const recovered = new AssistantDatabase(databasePath)
+    recovered.initialize('C:\\Workspace')
+    expect(recovered.listConversationQueueItems(conversationId)).toEqual([
+      expect.objectContaining({ id: queued.id, source: 'user', hasAttachments: true })
+    ])
+    expect(recovered.getConversationUserQueuePayloadJson(queued.id)).toBe(payloadJson)
+    expect(recovered.getConversation(conversationId).messages).toEqual([])
+    expect(recovered.getConversation(otherConversationId).messages).toEqual([
+      expect.objectContaining({ id: unrelatedMessageId })
     ])
     recovered.close()
   })
@@ -5702,11 +5885,11 @@ describe('AssistantDatabase', () => {
     durable.close()
   })
 
-  it('replaces and restores bounded conversation snapshots', async () => {
+  it('saves and restores complete conversation snapshots', async () => {
     const database = await createDatabase()
     const project = database.listProjects()[0]!
     const conversationId = '00000000-0000-4000-8000-000000000211'
-    database.replaceConversations([
+    seedConversations(database, [
       {
         id: conversationId,
         projectId: project.id,
@@ -5891,8 +6074,6 @@ describe('AssistantDatabase', () => {
         ]
       })
     ])
-    database.replaceConversations([])
-    expect(database.listConversations()).toEqual([])
     database.close()
   })
 
@@ -5913,7 +6094,7 @@ describe('AssistantDatabase', () => {
       '00000000-0000-4000-8000-000000000503'
     const newMessageId =
       '00000000-0000-4000-8000-000000000504'
-    database.replaceConversations([
+    seedConversations(database, [
       {
         id: conversationId,
         projectId: project.id,
@@ -6201,7 +6382,7 @@ describe('AssistantDatabase', () => {
       '00000000-0000-4000-8000-000000000542',
       '00000000-0000-4000-8000-000000000543'
     ]
-    database.replaceConversations([
+    seedConversations(database, [
       {
         id: sourceConversationId,
         projectId: project.id,
@@ -6454,7 +6635,7 @@ describe('AssistantDatabase', () => {
       '00000000-0000-4000-8000-000000000551'
     const sourceMessageId =
       '00000000-0000-4000-8000-000000000552'
-    database.replaceConversations([
+    seedConversations(database, [
       {
         id: sourceConversationId,
         title: '必须稳定后分支',
@@ -6553,7 +6734,7 @@ describe('AssistantDatabase', () => {
       '00000000-0000-4000-8000-000000000521'
     const messageId = (index: number): string =>
       `00000000-0000-4000-8001-${String(index).padStart(12, '0')}`
-    database.replaceConversations([
+    seedConversations(database, [
       {
         id: conversationId,
         projectId: project.id,
@@ -6628,7 +6809,7 @@ describe('AssistantDatabase', () => {
       '00000000-0000-4000-8000-000000000514'
     const rolledBackMessageId =
       '00000000-0000-4000-8000-000000000515'
-    database.replaceConversations([
+    seedConversations(database, [
       {
         id: firstConversationId,
         title: '第一对话',
@@ -6728,7 +6909,7 @@ describe('AssistantDatabase', () => {
     const database = await createDatabase()
     const localId = '00000000-0000-4000-8000-000000000521'
     const localTaskId = '00000000-0000-4000-8000-000000000523'
-    database.replaceConversations([
+    seedConversations(database, [
       {
         id: localId,
         title: '待删除本地对话',
@@ -6877,7 +7058,7 @@ describe('AssistantDatabase', () => {
     const removedProfileId = '00000000-0000-4000-8000-000000000291'
     const keptProfileId = '00000000-0000-4000-8000-000000000293'
     const imageProfileId = '00000000-0000-4000-8000-000000000294'
-    database.replaceConversations(
+    seedConversations(database,
       ([
         ['model', removedProfileId],
         ['opencode', removedProfileId],
@@ -6978,7 +7159,7 @@ describe('AssistantDatabase', () => {
       '00000000-0000-4000-8000-000000000220'
     const initial = new AssistantDatabase(databasePath)
     initial.initialize('C:\\Workspace')
-    initial.replaceConversations([
+    seedConversations(initial, [
       {
         id: conversationId,
         title: '工具恢复',
@@ -7487,7 +7668,7 @@ describe('AssistantDatabase', () => {
       '00000000-0000-4000-8000-000000000311'
     const secondConversationId =
       '00000000-0000-4000-8000-000000000312'
-    database.replaceConversations([
+    seedConversations(database, [
       {
         id: firstConversationId,
         projectId: firstProject.id,

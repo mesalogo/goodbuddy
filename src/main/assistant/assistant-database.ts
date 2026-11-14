@@ -20,12 +20,17 @@ import {
   conversationSnapshotSchema,
   conversationSetPinnedSchema,
   expertCreateSchema,
+  HEARTBEAT_RETENTION_DAYS_MAX,
   persistedProjectExecutionSpaceSchema,
   projectCreateSchema,
   scheduleCreateSchema
 } from '../../shared/assistant-contracts'
 import type {
   AssistantArtifact,
+  ArtifactListPage,
+  ArtifactListPageRequest,
+  TaskListPage,
+  TaskListPageRequest,
   AssistantExpert,
   AssistantHeartbeatConfig,
   AssistantHeartbeatEntry,
@@ -134,7 +139,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 65
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 66
 const feishuChannelConstraint = "channel IN ('weixin', 'wecom', 'dingtalk', 'telegram', 'feishu')"
 
 function withoutHistoricalWorkMode(value: unknown): unknown {
@@ -1256,14 +1261,33 @@ function parseConversationContextState(
   if (!value) {
     return {}
   }
+  let raw: unknown
   try {
-    const parsed = conversationContextStateSchema.safeParse(
-      JSON.parse(value)
-    )
-    return parsed.success ? parsed.data : {}
+    raw = JSON.parse(value)
   } catch {
     return {}
   }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {}
+  }
+  const parsed = conversationContextStateSchema.safeParse(raw)
+  if (parsed.success) {
+    return parsed.data
+  }
+  // Keep every valid field: one bad field must not erase the rest, because
+  // the next save would otherwise persist the empty state permanently.
+  const record = raw as Record<string, unknown>
+  const result: Record<string, unknown> = {}
+  for (const [field, schema] of Object.entries(
+    conversationContextStateSchema.shape
+  )) {
+    if (record[field] === undefined) continue
+    const fieldResult = schema.safeParse(record[field])
+    if (fieldResult.success && fieldResult.data !== undefined) {
+      result[field] = fieldResult.data
+    }
+  }
+  return result as ReturnType<typeof parseConversationContextState>
 }
 
 function serializeConversationContextState(
@@ -1697,7 +1721,7 @@ function reduceRecoveredAgentEvent(
       ...message,
       artifactIds: [
         ...new Set([...(message.artifactIds ?? []), event.artifactId])
-      ].slice(-8),
+      ],
       imageContextNotice: event.imageContextNotice,
       status: '图片已生成，正在保存结果'
     }
@@ -1733,7 +1757,7 @@ function reduceRecoveredAgentEvent(
         ...(message.sourceReferences ?? []).filter(
           (reference) => !incomingKeys.has(key(reference))
         )
-      ].slice(0, 20)
+      ]
     }
   } else if (event.type === 'done' || event.type === 'error') {
     const represented =
@@ -2397,6 +2421,13 @@ export class AssistantDatabase {
              WHERE status = 'dispatching'`
           )
           .run()
+        // A user input interrupted between its message save and queue completion
+        // exists twice. Keep exactly one complete copy and never delete the only one:
+        // - Without attachments, the message holds the whole prompt, so drop the
+        //   queue item and let the user resend from history.
+        // - With any attachment, only the queue payload carries the serialized
+        //   attachment contexts (the message may hold just previews), so keep the
+        //   queue item and drop the duplicate message; the queue replays it.
         database
           .prepare(
             `DELETE FROM conversation_queue_items
@@ -2412,19 +2443,20 @@ export class AssistantDatabase {
                      '$.queueItemId'
                     ) = conversation_queue_items.id
                     AND NOT EXISTS (
-                      SELECT 1 FROM json_each(messages.metadata_json, '$.attachments') attachment
-                      WHERE json_extract(attachment.value, '$.resourceId') IS NOT NULL
+                      SELECT 1 FROM json_each(messages.metadata_json, '$.attachments')
                     )
                )`
           )
           .run()
         // This scans every message; with no user queue item it cannot match anything.
         if (database.prepare("SELECT 1 FROM conversation_queue_items WHERE source = 'user' LIMIT 1").get()) {
-          database.exec(`DELETE FROM messages WHERE json_extract(metadata_json, '$.queueItemId') IN (
-            SELECT id FROM conversation_queue_items WHERE source = 'user'
+          database.exec(`DELETE FROM messages WHERE role = 'user' AND EXISTS (
+            SELECT 1 FROM conversation_queue_items
+            WHERE conversation_queue_items.source = 'user'
+              AND conversation_queue_items.id = json_extract(messages.metadata_json, '$.queueItemId')
+              AND conversation_queue_items.conversation_id = messages.conversation_id
           ) AND EXISTS (
-            SELECT 1 FROM json_each(messages.metadata_json, '$.attachments') attachment
-            WHERE json_extract(attachment.value, '$.resourceId') IS NOT NULL
+            SELECT 1 FROM json_each(messages.metadata_json, '$.attachments')
           )`)
         }
         database.exec(`
@@ -3396,72 +3428,6 @@ export class AssistantDatabase {
     return repaired
   }
 
-  replaceConversations(
-    conversations: ConversationSnapshot[]
-  ): void {
-    const database = this.requireDatabase()
-    database.exec('BEGIN IMMEDIATE')
-    try {
-      database.exec(`
-        DELETE FROM messages
-        WHERE conversation_id IN (
-          SELECT id FROM conversations WHERE channel IS NULL
-        );
-        DELETE FROM conversations WHERE channel IS NULL;
-      `)
-      const insertConversation = database.prepare(
-        `INSERT INTO conversations
-          (id, project_id, runtime_selection_json, knowledge_retrieval_mode,
-           context_state_json, title,
-           branch_source_conversation_id, branch_source_title, status,
-           created_at, updated_at, timing_incomplete)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1)`
-      )
-      const insertMessage = database.prepare(
-        `INSERT INTO messages
-          (id, conversation_id, request_id, role, content, state, sequence,
-           metadata_json, created_at)
-         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`
-      )
-      for (const conversation of conversations.slice(0, 100)) {
-        if (conversation.remote) {
-          continue
-        }
-        const updatedAt = new Date(conversation.updatedAt).toISOString()
-        insertConversation.run(
-          conversation.id,
-          conversation.projectId ?? null,
-          serializeRuntimeSelection(conversation.runtimeSelection),
-          conversation.knowledgeRetrievalMode ?? null,
-          serializeConversationContextState(conversation),
-          conversation.title,
-          conversation.branch?.sourceConversationId ?? null,
-          conversation.branch?.sourceTitle ?? null,
-          updatedAt,
-          updatedAt
-        )
-        for (const [sequence, message] of conversation.messages
-          .entries()) {
-          insertMessage.run(
-            message.id,
-            conversation.id,
-            message.role,
-            message.content,
-            message.state,
-            sequence,
-            serializeConversationMessageMetadata(message),
-            new Date(message.createdAt).toISOString()
-          )
-        }
-      }
-      database.exec('COMMIT')
-      this.executionTiming?.changed()
-    } catch (error) {
-      database.exec('ROLLBACK')
-      throw error
-    }
-  }
-
   saveLocalConversations(batch: LocalConversationSaveBatch): void {
     // The renderer saves every 500 ms and retries until acknowledged.
     this.relaxedWrite(() => this.saveLocalConversationsNow(batch))
@@ -3594,7 +3560,7 @@ export class AssistantDatabase {
                     artifactIds: stored.imageOperations?.some(operation => operation.artifactIds.length) ? [...new Set([
                       ...(message.artifactIds ?? []),
                       ...(stored.imageOperations?.flatMap(operation => operation.artifactIds) ?? [])
-                    ])].slice(-8) : message.artifactIds
+                    ])] : message.artifactIds
                   }
                 })()
               }),
@@ -4213,7 +4179,9 @@ export class AssistantDatabase {
 
   /**
    * Lists notes, pinned first. `tags` keeps only notes carrying every listed tag
-   * (compared by key), so selecting more tags narrows the result.
+   * (compared by key), so selecting more tags narrows the result. Without an
+   * explicit `limit` every matching note is returned, so the workspace list can
+   * reach all notes; tools pass their own caps.
    */
   listMagicNotes(input: { tags?: string[]; limit?: number } = {}): MagicNoteSummary[] {
     const database = this.requireDatabase()
@@ -4226,7 +4194,7 @@ export class AssistantDatabase {
          ORDER BY n.pinned DESC, n.updated_at DESC, n.rowid DESC
          LIMIT ?`
       )
-      .all(...params, input.limit ?? 200) as MagicNoteRow[]
+      .all(...params, input.limit === undefined ? -1 : Math.max(1, Math.trunc(input.limit))) as MagicNoteRow[]
     return rows.map(toMagicNoteSummary)
   }
 
@@ -4800,8 +4768,7 @@ export class AssistantDatabase {
            FROM magic_todos t
            LEFT JOIN magic_notes n ON n.id = t.note_id
            WHERE t.source = 'note'
-           ORDER BY t.completed ASC, t.updated_at DESC, t.rowid DESC
-           LIMIT 500`
+           ORDER BY t.completed ASC, t.updated_at DESC, t.rowid DESC`
         )
         .all() as MagicTodoRow[]
     ).map(toMagicTodo)
@@ -5106,13 +5073,40 @@ export class AssistantDatabase {
          WHERE visible = 1
            AND (
              id IN (SELECT id FROM tasks WHERE visible = 1
-                    ORDER BY created_at DESC LIMIT ?)
+                    ORDER BY created_at DESC, id DESC LIMIT ?)
              OR id IN (SELECT id FROM (${activeVisibleTaskSelect}))
            )
-         ORDER BY created_at DESC`
+         ORDER BY created_at DESC, id DESC`
       )
       .all(safeLimit) as TaskRow[]
     return rows.map(toTask)
+  }
+
+  /**
+   * One page of visible task history, newest first, strictly older than
+   * `before`. Unlike listTasks it does not add live tasks, so the cursor walks
+   * every visible task exactly once. `nextCursor` is absent on the last page.
+   */
+  listTaskPage(input: TaskListPageRequest = {}): TaskListPage {
+    const safeLimit = Math.max(1, Math.min(500, Math.trunc(input.limit ?? 100)))
+    const before = input.before
+    const rows = this.requireDatabase()
+      .prepare(
+        `${taskSelect}
+         WHERE visible = 1
+           ${before ? 'AND (created_at < ? OR (created_at = ? AND id < ?))' : ''}
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`
+      )
+      .all(
+        ...(before ? [before.createdAt, before.createdAt, before.id] : []),
+        safeLimit + 1
+      ) as TaskRow[]
+    const tasks = rows.slice(0, safeLimit).map(toTask)
+    const last = tasks.at(-1)
+    return rows.length > safeLimit && last
+      ? { tasks, nextCursor: { createdAt: last.createdAt, id: last.id } }
+      : { tasks }
   }
 
   getExecutionStats(input: ExecutionStatsInput): ExecutionStats {
@@ -6903,7 +6897,16 @@ export class AssistantDatabase {
   }
 
   listArtifacts(projectId?: string, limit = 100): AssistantArtifact[] {
-    const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit)))
+    return this.listArtifactPage({ projectId, limit }).artifacts
+  }
+
+  /**
+   * One page of visible artifacts, newest first, strictly older than `before`
+   * (created_at, then id). `nextCursor` is absent on the last page.
+   */
+  listArtifactPage(input: ArtifactListPageRequest = {}): ArtifactListPage {
+    const safeLimit = Math.max(1, Math.min(500, Math.trunc(input.limit ?? 100)))
+    const { projectId, before } = input
     const columns = `id, project_id, task_id, kind, title, mime_type,
                      CASE WHEN kind = 'image' THEN NULL
                           ELSE inline_content END AS inline_content,
@@ -6922,24 +6925,29 @@ export class AssistantDatabase {
           )
       )
     )`
-    const rows = projectId
-      ? this.requireDatabase()
-          .prepare(
-            `SELECT ${columns} FROM artifacts
-             WHERE project_id = ? AND ${visibleArtifact}
-             ORDER BY created_at DESC
-             LIMIT ?`
-          )
-          .all(projectId, safeLimit)
-      : this.requireDatabase()
-          .prepare(
-            `SELECT ${columns} FROM artifacts
-             WHERE ${visibleArtifact}
-             ORDER BY created_at DESC
-             LIMIT ?`
-          )
-          .all(safeLimit)
-    return (rows as ArtifactRow[]).map(toArtifact)
+    const conditions = [visibleArtifact]
+    const params: Array<string | number> = []
+    if (projectId) {
+      conditions.unshift('project_id = ?')
+      params.push(projectId)
+    }
+    if (before) {
+      conditions.push('(created_at < ? OR (created_at = ? AND id < ?))')
+      params.push(before.createdAt, before.createdAt, before.id)
+    }
+    const rows = this.requireDatabase()
+      .prepare(
+        `SELECT ${columns} FROM artifacts
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`
+      )
+      .all(...params, safeLimit + 1) as ArtifactRow[]
+    const artifacts = rows.slice(0, safeLimit).map(toArtifact)
+    const last = artifacts.at(-1)
+    return rows.length > safeLimit && last
+      ? { artifacts, nextCursor: { createdAt: last.createdAt, id: last.id } }
+      : { artifacts }
   }
 
   getArtifact(artifactId: string): AssistantArtifact {
@@ -6997,7 +7005,7 @@ export class AssistantDatabase {
           base64: image.data
         })
         saved = { ...operation, state: 'completed', artifactIds: [artifact.id] }
-        metadata.artifactIds = [...new Set([...(metadata.artifactIds ?? []), artifact.id])].slice(-8)
+        metadata.artifactIds = [...new Set([...(metadata.artifactIds ?? []), artifact.id])]
       }
       metadata.imageOperations = [...(metadata.imageOperations ?? []).filter(item => item.id !== saved.id), saved]
       database.prepare('UPDATE messages SET metadata_json = ? WHERE id = ? AND conversation_id = ?')
@@ -7017,7 +7025,6 @@ export class AssistantDatabase {
     messageId: string
     images: readonly { name: string; mediaType: 'image/png' | 'image/jpeg'; data: string }[]
   }): string[] {
-    if (input.images.length > 8) throw new Error('At most eight source images are supported')
     const database = this.requireDatabase()
     database.exec('BEGIN IMMEDIATE')
     try {
@@ -7131,15 +7138,13 @@ export class AssistantDatabase {
           .prepare(
             `SELECT * FROM memory_items
              WHERE scope = 'global' OR scope_id = ?
-             ORDER BY status = 'confirmed' DESC, updated_at DESC
-             LIMIT 500`
+             ORDER BY status = 'confirmed' DESC, updated_at DESC`
           )
           .all(scopeId)
       : this.requireDatabase()
           .prepare(
             `SELECT * FROM memory_items
-             ORDER BY status = 'confirmed' DESC, updated_at DESC
-             LIMIT 500`
+             ORDER BY status = 'confirmed' DESC, updated_at DESC`
           )
           .all()
     return (rows as MemoryRow[]).map(toMemory)
@@ -7206,8 +7211,7 @@ export class AssistantDatabase {
             `SELECT *
              FROM conversation_queue_items
              WHERE conversation_id = ? AND status = 'pending'
-             ORDER BY created_at ASC, rowid ASC
-             LIMIT 100`
+             ORDER BY created_at ASC, rowid ASC`
           )
           .all(conversationId)
       : database
@@ -7215,8 +7219,7 @@ export class AssistantDatabase {
             `SELECT *
              FROM conversation_queue_items
              WHERE status = 'pending'
-             ORDER BY created_at ASC, rowid ASC
-             LIMIT 500`
+             ORDER BY created_at ASC, rowid ASC`
           )
           .all()
     return (rows as ConversationQueueRow[]).map(
@@ -7311,17 +7314,6 @@ export class AssistantDatabase {
         .get(input.conversationId)
       if (!conversation) {
         throw new Error('对话不存在或不能加入发送队列')
-      }
-      const count = database
-        .prepare(
-          `SELECT COUNT(*) AS count
-           FROM conversation_queue_items
-           WHERE conversation_id = ?
-             AND status IN ('pending', 'dispatching')`
-        )
-        .get(input.conversationId) as { count: number }
-      if (count.count >= 20) {
-        throw new Error('当前对话最多保留 20 条待执行项')
       }
       database
         .prepare(
@@ -8171,15 +8163,13 @@ export class AssistantDatabase {
                SELECT 1 FROM heartbeat_config_projects p
                WHERE p.config_id = c.id AND p.project_id = ?
              )
-             ORDER BY created_at DESC
-             LIMIT 100`
+             ORDER BY created_at DESC`
           )
           .all(projectId)
       : database
           .prepare(
             `SELECT * FROM heartbeat_configs
-             ORDER BY created_at DESC
-             LIMIT 100`
+             ORDER BY created_at DESC`
           )
           .all()
     const typedRows = rows as HeartbeatConfigRow[]
@@ -8381,11 +8371,12 @@ export class AssistantDatabase {
     return toHeartbeatRun(row)
   }
 
+  /** Heartbeat reports, newest first; all retained reports unless `limit` is given. */
   listHeartbeatEntries(
     configId?: string,
-    limit = 50
+    limit?: number
   ): AssistantHeartbeatEntry[] {
-    const safeLimit = Math.max(1, Math.min(200, Math.trunc(limit)))
+    const safeLimit = limit === undefined ? -1 : Math.max(1, Math.min(200, Math.trunc(limit)))
     const rows = configId
       ? this.requireDatabase()
           .prepare(
@@ -12402,6 +12393,32 @@ export class AssistantDatabase {
           database.prepare('SELECT origin FROM tasks LIMIT 0').all()
         }
         database.exec('PRAGMA user_version = 65; COMMIT;')
+      } catch (error) {
+        database.exec('ROLLBACK')
+        throw error
+      } finally {
+        database.exec('PRAGMA writable_schema = RESET')
+        database.enableDefensive(true)
+      }
+    }
+    if (version.user_version < 66) {
+      database.exec('BEGIN IMMEDIATE')
+      try {
+        // Heartbeat history retention is user-configured; lift the former one-year
+        // ceiling. Metadata-only CHECK relaxation, preserving rows and indexes.
+        const previous = 'CHECK(retention_days BETWEEN 1 AND 365)'
+        const expanded = `CHECK(retention_days BETWEEN 1 AND ${HEARTBEAT_RETENTION_DAYS_MAX})`
+        const definition = database.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'heartbeat_configs'").get() as { sql: string } | undefined
+        if (definition && !definition.sql.includes(expanded) && definition.sql.includes(previous)) {
+          const schemaVersion = database.prepare('PRAGMA schema_version').get() as { schema_version: number }
+          database.enableDefensive(false)
+          database.exec('PRAGMA writable_schema = ON')
+          database.prepare("UPDATE sqlite_schema SET sql = ? WHERE type = 'table' AND name = 'heartbeat_configs'")
+            .run(definition.sql.replace(previous, expanded))
+          database.exec(`PRAGMA schema_version = ${schemaVersion.schema_version + 1}; PRAGMA writable_schema = RESET;`)
+          database.prepare('SELECT retention_days FROM heartbeat_configs LIMIT 0').all()
+        }
+        database.exec('PRAGMA user_version = 66; COMMIT;')
       } catch (error) {
         database.exec('ROLLBACK')
         throw error

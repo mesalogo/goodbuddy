@@ -896,6 +896,21 @@ export const settings = {
         }
       }
     },
+    layout: {
+      title: 'Interface layout',
+      description: 'Applies immediately and is saved on this device. Switching keeps conversations, drafts and workbar content.',
+      ariaLabel: 'Interface layout',
+      options: {
+        classic: {
+          label: 'Classic',
+          description: 'App entries and conversations share the left sidebar'
+        },
+        workbench: {
+          label: 'Workbench',
+          description: 'A separate app rail and rounded workspace panels'
+        }
+      }
+    },
     language: {
       title: 'Interface language',
       description: 'Applies immediately and is saved on this device',

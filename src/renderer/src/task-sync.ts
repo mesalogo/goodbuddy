@@ -28,6 +28,39 @@ export async function refreshTasks(store: TaskStore): Promise<AssistantTask[]> {
 }
 
 /**
+ * Loads the next older task page and merges it; refreshes keep it. The first
+ * call starts from the newest page (the same window `tasks.list` returns) to
+ * find the cursor, and continues once if that page added nothing new.
+ * Returns whether more history remains.
+ */
+export async function loadOlderTasks(store: TaskStore): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { cursor, exhausted, generation } = store.getTaskHistory();
+    if (exhausted) return false;
+    const before = store.getTasks().length;
+    const page = await window.goodbuddy.tasks.listPage(cursor ? { before: cursor } : {});
+    store.mergeOlderTasks(page.tasks, page.nextCursor, generation);
+    if (store.getTasks().length > before || cursor) break;
+  }
+  return !store.getTaskHistory().exhausted;
+}
+
+/** Loads the next older artifact page and merges it; returns whether more remain. */
+export async function loadOlderArtifacts(store: TaskStore): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { cursor, exhausted, generation } = store.getArtifactHistory();
+    if (exhausted) return false;
+    const before = store.getArtifacts().length;
+    const page = await window.goodbuddy.artifacts.listPage(cursor ? { before: cursor } : {});
+    if (generation !== store.getArtifactHistory().generation) return false;
+    store.mergeArtifacts(page.artifacts);
+    store.setArtifactCursor(page.nextCursor, generation);
+    if (store.getArtifacts().length > before || cursor) break;
+  }
+  return !store.getArtifactHistory().exhausted;
+}
+
+/**
  * Loads the content of the most recent artifacts a conversation references
  * (at most 32), skipping ones already loaded or loading.
  */

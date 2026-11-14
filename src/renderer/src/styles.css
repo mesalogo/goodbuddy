@@ -7,6 +7,7 @@
 @import './styles-workbar.css';
 @import './styles-settings.css';
 @import './styles-operations.css';
+@import './styles-workbench.css';
 
 /* Global layer, loaded after every domain file to keep its cascade position:
    focus ring, overlay stacking, shared buttons, dark theme overrides, responsive and accessibility overrides, keyframes. */
@@ -406,14 +407,6 @@ textarea:focus-visible {
     flex-direction: column;
   }
 
-  .heartbeat-center .page-header__actions {
-    width: 100%;
-  }
-
-  .heartbeat-center .page-header__actions button {
-    flex: 1;
-  }
-
   .heartbeat-center__config-card > div:last-child {
     flex-wrap: wrap;
   }
@@ -483,6 +476,11 @@ textarea:focus-visible {
   }
   .sidebar {
     flex-basis: var(--primary-sidebar-width, 236px);
+  }
+
+  /* Same specificity as the rule above and later in the cascade than .sidebar--closed: restate the collapse. */
+  .sidebar.sidebar--closed {
+    flex-basis: 0;
   }
 
   .brand,
@@ -665,10 +663,6 @@ textarea:focus-visible {
   .page-header:not(.page-header--compact) .page-header__actions {
     width: 100%;
     justify-content: flex-start;
-  }
-
-  .heartbeat-center .page-header__actions button {
-    flex: 1;
   }
 
   .heartbeat-center__overview-grid,

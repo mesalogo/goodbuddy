@@ -52,11 +52,22 @@ export const defaultApplicationNavigation = {
   order: ['knowledge', 'heartbeat', 'magic-notes', 'local-inference', 'device-sharing', 'remote-hosts'] as BuiltInApplicationId[],
   pinned: { 'magic-notes': true, knowledge: true, heartbeat: true, 'local-inference': false, 'device-sharing': false, 'remote-hosts': false }
 }
+/**
+ * Applications that can sit in the left navigation. Local inference is a
+ * monitoring dialog, not a page, so it is only reachable from the 应用 menu and
+ * the application center. Its saved `pinned` value is kept for compatibility
+ * but no longer has any effect.
+ */
+export function isApplicationPinnable(id: BuiltInApplicationId): boolean {
+  return id !== 'local-inference'
+}
+
 /** Shown in the sidebar? Knowledge is pinned unless explicitly turned off. */
 export function isApplicationPinned(
   navigation: { pinned: Partial<Record<BuiltInApplicationId, boolean>> },
   id: BuiltInApplicationId
 ): boolean {
+  if (!isApplicationPinnable(id)) return false
   return navigation.pinned[id] ?? defaultApplicationNavigation.pinned[id]
 }
 

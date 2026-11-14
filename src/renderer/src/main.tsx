@@ -21,6 +21,7 @@ import {
   loadAppearanceTheme,
   resolveAppearanceTheme
 } from './theme'
+import { applyInterfaceLayout, loadInterfaceLayout } from './interface-layout'
 import { installDocumentOcrBridge } from './document-ocr-bridge'
 import './styles.css'
 
@@ -47,6 +48,8 @@ applyAppearanceTheme(
       window.matchMedia('(prefers-color-scheme: dark)').matches
   )
 )
+
+applyInterfaceLayout(loadInterfaceLayout())
 
 installDocumentOcrBridge()
 

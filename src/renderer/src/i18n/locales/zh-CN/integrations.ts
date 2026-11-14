@@ -100,7 +100,7 @@ export const integrations = {
       clearSecret: '保存时清除现有 Secret',
       allowedSenders: '允许的发送者 ID',
       allowedSendersAriaLabel: '{{channel}}允许的发送者 ID',
-      allowedSendersPlaceholder: '每行一个 ID，最多 100 个',
+      allowedSendersPlaceholder: '每行一个 ID',
       allowedSendersHelp:
         '只有白名单内的发送者可以向 GoodBuddy 发消息；留空时不会处理任何发送者。',
       allowedSendersHelpWecom:
@@ -163,8 +163,8 @@ export const integrations = {
       network: 'GoodBuddy 需要保持运行。Telegram 使用操作系统代理设置；如有需要，请配置系统代理后测试连接。浏览器能够访问不代表通道可用。同一 Bot 仅供一个 GoodBuddy 实例使用，已有 webhook 需在原接入处解除。',
       offline: '重新启用后可能处理 Telegram 保留的离线消息，包括工具请求；平台最多保留 24 小时。应用异常退出后不会自动续跑中断任务，请先核对桌面任务记录和实际结果，再决定是否重发。',
       noUsers: '尚未授权用户，可先留空保存并启用。连接后可发送 /start 和 /whoami 获取配置帮助；填入自己的 ID 并再次保存后，才能发送 AI 请求。',
-      sendersHelp: '首次配置可留空。先启用并保存通道，再私聊你的 Bot 发送 /whoami 获取自己的数字用户 ID，填入后再次保存。每行一个或用逗号分隔，最多 100 个；不要填写 @用户名或 Bot ID。',
-      invalidSenders: '请填写正整数用户 ID，最多 100 个，每个不超过 256 位，不要填写 @用户名。',
+      sendersHelp: '首次配置可留空。先启用并保存通道，再私聊你的 Bot 发送 /whoami 获取自己的数字用户 ID，填入后再次保存。每行一个或用逗号分隔；不要填写 @用户名或 Bot ID。',
+      invalidSenders: '请填写正整数用户 ID，每个不超过 256 位，不要填写 @用户名。',
       keepToken: '留空以保留已保存的 Token',
       enterToken: '请输入 BotFather 提供的 Token',
       clearToken: '保存时清除 Token（停止连接，保留历史）',

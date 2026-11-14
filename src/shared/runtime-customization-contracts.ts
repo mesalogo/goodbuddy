@@ -17,25 +17,9 @@ export type CustomizableRuntimeProvider = z.infer<
 >
 
 export const runtimeCustomizationLimits = {
-  presets: 12,
-  rulesPerPreset: 32,
-  promptsPerPreset: 32,
   nameCharacters: 120,
   descriptionCharacters: 500,
   contentCharacters: 20_000
-} as const
-
-export const runtimeNativeInventoryLimits = {
-  agents: 100,
-  tools: 200,
-  commands: 200,
-  lsp: 100,
-  formatters: 100,
-  mcpServers: 100,
-  skills: 200,
-  rules: 200,
-  prompts: 200,
-  resources: 200
 } as const
 
 export const boundedRuntimeIdentifierSchema = z
@@ -121,12 +105,8 @@ export const continueConfigurationPresetSchema = z
       .trim()
       .max(runtimeCustomizationLimits.descriptionCharacters)
       .optional(),
-    rules: z
-      .array(continueRuleSchema)
-      .max(runtimeCustomizationLimits.rulesPerPreset),
-    prompts: z
-      .array(runtimePromptTemplateSchema)
-      .max(runtimeCustomizationLimits.promptsPerPreset)
+    rules: z.array(continueRuleSchema),
+    prompts: z.array(runtimePromptTemplateSchema)
   })
   .strict()
   .superRefine((preset, context) => {
@@ -156,9 +136,7 @@ export const runtimeCustomizationSettingsSchema = z
     continue: z
       .object({
         defaultPresetId: assistantIdSchema.optional(),
-        presets: z
-          .array(continueConfigurationPresetSchema)
-          .max(runtimeCustomizationLimits.presets)
+        presets: z.array(continueConfigurationPresetSchema)
       })
       .strict()
   })
@@ -416,37 +394,17 @@ export const runtimeNativeSnapshotSchema = z
     available: z.boolean(),
     inventoryStatus: runtimeNativeInventoryStatusSchema,
     detail: z.string().trim().min(1).max(1_000),
-    agents: z
-      .array(runtimeNativeAgentSchema)
-      .max(runtimeNativeInventoryLimits.agents),
-    tools: z
-      .array(runtimeNativeToolSchema)
-      .max(runtimeNativeInventoryLimits.tools),
+    agents: z.array(runtimeNativeAgentSchema),
+    tools: z.array(runtimeNativeToolSchema),
     toolsSupported: z.boolean(),
-    commands: z
-      .array(runtimeNativeCommandSchema)
-      .max(runtimeNativeInventoryLimits.commands),
-    lsp: z
-      .array(runtimeNativeLspSchema)
-      .max(runtimeNativeInventoryLimits.lsp),
-    formatters: z
-      .array(runtimeNativeFormatterSchema)
-      .max(runtimeNativeInventoryLimits.formatters),
-    mcpServers: z
-      .array(runtimeNativeMcpServerSchema)
-      .max(runtimeNativeInventoryLimits.mcpServers),
-    skills: z
-      .array(runtimeNativeSkillSchema)
-      .max(runtimeNativeInventoryLimits.skills),
-    rules: z
-      .array(runtimeNativeRuleSchema)
-      .max(runtimeNativeInventoryLimits.rules),
-    prompts: z
-      .array(runtimeNativePromptSchema)
-      .max(runtimeNativeInventoryLimits.prompts),
-    resources: z
-      .array(runtimeNativeResourceSchema)
-      .max(runtimeNativeInventoryLimits.resources),
+    commands: z.array(runtimeNativeCommandSchema),
+    lsp: z.array(runtimeNativeLspSchema),
+    formatters: z.array(runtimeNativeFormatterSchema),
+    mcpServers: z.array(runtimeNativeMcpServerSchema),
+    skills: z.array(runtimeNativeSkillSchema),
+    rules: z.array(runtimeNativeRuleSchema),
+    prompts: z.array(runtimeNativePromptSchema),
+    resources: z.array(runtimeNativeResourceSchema),
     resourcesSupported: z.boolean(),
     context: runtimeContextCapabilitySchema
   })

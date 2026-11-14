@@ -8,6 +8,7 @@ import type {
 import type { AgentArchitecture } from '../../shared/agent-installation-contracts'
 import type { AppNotificationInput } from './notifications'
 import { displayErrorMessage } from './error-message'
+import './remote-hosts.css'
 
 // Local Agent package inventory used to install and update remote hosts.
 // Package state lives in Main and is independent of host records.
@@ -196,9 +197,9 @@ export function AgentPackageInventoryPanel({
   }
 
   return (
-        <article className="capability-card">
-          <div className="capability-card__header">
-            <div>
+        <article className="agent-packages">
+          <div className="agent-packages__header">
+            <div className="agent-packages__heading">
               <strong>
                 {t(
                   'platformFeatures.remoteProjects.agentInventory.title'
@@ -210,7 +211,7 @@ export function AgentPackageInventoryPanel({
                 )}
               </small>
             </div>
-            <div className="capability-card__actions">
+            <div className="agent-packages__actions">
               <button
                 className="secondary-button"
                 disabled={agentPackageBusy !== undefined}
@@ -250,7 +251,7 @@ export function AgentPackageInventoryPanel({
             </div>
           </div>
           {agentInventory && (
-            <p className="settings-notice">
+            <p className="remote-hosts-notice">
               {t(
                 'platformFeatures.remoteProjects.agentInventory.summary',
                 {
@@ -263,12 +264,12 @@ export function AgentPackageInventoryPanel({
             </p>
           )}
           {agentInventoryError && (
-            <p className="settings-warning" role="alert">
+            <p className="remote-hosts-warning" role="alert">
               {agentInventoryError}
             </p>
           )}
           {agentInventoryLoading && !agentInventory ? (
-            <p className="settings-notice" role="status">
+            <p className="remote-hosts-notice" role="status">
               {t(
                 'platformFeatures.remoteProjects.agentInventory.loading'
               )}
@@ -366,13 +367,13 @@ export function AgentPackageInventoryPanel({
                     entry.architecture &&
                     agentPackageProgress.platform === entry.platform &&
                     agentPackageBusy === `${entry.platform}-${entry.architecture}` && (
-                      <p className="settings-notice" role="status">
+                      <p className="remote-hosts-notice" role="status">
                         {t(
                           `platformFeatures.remoteProjects.agentInventory.progress.${agentPackageProgress.phase}`
                         )}
                       </p>
                     )}
-                  <div className="capability-card__actions">
+                  <div className="agent-packages__actions">
                     {(
                       entry.updateAvailable ||
                       (
@@ -428,14 +429,14 @@ export function AgentPackageInventoryPanel({
             </div>
           ) : null}
           {agentInventory?.catalog.state === 'available' && (
-            <p className="settings-notice" role="status">
+            <p className="remote-hosts-notice" role="status">
               {t(
                 'platformFeatures.remoteProjects.agentInventory.catalog.available'
               )}
             </p>
           )}
           {agentInventory?.catalog.state === 'unavailable' && (
-            <p className="settings-warning" role="alert">
+            <p className="remote-hosts-warning" role="alert">
               {t(
                 'platformFeatures.remoteProjects.agentInventory.catalog.unavailable',
                 { error: agentInventory.catalog.error }

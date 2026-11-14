@@ -212,12 +212,12 @@ describe("@ references in the composer", () => {
     expect(second.input).not.toHaveAttribute("aria-expanded");
   });
 
-  it("limits references per message", () => {
+  it("accepts many references per message and rejects duplicates", () => {
     const references = createExternalReferenceStore();
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < 12; index += 1) {
       expect(references.add("a", { provider: "wecom", id: `d${index}`, title: `${index}` })).toBe(true);
     }
-    expect(references.add("a", { provider: "wecom", id: "d9", title: "9" })).toBe(false);
+    expect(references.get("a")).toHaveLength(12);
     expect(references.add("b", { provider: "wecom", id: "d0", title: "0" })).toBe(true);
     expect(references.add("b", { provider: "wecom", id: "d0", title: "0" })).toBe(false);
     expect(references.add("b", { provider: "wecom", id: "d0", title: "Renamed" }, [])).toBe(true);

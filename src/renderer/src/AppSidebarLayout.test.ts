@@ -44,6 +44,12 @@ describe('primary sidebar layout', () => {
     expect(responsive).not.toMatch(/\.(?:new-chat|sidebar-search),/u)
   })
 
+  it('still collapses a closed sidebar below 1020px, where the open width is overridden', () => {
+    const responsive = stylesheet.split('@media (max-width: 1020px) {')[1]?.split('@media')[0]
+    expect(responsive).toMatch(/\.sidebar\s*\{\s*flex-basis: var\(--primary-sidebar-width, 236px\);/u)
+    expect(responsive).toMatch(/\.sidebar\.sidebar--closed\s*\{\s*flex-basis: 0;/u)
+  })
+
   it('floats conversation actions outside list layout with viewport limits', () => {
     const rule = stylesheet.match(/\.conversation-actions\s*\{([^}]*)\}/u)?.[1]
     expect(rule).toContain('position: fixed;')

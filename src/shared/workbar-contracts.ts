@@ -1,7 +1,6 @@
 import { z } from 'zod'
 
 export const WORKBAR_LIMITS = {
-  maximumOpenInstances: 32,
   maximumTitleBytes: 256,
   maximumDescriptionBytes: 512,
   maximumUnavailableReasonBytes: 512
@@ -300,9 +299,7 @@ export type WorkbarTaskScope = z.infer<typeof workbarTaskScopeSchema>
 
 const workbarLayoutShapeSchema = z
   .object({
-    instances: z
-      .array(workbarTabInstanceSchema)
-      .max(WORKBAR_LIMITS.maximumOpenInstances),
+    instances: z.array(workbarTabInstanceSchema),
     activeInstanceId: z.string().uuid().nullable(),
     expanded: z.boolean(),
     dock: z.literal('right'),
@@ -437,19 +434,16 @@ export function normalizeWorkbarLayoutPreferences(
     )
   }
 
-  const boundedInstances = orderWorkbarInstances(instances).slice(
-    0,
-    WORKBAR_LIMITS.maximumOpenInstances
-  )
-  const activeInstanceId = boundedInstances.some(
+  const orderedInstances = orderWorkbarInstances(instances)
+  const activeInstanceId = orderedInstances.some(
     (instance) => instance.id === parsed.data.activeInstanceId
   )
     ? parsed.data.activeInstanceId
-    : boundedInstances[0]?.id ?? null
+    : orderedInstances[0]?.id ?? null
 
   return workbarLayoutPreferencesSchema.parse({
     ...parsed.data,
-    instances: boundedInstances,
+    instances: orderedInstances,
     activeInstanceId
   })
 }

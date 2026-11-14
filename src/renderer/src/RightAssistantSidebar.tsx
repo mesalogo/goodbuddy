@@ -55,7 +55,6 @@ import type {
 } from '../../shared/terminal-contracts'
 import {
   WORKBAR_APP_DEFINITIONS,
-  WORKBAR_LIMITS,
   normalizeWorkbarLayoutPreferences,
   workbarLayoutPreferencesSchema,
   type WorkbarAppDefinition,
@@ -187,6 +186,8 @@ export type RightAssistantSidebarProps = {
     enabled: boolean
   ) => Promise<void>
   onOpenTask: (task: AssistantTask) => void
+  /** Loads the next older task page; resolves whether more remain. */
+  onLoadOlderTasks?: () => Promise<boolean>
   onTabChange: (tab: AssistantSidebarTab) => void
 }
 
@@ -717,6 +718,7 @@ function RightAssistantSidebarView({
   onRunSchedule,
   onSetScheduleEnabled,
   onOpenTask,
+  onLoadOlderTasks,
   onTabChange
 }: RightAssistantSidebarProps): React.JSX.Element {
   const { i18n, t } = useTranslation('workspace')
@@ -924,6 +926,18 @@ function RightAssistantSidebarView({
     'all' | 'active' | 'paused' | 'finished'
   >('active')
   const [taskListExpanded, setTaskListExpanded] = useState(false)
+  const [olderTasks, setOlderTasks] = useState<'idle' | 'loading' | 'done'>('idle')
+  const loadOlderTasks = (): void => {
+    if (!onLoadOlderTasks || olderTasks !== 'idle') return
+    setOlderTasks('loading')
+    onLoadOlderTasks().then(
+      (more) => setOlderTasks(more ? 'idle' : 'done'),
+      (reason: unknown) => {
+        setOlderTasks('idle')
+        setActionError(reason instanceof Error ? reason.message : String(reason))
+      }
+    )
+  }
   const [actionErrorState, setActionErrorState] = useState({
     scope: { instanceId: activeWorkbarInstanceId, open },
     message: ''
@@ -1200,11 +1214,10 @@ function RightAssistantSidebarView({
         return
       }
       if (
-        workbarInstances.length >= WORKBAR_LIMITS.maximumOpenInstances ||
-        (definition.instancePolicy === 'single' &&
-          workbarInstances.some(
-            (instance) => instance.appId === request.appId
-          ))
+        definition.instancePolicy === 'single' &&
+        workbarInstances.some(
+          (instance) => instance.appId === request.appId
+        )
       ) {
         return
       }
@@ -1268,12 +1281,10 @@ function RightAssistantSidebarView({
     if (notesEnabled && notesOpenRequest) {
       const existing = workbarInstances.find(instance => instance.appId === 'notes')
       if (existing) setActiveWorkbarInstanceId(existing.id)
-      else if (workbarInstances.length < WORKBAR_LIMITS.maximumOpenInstances) {
+      else {
         const instance: WorkbarTabInstance = { id: crypto.randomUUID(), appId: 'notes', title: t('sidebar.tabs.notes.label') }
         setWorkbarInstances([...workbarInstances, instance])
         setActiveWorkbarInstanceId(instance.id)
-      } else {
-        setActionErrorState({ scope: { instanceId: activeWorkbarInstanceId, open }, message: t('sidebar.workbar.limit', { count: WORKBAR_LIMITS.maximumOpenInstances }) })
       }
       setBrowserFullscreenInstanceId(undefined)
     }
@@ -1284,12 +1295,10 @@ function RightAssistantSidebarView({
     if (feishuPanel && feishuOpenRequest) {
       const existing = workbarInstances.find(instance => instance.appId === 'feishu')
       if (existing) setActiveWorkbarInstanceId(existing.id)
-      else if (workbarInstances.length < WORKBAR_LIMITS.maximumOpenInstances) {
+      else {
         const instance: WorkbarTabInstance = { id: crypto.randomUUID(), appId: 'feishu', title: t('sidebar.tabs.feishu.label') }
         setWorkbarInstances([...workbarInstances, instance])
         setActiveWorkbarInstanceId(instance.id)
-      } else {
-        setActionErrorState({ scope: { instanceId: activeWorkbarInstanceId, open }, message: t('sidebar.workbar.limit', { count: WORKBAR_LIMITS.maximumOpenInstances }) })
       }
       setBrowserFullscreenInstanceId(undefined)
     }
@@ -1300,12 +1309,10 @@ function RightAssistantSidebarView({
     if (wecomPanel && wecomOpenRequest) {
       const existing = workbarInstances.find(instance => instance.appId === 'wecom')
       if (existing) setActiveWorkbarInstanceId(existing.id)
-      else if (workbarInstances.length < WORKBAR_LIMITS.maximumOpenInstances) {
+      else {
         const instance: WorkbarTabInstance = { id: crypto.randomUUID(), appId: 'wecom', title: t('sidebar.tabs.wecom.label') }
         setWorkbarInstances([...workbarInstances, instance])
         setActiveWorkbarInstanceId(instance.id)
-      } else {
-        setActionErrorState({ scope: { instanceId: activeWorkbarInstanceId, open }, message: t('sidebar.workbar.limit', { count: WORKBAR_LIMITS.maximumOpenInstances }) })
       }
       setBrowserFullscreenInstanceId(undefined)
     }
@@ -1432,15 +1439,12 @@ function RightAssistantSidebarView({
       browserTabIdsRef.current = nextBindings
       setBrowserTabIds(nextBindings)
     }
-    const additions = newInstances.slice(
-      0, Math.max(0, WORKBAR_LIMITS.maximumOpenInstances - workbarInstances.length)
-    )
+    const additions = newInstances
     if (additions.length > 0) {
       setWorkbarInstances((current) => [
         ...current,
         ...additions
           .filter((candidate) => !current.some((instance) => instance.id === candidate.id))
-          .slice(0, Math.max(0, WORKBAR_LIMITS.maximumOpenInstances - current.length))
       ])
       const popup = additions.findLast((instance) => liveTabs.some((state) =>
         state.workbarInstanceId === instance.id &&
@@ -2005,12 +2009,6 @@ function RightAssistantSidebarView({
           <div
             className={`assistant-sidebar__body${instance.appId === 'browser' ? ' assistant-sidebar__body--browser' : instance.appId === 'notes' ? ' assistant-sidebar__body--notes' : instance.appId === 'document' ? ' assistant-sidebar__body--document' : ''}`}
           >
-        {hasUnboundRequestBrowser &&
-          workbarInstances.length >= WORKBAR_LIMITS.maximumOpenInstances ? (
-          <p className="settings-error" role="alert">
-            {t('sidebar.browser.workbarFull', { count: WORKBAR_LIMITS.maximumOpenInstances })}
-          </p>
-        ) : null}
         {actionError ? (
           <p className="settings-error" role="alert">
             {actionError}
@@ -2277,6 +2275,18 @@ function RightAssistantSidebarView({
                   </article>
                 )
               })
+            )}
+            {onLoadOlderTasks && olderTasks !== 'done' && (
+              <button
+                className="secondary-button task-center__load-more"
+                disabled={olderTasks === 'loading'}
+                onClick={loadOlderTasks}
+                type="button"
+              >
+                {olderTasks === 'loading'
+                  ? t('sidebar.tasks.loadingOlder')
+                  : t('sidebar.tasks.loadOlder')}
+              </button>
             )}
             </div>
               </>

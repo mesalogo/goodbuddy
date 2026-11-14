@@ -110,6 +110,24 @@ const MAX_TASK_TEXT_LENGTH = 1_000
 const MAX_TASK_DEDUPE_KEY_LENGTH = 512
 const MAX_TASK_JOB_ID_LENGTH = 256
 const MAX_TERMINAL_TASKS_PER_LIBRARY = 500
+// Unresolved failures: the newest task for a still-existing document or source
+// (deleted targets are SET NULL) of a given scope/kind that failed or was
+// interrupted. Its error and retry action stay visible beyond the history limit
+// until a newer task for the same target supersedes it. Bounded by targets × kinds.
+const UNRESOLVED_FAILED_TASKS_SQL = `
+  SELECT task.id FROM knowledge_tasks task
+  WHERE task.library_id = ?
+    AND task.status IN ('failed', 'interrupted')
+    AND (task.document_id IS NOT NULL OR task.source_id IS NOT NULL)
+    AND NOT EXISTS (
+      SELECT 1 FROM knowledge_tasks newer
+      WHERE newer.library_id = task.library_id
+        AND newer.scope = task.scope
+        AND newer.kind = task.kind
+        AND newer.document_id IS task.document_id
+        AND newer.source_id IS task.source_id
+        AND newer.rowid > task.rowid
+    )`
 const MAX_GRAPH_DEPTH = 3
 const RRF_CONSTANT = 60
 
@@ -1326,6 +1344,8 @@ export class KnowledgeDatabase {
              ORDER BY created_at DESC, id DESC LIMIT ?
            )
            UNION
+           ${UNRESOLVED_FAILED_TASKS_SQL}
+           UNION
            SELECT task.parent_task_id
            FROM knowledge_tasks task
            JOIN retained ON task.id = retained.id
@@ -1344,7 +1364,7 @@ export class KnowledgeDatabase {
          WHERE task.status NOT IN ('queued', 'running')
          ORDER BY created_at DESC, id DESC`
       )
-      .all(normalizedLibraryId, limit, normalizedLibraryId)
+      .all(normalizedLibraryId, limit, normalizedLibraryId, normalizedLibraryId)
       .map(mapKnowledgeTask)
   }
 
@@ -1581,6 +1601,8 @@ export class KnowledgeDatabase {
                ORDER BY created_at DESC, id DESC LIMIT ?
              )
              UNION
+             ${UNRESOLVED_FAILED_TASKS_SQL}
+             UNION
              SELECT task.parent_task_id
              FROM knowledge_tasks task
              JOIN retained ON task.id = retained.id
@@ -1598,6 +1620,7 @@ export class KnowledgeDatabase {
         .run(
           normalizedLibraryId,
           MAX_TERMINAL_TASKS_PER_LIBRARY,
+          normalizedLibraryId,
           normalizedLibraryId
         ).changes
     )

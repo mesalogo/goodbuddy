@@ -16,7 +16,6 @@ import {
   writeJsonFileAtomically
 } from '../settings-file-utils'
 
-const MAX_PROFILES = 32
 const MAX_REFERENCES = 64
 const MAX_STORE_BYTES = 256 * 1024
 
@@ -59,7 +58,7 @@ export const browserProfileSchema = z
 export const browserProfileStateSchema = z
   .object({
     version: z.literal(2),
-    profiles: z.array(browserProfileSchema).max(MAX_PROFILES),
+    profiles: z.array(browserProfileSchema),
     defaultProfileId: browserProfileIdSchema.nullable()
   })
   .strict()
@@ -95,7 +94,7 @@ const version1ProfileSchema = z
 const version1StateSchema = z
   .object({
     version: z.literal(1),
-    profiles: z.array(version1ProfileSchema).max(MAX_PROFILES),
+    profiles: z.array(version1ProfileSchema),
     defaultProfileId: browserProfileIdSchema.nullable().optional()
   })
   .strict()
@@ -280,9 +279,6 @@ export class BrowserProfileService {
   async createProfile(name: string): Promise<BrowserProfileState> {
     const parsedName = browserProfileNameSchema.parse(name)
     return this.update((state) => {
-      if (state.profiles.length >= MAX_PROFILES) {
-        throw new Error('Browser profile limit reached')
-      }
       const profile: BrowserProfile = {
         id: randomUUID(),
         name: parsedName,

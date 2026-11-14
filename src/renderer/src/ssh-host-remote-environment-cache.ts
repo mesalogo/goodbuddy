@@ -1,5 +1,4 @@
 import {
-  SSH_HOST_LIMITS,
   sshHostRemoteEnvironmentSchema,
   type SshHostRemoteEnvironment
 } from '../../shared/ssh-host-contracts'
@@ -66,10 +65,7 @@ export class SshHostRemoteEnvironmentCache {
       if (!Array.isArray(parsed)) {
         return
       }
-      for (const candidate of parsed.slice(
-        0,
-        SSH_HOST_LIMITS.maximumHosts
-      )) {
+      for (const candidate of parsed) {
         const environment =
           sshHostRemoteEnvironmentSchema.safeParse(candidate)
         if (environment.success) {

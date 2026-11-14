@@ -225,7 +225,6 @@ export const magicNoteSearchSchema = z.object({
 export type MagicNoteSearchInput = z.infer<typeof magicNoteSearchSchema>
 
 export const MAGIC_NOTE_TAG_MAX_LENGTH = 24
-export const MAGIC_NOTE_MAX_TAGS = 10
 
 /** Tags compare case-insensitively after trimming and NFC normalization. */
 export function magicNoteTagKey(name: string): string {
@@ -255,7 +254,6 @@ export const magicNoteTagListSchema = z
       return true
     })
   })
-  .pipe(z.array(z.string()).max(MAGIC_NOTE_MAX_TAGS, `每篇笔记最多 ${MAGIC_NOTE_MAX_TAGS} 个标签`))
 
 export const magicNoteCreateSchema = z
   .object({

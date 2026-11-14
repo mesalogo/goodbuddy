@@ -2,7 +2,6 @@ import { z } from 'zod'
 import { workbarExecutionTargetRefSchema } from './workbar-contracts'
 
 export const TERMINAL_LIMITS = {
-  maximumSessionsPerWindow: 12,
   minimumColumns: 2,
   maximumColumns: 500,
   minimumRows: 1,
@@ -51,7 +50,6 @@ export type TerminalSessionState = z.infer<
 >
 
 export const terminalErrorCodeSchema = z.enum([
-  'session-limit-reached',
   'target-not-found',
   'target-unavailable',
   'host-unverified',

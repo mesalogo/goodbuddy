@@ -29,6 +29,17 @@ import { KnowledgeActionsMenu, type KnowledgeAction } from './KnowledgeActionsMe
 import { useListWindow } from '../use-list-window'
 import { ListWindowTableSpacer } from '../ListWindowSpacer'
 
+/**
+ * The element that scrolls the document table. Beside the library list the tab
+ * body scrolls on its own; in the single-column layout (and outside the
+ * workspace) the page shell does.
+ */
+function documentsScrollParent(element: HTMLElement): HTMLElement | null {
+  const body = element.closest<HTMLElement>('.knowledge-workspace__body')
+  if (body && /^(auto|scroll)$/.test(getComputedStyle(body).overflowY)) return body
+  return element.closest<HTMLElement>('.workspace-panel-scroll')
+}
+
 const sourceStatusLabelKeys = {
   queued: 'sourceStatuses.queued',
   syncing: 'sourceStatuses.syncing',
@@ -225,12 +236,12 @@ export function DocumentsView({
   const rowKeysKey = rows.map((row) => row.key).join('\n')
   const rowKeys = useMemo(() => (rowKeysKey ? rowKeysKey.split('\n') : []), [rowKeysKey])
   // P5: large libraries mount only the table rows near the page viewport. The
-  // page (`.workspace-panel-scroll`) scrolls, not the table.
+  // tab body or the page scrolls (see documentsScrollParent), not the table.
   const documentWindow = useListWindow({
     ids: rowKeys,
     scope: `${library.id}\n${query}`,
     listRef: tableBodyRef,
-    scrollParent: (body) => body.closest<HTMLElement>('.workspace-panel-scroll'),
+    scrollParent: documentsScrollParent,
     // The previewed document's row is where focus returns after the preview.
     keepIds: [previewReturnKey],
     enabled: true,
@@ -666,7 +677,7 @@ export function DocumentsView({
                     <td>
                       <div className="knowledge-document-actions">
                         {document.resultId && <button type="button" className="secondary-button" onClick={(event) => {
-                          const scroll = event.currentTarget.closest<HTMLElement>('.workspace-panel-scroll') ?? undefined
+                          const scroll = documentsScrollParent(event.currentTarget) ?? undefined
                           previewOriginRef.current = { trigger: event.currentTarget, scroll, top: scroll?.scrollTop ?? 0 }
                           setPreviewReturnKey(key)
                           setViewedDocumentId(document.id)

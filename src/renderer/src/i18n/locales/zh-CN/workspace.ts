@@ -261,7 +261,6 @@ export const workspace = {
       multiple: '可打开多个实例',
       single: '单实例应用',
       resolve: '前往处理',
-      limit: '最多可打开 {{count}} 个实例。',
       emptyTitle: '还没有打开的工作栏应用',
       emptyDescription: '打开应用后，可以在这里快速切换和处理内容。',
       open: '打开应用'
@@ -352,6 +351,8 @@ export const workspace = {
       },
       empty: '明确创建的任务会显示在这里。',
       noFilterResults: '当前筛选条件下没有任务。',
+      loadOlder: '加载更早的任务',
+      loadingOlder: '正在加载更早的任务…',
       conversationUnavailable: '关联会话不可用',
       projectScope: '项目：{{project}}',
       unboundProject: '未绑定项目',
@@ -423,7 +424,6 @@ export const workspace = {
     browser: {
       title: '实时浏览器',
       unbound: '未绑定会话',
-      workbarFull: '工作栏已打开 {{count}} 个页签。Agent 页面已保留，请关闭一个可关闭页签后查看。',
       interact: '交互',
       interacting: '交互中',
       close: '关闭浏览器',

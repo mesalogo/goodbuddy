@@ -88,7 +88,7 @@ const storedHostSchema = z
 const storedSettingsSchema = z
   .object({
     version: z.literal(CURRENT_SETTINGS_VERSION),
-    hosts: z.array(storedHostSchema).max(SSH_HOST_LIMITS.maximumHosts)
+    hosts: z.array(storedHostSchema)
   })
   .strict()
 
@@ -247,11 +247,6 @@ export class SshHostStore {
       const timestamp = this.now().toISOString()
 
       if (!commit.hostId) {
-        if (settings.hosts.length >= SSH_HOST_LIMITS.maximumHosts) {
-          throw new Error(
-            `SSH 主机数量不能超过 ${SSH_HOST_LIMITS.maximumHosts}`
-          )
-        }
         const id = randomUUID()
         const host: StoredHost = storedHostSchema.parse({
           id,

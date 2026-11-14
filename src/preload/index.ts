@@ -61,6 +61,8 @@ import type {
 import type {
   AssistantProject,
   AssistantArtifact,
+  ArtifactListPage,
+  TaskListPage,
   AssistantMemory,
   AssistantSchedule,
   AssistantHeartbeatConfig,
@@ -1218,12 +1220,6 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(ipcChannels.conversationsGet, conversationId),
     search: (query, conversationIds = []) =>
       ipcRenderer.invoke(ipcChannels.conversationsSearch, { query, conversationIds }),
-    replace: async (conversations: ConversationSnapshot[]) => {
-      await ipcRenderer.invoke(
-        ipcChannels.conversationsReplace,
-        conversations
-      )
-    },
     saveLocal: async (batch: LocalConversationSaveBatch) => {
       await ipcRenderer.invoke(
         ipcChannels.conversationsSaveLocal,
@@ -1364,6 +1360,8 @@ const desktopApi: DesktopApi = {
   tasks: {
     list: () =>
       ipcRenderer.invoke(ipcChannels.tasksList) as Promise<AssistantTask[]>,
+    listPage: (input = {}) =>
+      ipcRenderer.invoke(ipcChannels.tasksListPage, input) as Promise<TaskListPage>,
     getExecutionStats: (input) =>
       ipcRenderer.invoke(ipcChannels.tasksExecutionStats, input) as Promise<ExecutionStats>,
     onExecutionStatsChanged: (listener) => {
@@ -1425,6 +1423,8 @@ const desktopApi: DesktopApi = {
         ipcChannels.artifactsList,
         projectId
       ) as Promise<AssistantArtifact[]>,
+    listPage: (input = {}) =>
+      ipcRenderer.invoke(ipcChannels.artifactsListPage, input) as Promise<ArtifactListPage>,
     get: (artifactId: string) =>
       ipcRenderer.invoke(
         ipcChannels.artifactsGet,
@@ -1517,8 +1517,7 @@ const desktopApi: DesktopApi = {
       }) as Promise<AssistantHeartbeatRun>,
     history: (heartbeatId?: string) =>
       ipcRenderer.invoke(ipcChannels.heartbeatsHistory, {
-        configId: heartbeatId,
-        limit: 200
+        configId: heartbeatId
       }) as Promise<{
         runs: AssistantHeartbeatRun[]
         entries: AssistantHeartbeatEntry[]

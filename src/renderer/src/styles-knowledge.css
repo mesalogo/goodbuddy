@@ -567,6 +567,8 @@
   min-height: 0;
   flex-direction: column;
   gap: var(--space-4);
+  /* Same width as the workspace frame; the frame itself cannot query its own width. */
+  container: knowledge-page / inline-size;
 }
 
 :is(.knowledge-page, .knowledge-library-dialog)
@@ -719,7 +721,7 @@
 .knowledge-workspace {
   display: grid;
   width: 100%;
-  min-height: 520px;
+  min-height: 360px;
   overflow: hidden;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
@@ -727,8 +729,8 @@
   color: var(--text-primary);
   flex: 1;
   font-size: var(--font-body);
-  grid-template-columns: clamp(240px, 24vw, 300px) minmax(0, 1fr);
-  container-type: inline-size;
+  /* Percent of the workspace, not the viewport: the workbar can take half the window. */
+  grid-template-columns: clamp(240px, 28%, 300px) minmax(0, 1fr);
 }
 
 .knowledge-workspace__sidebar {
@@ -755,6 +757,9 @@
 
 .knowledge-workspace__sidebar-heading small { color: var(--text-muted); font-size: var(--font-caption); font-weight: 500; }
 
+/* The sidebar already pads its content; the shared filter block adds no second inset. */
+.knowledge-workspace__sidebar > .external-knowledge__filters { padding: 0; }
+
 .knowledge-workspace__library-nav { min-width: 0; overflow: hidden auto; flex: 1; }
 
 .knowledge-workspace__library-empty { padding: 13px; border: 1px solid var(--border-default); border-radius: var(--radius-control); background: var(--surface-raised); color: var(--text-muted); font-size: var(--font-body); line-height: 1.55; }
@@ -773,7 +778,18 @@
 
 .knowledge-workspace__library-meta { display: block; overflow-wrap: anywhere; margin-top: 5px; color: var(--text-muted); font-size: var(--font-body); line-height: 1.55; }
 
-.knowledge-workspace__main { display: flex; min-width: 0; min-height: 0; overflow: hidden; background: var(--surface-raised); flex-direction: column; }
+/* The detail pane is its own container: its content queries the pane width, not the pane plus the library list. */
+.knowledge-workspace__main { display: flex; min-width: 0; min-height: 0; overflow: hidden; background: var(--surface-raised); flex-direction: column; container: knowledge-main / inline-size; }
+
+/* Creating a library scrolls inside the pane like the tab body does. The bottom
+   padding matches the sticky footer offset of the external binding form. */
+.knowledge-workspace__create { display: flex; min-height: 0; padding: 20px 20px var(--space-4); overflow: hidden auto; flex: 1 1 auto; flex-direction: column; gap: var(--space-4); overscroll-behavior: contain; }
+
+.knowledge-workspace__create > .segmented-control { align-self: flex-start; }
+
+.knowledge-workspace__create > .knowledge-create { margin: 0; }
+
+.knowledge-workspace__create > .external-knowledge { padding: 0; overflow: visible; }
 
 .knowledge-workspace__refresh-error { padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-control); margin: var(--space-4); background: var(--surface-raised); color: var(--danger); }
 
@@ -827,7 +843,7 @@
 
 .knowledge-workspace__body {
   min-height: 0;
-  padding: clamp(16px, 2vw, 20px);
+  padding: 20px;
   overflow: hidden auto;
   flex: 1 1 auto;
   overscroll-behavior: contain;
@@ -894,16 +910,7 @@
 
 .knowledge-settings__toggle--pending { cursor: wait; }
 
-@container (max-width: 880px) {
-  .knowledge-settings--index,
-  .knowledge-settings--graph {
-    grid-template-columns: minmax(0, 1fr);
-  }
 
-  .knowledge-settings--index > section:last-of-type {
-    grid-column: auto;
-  }
-}
 
 .knowledge-tasks__summary { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: var(--space-4); gap: var(--space-4); }
 
@@ -1147,6 +1154,9 @@
 
 .workspace-panel-scroll:has(.knowledge-documents__table-scroll--windowed),
 .knowledge-documents__table-scroll--windowed { overflow-anchor: none; }
+
+/* The tab body is the scroll owner of the windowed table inside the workspace. */
+.knowledge-workspace__body:has(.knowledge-documents__table-scroll--windowed) { overflow-anchor: none; }
 
 .knowledge-documents__table-scroll tbody tr.knowledge-documents__spacer { border: 0; }
 
@@ -1462,43 +1472,23 @@
   margin-top: var(--space-1);
 }
 
-@container (max-width: 880px) {
-  .knowledge-graph {
-    grid-template-columns: minmax(0, 1fr);
-  }
+/* Two containers drive the responsive rules:
+   - knowledge-page: the page around the list + detail frame, decides whether the library list fits beside the details;
+   - knowledge-main: the detail pane only, sizes everything inside it.
+   The detail pane is already narrowed by the list, the outer gutter and an open workbar, so its content must not
+   query the outer frame. */
 
-  .knowledge-graph__detail {
-    max-height: none;
-  }
-}
-
-@container (max-width: 1000px) {
-  .knowledge-workspace__header {
-    flex-direction: column;
-  }
-
-  .knowledge-workspace__header-actions {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  .knowledge-documents__section-heading {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .knowledge-documents__import-actions {
-    width: 100%;
-  }
-
-  .knowledge-documents__search {
-    width: min(360px, 100%);
-  }
-}
-
-@container (max-width: 780px) {
+@container knowledge-page (max-width: 780px) {
+  /* Single column: grow with content and let the page shell own the only scrollbar. */
   .knowledge-workspace {
+    flex: none;
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-workspace__main,
+  .knowledge-workspace__body,
+  .knowledge-workspace__create {
+    overflow: visible;
   }
 
   .knowledge-workspace__sidebar {
@@ -1519,30 +1509,92 @@
 
   .knowledge-workspace__mobile-back {
     display: inline-flex;
+    align-self: flex-start;
     margin: 14px 18px 0;
   }
 
   .knowledge-workspace__library-nav {
     overflow: visible;
   }
+}
 
-  .knowledge-workspace__header {
-    padding: 17px 18px 13px;
+@container knowledge-main (max-width: 880px) {
+  .knowledge-settings--index,
+  .knowledge-settings--graph,
+  .knowledge-graph {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .knowledge-workspace__tabs {
-    padding: 10px 18px 0;
+  .knowledge-settings--index > section:last-of-type {
+    grid-column: auto;
+  }
+
+  .knowledge-graph__detail {
+    max-height: none;
   }
 }
 
-@container (max-width: 640px) {
+@container knowledge-main (max-width: 720px) {
   .knowledge-workspace__header {
     flex-direction: column;
+    gap: var(--space-3);
   }
 
   .knowledge-workspace__header-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .knowledge-documents__section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-documents__import-actions {
+    width: 100%;
+  }
+
+  .knowledge-documents__search {
+    width: min(360px, 100%);
+  }
+
+  .knowledge-retrieval-pipeline {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-retrieval-pipeline__connector {
+    display: none;
+  }
+
+  .knowledge-workbench-settings__groups,
+  .knowledge-embedding-index__coverage {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .knowledge-settings__chunking-grid,
+  .knowledge-settings__definition-grid,
+  .knowledge-settings__endpoint-grid,
+  .external-knowledge__columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container knowledge-main (max-width: 560px) {
+  .knowledge-workspace__header {
+    padding: 16px 16px 12px;
+  }
+
+  .knowledge-workspace__tabs {
+    padding: 10px 16px 0;
+  }
+
+  .knowledge-workspace__body,
+  .knowledge-workspace__create {
+    padding: 16px;
+  }
+
+  .knowledge-workspace__mobile-back {
+    margin: 12px 16px 0;
   }
 
   .knowledge-workspace__strategy {
@@ -1557,6 +1609,7 @@
   .knowledge-tasks__toolbar,
   .knowledge-task__heading,
   .knowledge-task__meta,
+  .knowledge-embedding-index__heading,
   .knowledge-embedding-index__task-guidance {
     align-items: stretch;
     flex-direction: column;
@@ -1589,6 +1642,10 @@
     grid-column: 1 / -1;
   }
 
+  .knowledge-workbench-settings__groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .knowledge-graph__search {
     min-width: 100%;
   }
@@ -1597,6 +1654,10 @@
   .knowledge-graph__entity-picker {
     width: min(180px, 100%);
     flex-basis: 180px;
+  }
+
+  .knowledge-graph__detail > .page-tabs--segmented {
+    margin: var(--space-3);
   }
 }
 

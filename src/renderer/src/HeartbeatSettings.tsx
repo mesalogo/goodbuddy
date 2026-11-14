@@ -5,6 +5,7 @@ import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
 import {
+  HEARTBEAT_RETENTION_DAYS_MAX,
   heartbeatCreateSchema,
   type AssistantHeartbeatConfig,
   type AssistantProject,
@@ -419,7 +420,7 @@ export function HeartbeatSettings({
             <span>{t('settings.retentionLabel')}</span>
             <input
               aria-label={t('settings.retentionAriaLabel')}
-              max={365}
+              max={HEARTBEAT_RETENTION_DAYS_MAX}
               min={1}
               onChange={(event) =>
                 setRetentionDays(Number(event.target.value))

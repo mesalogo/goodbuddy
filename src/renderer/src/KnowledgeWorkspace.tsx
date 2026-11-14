@@ -359,7 +359,7 @@ function KnowledgeWorkspaceView({
       <PageHeader
         actions={
           <>
-          <button type="button" className="secondary-button" onClick={() => setManagingExternal(true)}><Database size={16} />{t('external.manage')}</button>
+          <button type="button" className="secondary-button knowledge-page__manage-external" title={t('external.manage')} onClick={() => setManagingExternal(true)}><Database aria-hidden="true" size={16} /><span className="knowledge-page__action-label">{t('external.manage')}</span></button>
           <button
             className="primary-button"
             disabled={loading}
@@ -398,8 +398,8 @@ function KnowledgeWorkspaceView({
             </small>
           </div>
           <div className="external-knowledge__filters">
-            <label className="knowledge-field">{t('external.searchLibraries')}<input type="search" value={librarySearch} onChange={event => setLibrarySearch(event.currentTarget.value)} /></label>
-            <label className="knowledge-field">{t('external.sourceFilter')}<select value={librarySource} onChange={event => setLibrarySource(event.currentTarget.value)}><option value="all">{t('external.allSources')}</option><option value="local">{t('external.local')}</option>{Object.entries(externalProviderNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label className="knowledge-field"><span className="knowledge-field__label">{t('external.searchLibraries')}</span><input type="search" placeholder={t('external.searchLibraries')} value={librarySearch} onChange={event => setLibrarySearch(event.currentTarget.value)} /></label>
+            <label className="knowledge-field"><span className="knowledge-field__label">{t('external.sourceFilter')}</span><select value={librarySource} onChange={event => setLibrarySource(event.currentTarget.value)}><option value="all">{t('external.allSources')}</option><option value="local">{t('external.local')}</option>{Object.entries(externalProviderNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           </div>
           <nav
             aria-label={t('workspace.libraryList')}
@@ -515,7 +515,7 @@ function KnowledgeWorkspaceView({
             title={t('errors.loadTitle')}
           />
         ) : creating ? (
-          <>
+          <div className="knowledge-workspace__create">
           <SegmentedControl ariaLabel={t('external.type')} value={creationType} onChange={setCreationType} options={[{ value: 'local', label: t('external.local') }, ...Object.entries(externalProviderNames).map(([value, label]) => ({ value: value as ExternalKnowledgeProvider, label }))]} />
           {creationType === 'local' ?
           <CreateLibraryWizard
@@ -523,7 +523,7 @@ function KnowledgeWorkspaceView({
             onCreate={onCreateLibrary}
           />
           : <ExternalBindingForm key={creationType} provider={creationType} instances={externalInstances} libraries={libraries} onCancel={() => setCreating(false)} onChanged={onExternalChanged} notify={notify} onManage={() => setManagingExternal(true)} />}
-          </>
+          </div>
         ) : !selectedLibrary ? (
           <EmptyState
             description={t('empty.description')}

@@ -218,13 +218,13 @@ describe('ContextManager', () => {
     })).prompt).toContain('Retained text')
   })
 
-  it('uses the upload batch cap and hides filesystem paths in paste failures', async () => {
+  it('imports batches larger than the former count cap and hides filesystem paths in paste failures', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'goodbuddy-pasted-files-'))
     temporaryDirectories.push(directory)
     const path = join(directory, 'notes.txt')
     await writeFile(path, 'Text')
     const manager = new ContextManager()
-    expect(await manager.importFiles(Array(9).fill(path))).toHaveLength(8)
+    expect(await manager.importFiles(Array(20).fill(path))).toHaveLength(20)
     await expect(manager.importFiles([join(directory, 'missing.txt')])).rejects.toThrow(
       '无法读取所选文件，请检查文件权限和状态'
     )

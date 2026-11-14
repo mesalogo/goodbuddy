@@ -26,8 +26,6 @@ export type ExternalReferenceSource =
 
 export type ExternalReferenceSources = Partial<Record<ExternalReferenceProvider, ExternalReferenceSource>>
 
-export const MAX_EXTERNAL_REFERENCES = 5
-
 export const referenceKey = (reference: Pick<ExternalDocumentReference, 'provider' | 'id'>): string =>
   `${reference.provider}:${reference.id}`
 
@@ -61,11 +59,10 @@ export function createExternalReferenceStore() {
     get(conversationId: string): readonly ExternalDocumentReference[] {
       return references.get(conversationId) ?? empty
     },
-    /** Retain removed metadata for undo; activeKeys applies duplicate/limit checks to the current draft. */
+    /** Retain removed metadata for undo; activeKeys applies duplicate checks to the current draft. */
     add(conversationId: string, reference: ExternalDocumentReference, activeKeys?: readonly string[]): boolean {
       const current = store.get(conversationId)
       const key = referenceKey(reference)
-      if ((activeKeys?.length ?? current.length) >= MAX_EXTERNAL_REFERENCES) return false
       if (activeKeys?.includes(key)) return false
       if (current.some((item) => referenceKey(item) === key)) {
         if (activeKeys === undefined) return false
@@ -126,7 +123,7 @@ export function referencedMessagePresentation(content: string): { body: string; 
   if (start < 0) return unchanged
   const footer = content.slice(start + 2)
   const lines = footer.split('\n').slice(1)
-  if (!lines.length || lines.length % 2 || lines.length > MAX_EXTERNAL_REFERENCES * 2) return unchanged
+  if (!lines.length || lines.length % 2) return unchanged
   const references: ExternalDocumentReference[] = []
   for (let index = 0; index < lines.length; index += 2) {
     const heading = /^(\d+)\. (本地知识库|飞书|企业微信)「([^「」]*)」(.*)$/u.exec(lines[index]!)

@@ -832,6 +832,21 @@ export const settings = {
         }
       }
     },
+    layout: {
+      title: '界面布局',
+      description: '选择后立即应用，并保存在此设备。切换不会影响会话、草稿和工作栏内容。',
+      ariaLabel: '界面布局',
+      options: {
+        classic: {
+          label: '经典布局',
+          description: '应用入口与会话列表集中在左侧'
+        },
+        workbench: {
+          label: '工作台布局',
+          description: '独立应用导航，圆润分区的工作空间'
+        }
+      }
+    },
     language: {
       title: '界面语言',
       description: '选择后立即应用，并保存在此设备',

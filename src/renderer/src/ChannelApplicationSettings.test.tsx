@@ -401,7 +401,7 @@ describe('ChannelApplicationSettings', () => {
     const senders = screen.getByLabelText('Telegram允许的发送者 ID')
     fireEvent.change(senders, { target: { value: '@username' } })
     expect(senders).toHaveAttribute('aria-invalid', 'true')
-    expect(senders).toHaveAccessibleDescription('请填写正整数用户 ID，最多 100 个，每个不超过 256 位，不要填写 @用户名。')
+    expect(senders).toHaveAccessibleDescription('请填写正整数用户 ID，每个不超过 256 位，不要填写 @用户名。')
     fireEvent.click(screen.getByRole('button', { name: '保存通道设置' }))
     expect(apply).not.toHaveBeenCalled()
     openTab('连接')

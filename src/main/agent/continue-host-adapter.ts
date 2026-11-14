@@ -30,7 +30,6 @@ import type {
 } from '../../shared/contracts'
 import {
   continueConfigurationPresetSchema,
-  runtimeNativeInventoryLimits,
   type ContinueConfigurationPreset
 } from '../../shared/runtime-customization-contracts'
 import type { AgentImage, RuntimeAuthorizer } from './runtime'
@@ -65,10 +64,6 @@ const maximumBundleBytes = 32 * 1024 * 1024
 const maximumStateBytes = 8 * 1024 * 1024
 const maximumMessageBytes = 20 * 1024 * 1024
 const maximumConfigBytes = 1024 * 1024
-const maximumConfiguredMcpServers =
-  runtimeNativeInventoryLimits.mcpServers
-const maximumConfiguredRules = runtimeNativeInventoryLimits.rules
-const maximumConfiguredPrompts = runtimeNativeInventoryLimits.prompts
 const maximumStreamEventBytes = 2 * 1024 * 1024
 const defaultControlRequestTimeoutMs = 30_000
 const knowledgeMcpName = 'goodbuddy-knowledge'
@@ -359,13 +354,8 @@ function configuredRules(config: Record<string, unknown>): unknown[] {
   if (config.rules === undefined) {
     return []
   }
-  if (
-    !Array.isArray(config.rules) ||
-    config.rules.length > maximumConfiguredRules
-  ) {
-    throw new Error(
-      `Continue 配置文件中的 Rules 不能超过 ${maximumConfiguredRules} 个`
-    )
+  if (!Array.isArray(config.rules)) {
+    throw new Error('Continue 配置文件中的 rules 必须是数组')
   }
   return config.rules
 }
@@ -374,13 +364,8 @@ function configuredPrompts(config: Record<string, unknown>): unknown[] {
   if (config.prompts === undefined) {
     return []
   }
-  if (
-    !Array.isArray(config.prompts) ||
-    config.prompts.length > maximumConfiguredPrompts
-  ) {
-    throw new Error(
-      `Continue 配置文件中的 Prompts 不能超过 ${maximumConfiguredPrompts} 个`
-    )
+  if (!Array.isArray(config.prompts)) {
+    throw new Error('Continue 配置文件中的 prompts 必须是数组')
   }
   return config.prompts
 }
@@ -468,11 +453,6 @@ export async function inspectContinueNativeConfiguration(options: {
     throw new Error('Continue 配置文件中的 mcpServers 必须是数组')
   }
   const servers = config.mcpServers ?? []
-  if (servers.length > maximumConfiguredMcpServers) {
-    throw new Error(
-      `Continue 配置文件中的 MCP Server 不能超过 ${maximumConfiguredMcpServers} 个`
-    )
-  }
   for (const [index, value] of servers.entries()) {
     if (!isRecord(value)) {
       continue
@@ -1286,11 +1266,6 @@ export class ContinueHostAdapter {
           ]
         : [])
     ]
-    if (capabilityServers.length > maximumConfiguredMcpServers) {
-      throw new Error(
-        `Continue 配置文件中的 MCP Server 不能超过 ${maximumConfiguredMcpServers} 个`
-      )
-    }
     const selectedPreset = presetConfig(runOptions.preset)
     const hasPresetContent =
       selectedPreset.rules.length > 0 ||
@@ -1304,22 +1279,6 @@ export class ContinueHostAdapter {
       )
       const nativeRules = configuredRules(configured)
       const nativePrompts = configuredPrompts(configured)
-      if (
-        nativeRules.length + selectedPreset.rules.length >
-        maximumConfiguredRules
-      ) {
-        throw new Error(
-          `Continue 合并后的 Rules 不能超过 ${maximumConfiguredRules} 个`
-        )
-      }
-      if (
-        nativePrompts.length + selectedPreset.prompts.length >
-        maximumConfiguredPrompts
-      ) {
-        throw new Error(
-          `Continue 合并后的 Prompts 不能超过 ${maximumConfiguredPrompts} 个`
-        )
-      }
       const existingServers = configured.mcpServers
       if (
         existingServers !== undefined &&
@@ -1330,11 +1289,6 @@ export class ContinueHostAdapter {
         )
       }
       const servers = existingServers ?? []
-      if (servers.length > maximumConfiguredMcpServers) {
-        throw new Error(
-          `Continue 配置文件中的 MCP Server 不能超过 ${maximumConfiguredMcpServers} 个`
-        )
-      }
       const retainedServers = servers.filter(
         (server) =>
           !isRecord(server) ||
@@ -1343,14 +1297,6 @@ export class ContinueHostAdapter {
             server.name !== customMcpName
           )
       )
-      if (
-        retainedServers.length + capabilityServers.length >
-        maximumConfiguredMcpServers
-      ) {
-        throw new Error(
-          `Continue 配置文件中的 MCP Server 不能超过 ${maximumConfiguredMcpServers} 个`
-        )
-      }
       return this.writeTemporaryConfig(
         capabilityServers.length > 0
           ? 'knowledge-config'
@@ -1425,22 +1371,6 @@ export class ContinueHostAdapter {
       : {}
     const nativeRules = configuredRules(configured)
     const nativePrompts = configuredPrompts(configured)
-    if (
-      nativeRules.length + selectedPreset.rules.length >
-      maximumConfiguredRules
-    ) {
-      throw new Error(
-        `Continue 合并后的 Rules 不能超过 ${maximumConfiguredRules} 个`
-      )
-    }
-    if (
-      nativePrompts.length + selectedPreset.prompts.length >
-      maximumConfiguredPrompts
-    ) {
-      throw new Error(
-        `Continue 合并后的 Prompts 不能超过 ${maximumConfiguredPrompts} 个`
-      )
-    }
     return this.writeTemporaryConfig('model-config', {
       name: 'GoodBuddy Runtime',
       version: '1.0.0',

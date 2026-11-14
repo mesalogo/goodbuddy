@@ -101,6 +101,7 @@ app.whenReady().then(async () => {
     await wait('!!document.querySelector(".sidebar")')
     console.log('MCP overlay: App mounted')
     const add = '#mcp-settings-panel-custom .settings-content-actions button'
+    const appsTrigger = 'button[aria-controls="application-menu"]'
     const scenarios: unknown[] = []
     for (const withBrowser of [false, true]) {
       if (withBrowser) {
@@ -131,9 +132,13 @@ app.whenReady().then(async () => {
         const width = theme === 'light' || withBrowser ? 1280 : 960
         const height = theme === 'light' ? 900 : 420
         await js(`document.documentElement.dataset.theme = '${theme}'`)
-        await click('button[aria-label="Settings"]')
-        await click('#settings-tab-capabilities')
-        await click('#capabilities-settings-tab-mcp')
+        // MCP lives in the application center (Apps menu → Manage Apps → MCP tab).
+        await click(appsTrigger)
+        await wait('!!document.querySelector("#application-menu")')
+        await click('#application-menu [role=menuitem]:last-of-type')
+        await wait('!!document.querySelector("#application-center-tab-mcp")')
+        await click('#application-center-tab-mcp')
+        await wait('!!document.querySelector("#mcp-settings-tab-custom")')
         await click('#mcp-settings-tab-custom')
         win.setContentSize(width, height)
         await wait(`innerWidth === ${width} && innerHeight === ${height}`)
@@ -149,7 +154,7 @@ app.whenReady().then(async () => {
         await win.webContents.insertText('Keyboard draft')
         await wait('document.querySelector(".mcp-editor input").value === "Keyboard draft"')
         // Programmatic background focus must also be rejected by Chromium inert handling.
-        await js('document.querySelector("#settings-tab-appearance").focus()')
+        await js('document.querySelector("#application-center-tab-builtin").focus()')
         assert(await js('!!document.activeElement.closest(".mcp-editor")'))
         await click('.mcp-editor__header button')
         await wait(`!document.querySelector('.mcp-editor') && document.activeElement === document.querySelector('${add}')`)
@@ -169,7 +174,7 @@ app.whenReady().then(async () => {
             win.webContents.sendInputEvent({ type: 'mouseUp', x: 2, y: 2, button: 'left', clickCount: 1 })
           }
           await wait(`!document.querySelector('.mcp-editor') && document.activeElement === document.querySelector('${add}')`)
-          assert(await js('!!document.querySelector(".settings-panel") && !document.querySelector(".settings-backdrop").inert && document.querySelector(".app-shell").inert'))
+          assert(await js('!!document.querySelector("#application-center") && !document.querySelector(".settings-backdrop").inert && document.querySelector(".app-shell").inert'))
           if (withBrowser) await waitNative(false)
         }
         await click(add)
@@ -194,8 +199,8 @@ app.whenReady().then(async () => {
         await wait('innerWidth === 1280 && innerHeight === 900')
         await settle()
         await key('Escape')
-        await wait('!document.querySelector(".settings-panel") && !document.querySelector(".app-shell").inert')
-        assert(await js('document.activeElement.matches("button[aria-label=Settings]")'), 'Settings must restore its own trigger')
+        await wait('!document.querySelector("#application-center") && !document.querySelector(".app-shell").inert')
+        assert(await js(`document.activeElement === document.querySelector('${appsTrigger}')`), 'Application center must restore the Apps trigger')
         if (withBrowser) {
           await waitNative(true)
           assert.equal(nativeView()!.webContents.id, browserId, 'Modal must not recreate browser')

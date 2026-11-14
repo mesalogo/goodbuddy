@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
 import type { ConversationSnapshot } from '../../shared/assistant-contracts'
 import { ConversationAttachmentStorage } from '../conversation-attachment-storage'
 import { DocumentResultStorage } from '../document-result-storage'
@@ -26,7 +27,7 @@ async function fixture(count = 6) {
     contextCompressionState: { summary: 'OLD SUFFIX', coveredHistoryDigest: 'a'.repeat(64), coveredMessageCount: count },
     messages: Array.from({ length: count }, (_, i) => ({ id: randomUUID(), role: i % 2 ? 'assistant' : 'user', content: `message-${i}`, state: 'complete', createdAt: i + 1 })),
   }
-  db.replaceConversations([source])
+  seedConversations(db, [source])
   cleanup.push(async () => { db.close(); await rm(root, { recursive: true, force: true, maxRetries: 5 }) })
   return { root, path, db, source }
 }
@@ -81,7 +82,7 @@ it('preserves attachments, child output references and image IDs across deletion
     source.messages[0]!.attachments = [attachment]
     source.messages[1]!.artifactIds = [randomUUID()]
     source.messages[1]!.subagents = [{ childTaskId: randomUUID(), actor: { kind: 'direct-model', label: '编程 Subagent' }, routingMode: 'native', state: 'completed', output: 'history' }]
-    db.replaceConversations([source])
+    seedConversations(db, [source])
     assets.reference(source.id, 'message', source.messages[0]!.id, [id])
     const branch = db.branchLocalConversation({ sourceConversationId: source.id, beforeMessageId: source.messages[2]!.id, title: 'edited' })
     for (const message of branch.messages) assets.reference(branch.id, 'message', message.id, conversationMessageResourceIds(message))

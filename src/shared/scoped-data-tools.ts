@@ -43,9 +43,7 @@ const magicNoteSearchInputSchema = z
 
 // Plain strings keep the JSON schema simple; the gateway normalizes names
 // with magicNoteTagListSchema before they reach the database.
-const magicNoteToolTagsSchema = z
-  .array(z.string().min(1).max(24))
-  .max(10)
+const magicNoteToolTagsSchema = z.array(z.string().min(1).max(24))
 
 const magicNoteListInputSchema = z
   .object({
@@ -71,7 +69,7 @@ const magicNoteCreateInputSchema = z
       .max(MAX_MAGIC_NOTE_TOOL_TEXT_CHARACTERS)
       .optional(),
     tags: magicNoteToolTagsSchema.optional()
-      .describe('Optional manual tags, at most 10, each up to 24 characters.')
+      .describe('Optional manual tags, each up to 24 characters.')
   })
   .strict()
 

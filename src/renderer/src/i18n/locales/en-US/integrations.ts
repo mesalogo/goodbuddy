@@ -109,7 +109,7 @@ export const integrations = {
       clearSecret: 'Clear the existing Secret when saving',
       allowedSenders: 'Allowed sender IDs',
       allowedSendersAriaLabel: '{{channel}} allowed sender IDs',
-      allowedSendersPlaceholder: 'One ID per line, up to 100',
+      allowedSendersPlaceholder: 'One ID per line',
       allowedSendersHelp:
         'Only allowlisted senders can message GoodBuddy. No messages are processed when this list is empty.',
       allowedSendersHelpWecom:
@@ -172,8 +172,8 @@ export const integrations = {
       network: 'GoodBuddy must stay running. Telegram follows the operating system proxy settings; configure your system proxy if needed, then test this connection. Browser access alone does not verify the channel. Use this Bot with only one GoodBuddy instance and remove any existing webhook at its source.',
       offline: 'Re-enabling may process pending messages retained by Telegram for up to 24 hours, including tool requests. Interrupted tasks do not automatically resume after a crash. Check desktop task records and actual results before resending.',
       noUsers: 'No users authorized. You can leave this blank, enable and save the channel. Once connected, /start and /whoami provide setup help. Add your ID and save again before sending AI requests.',
-      sendersHelp: 'Leave blank during initial setup. Enable and save the channel, then send /whoami in a private chat with your Bot to get your numeric user ID. Enter it here and save again. Use one ID per line or separate them with commas (up to 100); do not enter @usernames or the Bot ID.',
-      invalidSenders: 'Enter up to 100 positive numeric user IDs (at most 256 digits each), not @usernames.',
+      sendersHelp: 'Leave blank during initial setup. Enable and save the channel, then send /whoami in a private chat with your Bot to get your numeric user ID. Enter it here and save again. Use one ID per line or separate them with commas; do not enter @usernames or the Bot ID.',
+      invalidSenders: 'Enter positive numeric user IDs (at most 256 digits each), not @usernames.',
       keepToken: 'Leave blank to keep the saved Token',
       enterToken: 'Enter the BotFather Token',
       clearToken: 'Clear the saved Token on save (stops the connection; keeps history)',

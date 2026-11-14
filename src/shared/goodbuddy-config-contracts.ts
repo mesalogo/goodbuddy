@@ -452,8 +452,8 @@ export type GoodBuddyConfigMcpSummary = z.infer<
 export const goodbuddyConfigSnapshotSchema = z
   .object({
     application: applicationSettingsSchema,
-    skills: z.array(skillSummarySchema).max(256),
-    mcpServers: z.array(goodbuddyConfigMcpSummarySchema).max(64)
+    skills: z.array(skillSummarySchema),
+    mcpServers: z.array(goodbuddyConfigMcpSummarySchema)
   })
   .strict()
 export type GoodBuddyConfigSnapshot = z.infer<

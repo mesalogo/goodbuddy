@@ -33,9 +33,6 @@ function deferred<T>() {
 }
 
 function createHarness(options: {
-  maximumSessions?: number
-  maximumTabsPerConversation?: number
-  maximumTabsPerWindow?: number
   idleTimeoutMs?: number
   cleanupTimeoutMs?: number
   dispose?: () => Promise<void>
@@ -163,9 +160,6 @@ function createHarness(options: {
   })
   const service = new BrowserService({
     policy: new BrowserUrlPolicy(dnsResolver),
-    maximumSessions: options.maximumSessions,
-    maximumTabsPerConversation: options.maximumTabsPerConversation,
-    maximumTabsPerWindow: options.maximumTabsPerWindow,
     idleTimeoutMs: options.idleTimeoutMs,
     cleanupTimeoutMs: options.cleanupTimeoutMs,
     createSession,
@@ -217,8 +211,8 @@ describe('BrowserService', () => {
     } finally { await harness.service.dispose() }
   })
 
-  it('counts pending popups against capacity and cleans up initialization after conversation close', async () => {
-    const harness = createHarness({ maximumTabsPerConversation: 2 })
+  it('cleans up pending popup initialization after conversation close', async () => {
+    const harness = createHarness()
     const signal = new AbortController().signal
     try {
       await harness.service.navigate('conversation', 'https://example.com/', signal)
@@ -227,7 +221,6 @@ describe('BrowserService', () => {
       harness.slots[1]!.currentUrl = 'about:blank'
       const ready = deferred<void>()
       expect(opener.openPopup(popupSession, ready.promise)).toBe(true)
-      expect(opener.openPopup(popupSession)).toBe(false)
       await harness.service.releaseConversation('conversation')
       ready.resolve()
       await vi.waitFor(() => expect(popupSession.dispose).toHaveBeenCalledOnce())
@@ -239,8 +232,8 @@ describe('BrowserService', () => {
   const secondLeaseToken = 'db8a2c28-43a6-4aab-93e0-1c01b9374dca'
   const workbarInstanceId = '0387bd61-3a12-40ce-98d7-ef5d14cc8251'
 
-  it('reserves four unused requests without resources, events, or consuming session capacity', async () => {
-    const harness = createHarness({ maximumSessions: 3 })
+  it('reserves four unused requests without resources or events', async () => {
+    const harness = createHarness()
     const states: BrowserLiveState[] = []
     harness.service.onState((state) => states.push(state))
     const leases = ['one', 'two', 'three', 'four'].map((id) =>
@@ -744,23 +737,16 @@ describe('BrowserService', () => {
     ).rejects.toThrow('不属于当前窗口')
     await harness.service.dispose()
 
-    const conversationLimited = createHarness({
-      maximumTabsPerConversation: 2
-    })
-    await conversationLimited.service.createTab('limited', 31, signal)
-    await conversationLimited.service.createTab('limited', 31, signal)
-    await expect(
-      conversationLimited.service.createTab('limited', 31, signal)
-    ).rejects.toThrow('2 个上限')
-    await conversationLimited.service.dispose()
-
-    const windowLimited = createHarness({ maximumTabsPerWindow: 2 })
-    await windowLimited.service.createTab('first', 41, signal)
-    await windowLimited.service.createTab('second', 41, signal)
-    await expect(
-      windowLimited.service.createTab('third', 41, signal)
-    ).rejects.toThrow('2 个上限')
-    await windowLimited.service.dispose()
+    const manyTabs = createHarness()
+    for (let index = 0; index < 9; index += 1) {
+      await manyTabs.service.createTab('many', 31, signal)
+    }
+    expect(manyTabs.service.getTabCount('many')).toBe(9)
+    for (let index = 0; index < 17; index += 1) {
+      await manyTabs.service.createTab(`window-${index}`, 41, signal)
+    }
+    expect(manyTabs.service.getSessionCount()).toBe(18)
+    await manyTabs.service.dispose()
   })
 
   it('creates a fresh tab instead of adopting a navigated unowned primary, and restores only the same owner', async () => {
@@ -839,35 +825,14 @@ describe('BrowserService', () => {
     await harness.service.dispose()
   })
 
-  it('reserves window capacity while tab contexts are still being created', async () => {
-    const gate = deferred<void>()
-    const harness = createHarness({
-      maximumTabsPerWindow: 1,
-      sessionGate: gate.promise
-    })
+  it('does not cap the number of browser sessions', async () => {
+    const harness = createHarness()
     const signal = new AbortController().signal
-    const first = harness.service.createTab('first', 51, signal)
-    await vi.waitFor(() => expect(harness.createSession).toHaveBeenCalledOnce())
-
-    await expect(
-      harness.service.createTab('second', 51, signal)
-    ).rejects.toThrow('1 个上限')
-    expect(harness.createSession).toHaveBeenCalledOnce()
-    gate.resolve()
-    await first
-    await harness.service.dispose()
-  })
-
-  it('enforces a hard maximum of three sessions', async () => {
-    const harness = createHarness({ maximumSessions: 3 })
-    const signal = new AbortController().signal
-    for (const id of ['one', 'two', 'three']) {
+    for (const id of ['one', 'two', 'three', 'four', 'five']) {
       await harness.service.navigate(id, `https://${id}.example/`, signal)
     }
-    await expect(
-      harness.service.navigate('four', 'https://four.example/', signal)
-    ).rejects.toThrow('3 个上限')
-    expect(harness.createSession).toHaveBeenCalledTimes(3)
+    expect(harness.createSession).toHaveBeenCalledTimes(5)
+    expect(harness.service.getSessionCount()).toBe(5)
     await harness.service.dispose()
   })
 
@@ -975,7 +940,6 @@ describe('BrowserService', () => {
   it('abandons a sole canceled creation without retaining or consuming a slot', async () => {
     const creationGate = deferred<void>()
     const harness = createHarness({
-      maximumSessions: 1,
       sessionGate: creationGate.promise
     })
     const canceledController = new AbortController()

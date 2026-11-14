@@ -164,7 +164,7 @@ describe('workbar contracts', () => {
     ).toBe(false)
   })
 
-  it('enforces title, count, uniqueness, and active-instance bounds', () => {
+  it('enforces title, uniqueness, and active-instance bounds without an instance count cap', () => {
     expect(
       workbarTabInstanceSchema.safeParse({
         id: terminalId,
@@ -198,8 +198,9 @@ describe('workbar contracts', () => {
     expect(
       workbarLayoutPreferencesSchema.safeParse({
         ...base,
+        activeInstanceId: '00000000-0000-4000-8000-000000000000',
         instances: Array.from(
-          { length: WORKBAR_LIMITS.maximumOpenInstances + 1 },
+          { length: 33 },
           (_, index) => ({
             id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
             appId: 'terminal',
@@ -208,7 +209,7 @@ describe('workbar contracts', () => {
           })
         )
       }).success
-    ).toBe(false)
+    ).toBe(true)
   })
 
   it('normalizes duplicate policies, fixed defaults, and stale active state', () => {

@@ -3,7 +3,6 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
-  MAGIC_NOTE_MAX_TAGS,
   MAGIC_NOTE_TAG_MAX_LENGTH,
   magicNoteTagKey,
   magicNoteTagNameSchema,
@@ -150,7 +149,6 @@ export function MagicNoteTagEditor({
     }
     return matches
   }, [allTags, currentKeys, queryKey, trimmed])
-  const atLimit = tags.length >= MAGIC_NOTE_MAX_TAGS
 
   useEffect(() => {
     if (adding) inputRef.current?.focus()
@@ -174,16 +172,11 @@ export function MagicNoteTagEditor({
       setQuery('')
       return
     }
-    if (atLimit) {
-      setError(t('tags.limitReached', { count: MAGIC_NOTE_MAX_TAGS }))
-      return
-    }
     if (await onChange([...tags, name.trim()])) {
       setQuery('')
       setError('')
       setActiveIndex(0)
-      if (tags.length + 1 >= MAGIC_NOTE_MAX_TAGS) close(true)
-      else inputRef.current?.focus()
+      inputRef.current?.focus()
     }
   }
 
@@ -275,8 +268,8 @@ export function MagicNoteTagEditor({
           type="button"
           className="magic-note-tag-add"
           aria-label={t('tags.addLabel')}
-          title={atLimit ? t('tags.limitReached', { count: MAGIC_NOTE_MAX_TAGS }) : t('tags.addLabel')}
-          disabled={disabled || atLimit}
+          title={t('tags.addLabel')}
+          disabled={disabled}
           onClick={() => setAdding(true)}
         >
           <Plus aria-hidden="true" size={12} />

@@ -9,7 +9,7 @@ import type {
 import type { AppNotificationInput } from './notifications'
 import { SshHostsSettingsSection } from './SshHostsSettingsSection'
 import { useWorkspaceUnsavedChanges } from './workspace-unsaved-changes'
-import { EmptyState, PageHeader, PageShell, PageTabs } from './WorkspacePrimitives'
+import { EmptyState, PageHeader, PageTabs } from './WorkspacePrimitives'
 import './remote-hosts.css'
 
 export type RemoteHostsTab = 'hosts' | 'packages'
@@ -59,10 +59,10 @@ export function RemoteHostsPage({
   const handlePackagesBusy = useCallback((busy: boolean) => setPackagesBusy(busy), [])
 
   return (
-    <PageShell variant="standard">
+    <>
       <PageHeader
         headingId="remote-hosts-title"
-        icon={<Server size={18} />}
+        icon={<Server size={20} />}
         title={t('remoteHosts.title')}
         description={t('remoteHosts.description')}
         scope={{ kind: 'global' }}
@@ -126,6 +126,6 @@ export function RemoteHostsPage({
           onNotify={onNotify}
         />
       </section>
-    </PageShell>
+    </>
   )
 }

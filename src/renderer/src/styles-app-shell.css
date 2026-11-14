@@ -462,7 +462,13 @@
 .project-recovery-status--agent > svg,
 .project-recovery-status--runtime > svg,
 .project-recovery-status--cursor > svg {
-  animation: ssh-host-dialog-spin 900ms linear infinite;
+  animation: project-recovery-spin 900ms linear infinite;
+}
+
+@keyframes project-recovery-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .project-switcher__menu-item:hover

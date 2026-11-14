@@ -407,11 +407,16 @@ textarea.field-control {
   grid-template-rows: minmax(0, 1fr) auto;
 }
 
-.page-shell--master-detail { padding: var(--page-gutter); overflow-x: hidden; container-type: inline-size; }
+/* Every page shell is the `page-shell` container, so a page sizes itself by the width it really gets
+   (the workbar and the conversation column can take part of the window). A container cannot query
+   itself, which is why the page root, not the shell, carries the responsive grid. */
+.page-shell--standard { container: page-shell / inline-size; }
 
-.page-shell--dashboard { padding-inline: max(var(--page-gutter), calc((100% - var(--content-dashboard)) / 2)); container-type: inline-size; }
+.page-shell--master-detail { padding: var(--page-gutter); overflow-x: hidden; container: page-shell / inline-size; }
 
-.page-shell--supervisor { min-width: 0; padding-inline: max(var(--page-gutter), calc((100% - var(--content-supervisor)) / 2)); container-type: inline-size; }
+.page-shell--dashboard { padding-inline: max(var(--page-gutter), calc((100% - var(--content-dashboard)) / 2)); container: page-shell / inline-size; }
+
+.page-shell--supervisor { min-width: 0; padding-inline: max(var(--page-gutter), calc((100% - var(--content-supervisor)) / 2)); container: page-shell / inline-size; }
 
 .page-header {
   display: flex;
@@ -435,6 +440,13 @@ textarea.field-control {
 .page-header__actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); }
 
 .page-header__actions button { display: inline-flex; min-height: var(--control-height); align-items: center; justify-content: center; gap: 6px; }
+
+/* Page shells are inline-size containers; stack the header when the shell is narrow (e.g. beside an open workbar). */
+@container page-shell (max-width: 640px) {
+  .page-header:not(.page-header--compact) { flex-direction: column; gap: var(--space-3); }
+
+  .page-header:not(.page-header--compact) .page-header__actions { width: 100%; justify-content: flex-start; }
+}
 
 .page-header--compact { display: block; padding-bottom: var(--space-3); border-bottom: 0; }
 

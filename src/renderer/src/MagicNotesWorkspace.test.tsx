@@ -667,6 +667,21 @@ describe('MagicNotesWorkspace overview navigation', () => {
     expect(screen.getByRole('separator', { name: '调整笔记列表宽度' })).toBeVisible()
   })
 
+  it('decides the notes drawer from the page content width, not the window width', async () => {
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1600)
+    const rect = HTMLElement.prototype.getBoundingClientRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      // The workspace measures 0 (display: contents in the workbench grid); the page keeps its box.
+      if (this.classList.contains('magic-notes-page')) return { left: 0, right: 560, top: 0, bottom: 600, width: 560, height: 600, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
+      return rect.call(this)
+    })
+    render(<MagicNotesWorkspace onNotify={onNotify} />)
+    await openNote()
+    expect(document.querySelector('.magic-notes-workspace')).toHaveClass('magic-notes-workspace--narrow')
+    expect(screen.queryByRole('separator', { name: '调整笔记列表宽度' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '展开笔记列表' })).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('opens the notes drawer below 600px and dismisses or switches notes', async () => {
     vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(599)
     render(<MagicNotesWorkspace onNotify={onNotify} />)

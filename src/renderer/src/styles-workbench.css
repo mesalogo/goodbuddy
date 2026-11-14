@@ -1,0 +1,1082 @@
+/* Workbench layout: application rail, inset workspace panels and the rounded visual layer.
+   Every rule is scoped to :root[data-layout='workbench'] so the classic layout keeps its current shape.
+   It overrides the colour tokens with the demo palette below and changes structure, radius, fills and elevation. */
+
+/* Palette from the approved workbench demo (docs/features/application-tool-navigation/workbench-demo):
+   cool slate grays carry structure and a muted steel blue carries actions and the current selection.
+   Tokens the demo does not override keep their foundation values.
+   The dark block uses a higher specificity so it wins over the light block regardless of order. */
+:root[data-layout='workbench'] {
+  color: #26313e;
+  background: #edf1f5;
+  --surface-canvas: #edf1f5;
+  --surface-raised: #fff;
+  --surface-subtle: #f7f8fa;
+  --surface-muted: #e9edf2;
+  --wb-fill: #f2f4f7;
+  --text-primary: #26313e;
+  --text-secondary: #596777;
+  --text-muted: #687584;
+  --border-default: #d7dfe7;
+  --border-subtle: #e7ebef;
+  --accent: #326ba5;
+  --accent-solid: #326ba5;
+  --accent-solid-hover: #2a5b8d;
+  --accent-hover: #2a5b8d;
+  --accent-selected: #c4d7ec;
+  --accent-subtle: #e9f0f8;
+  --wb-link: var(--accent);
+  --radius-control: 12px;
+  --radius-card: 16px;
+  --wb-radius-xl: 24px;
+  --wb-radius-pill: 999px;
+  --wb-rail-width: 56px;
+  --wb-titlebar-height: 40px;
+  /* Second column of non-chat pages (library list, note list); matches the default conversation column. */
+  --wb-object-list-width: 260px;
+  --wb-soft-shadow: 0 2px 12px #27374a0d, 0 0 0 1px #27374a0a;
+  --wb-raised-shadow: 0 1px 3px #27374a14;
+}
+
+:root[data-layout='workbench'][data-theme='dark'] {
+  color: #e5eaf1;
+  background: #141b25;
+  --surface-canvas: #141b25;
+  --surface-raised: #1d2632;
+  --surface-subtle: #19222e;
+  --surface-muted: #2a3544;
+  --wb-fill: #253040;
+  --text-primary: #e5eaf1;
+  --text-secondary: #b3becc;
+  --text-muted: #96a4b5;
+  --border-default: #415064;
+  --border-subtle: #2d3745;
+  --accent: #9cc5f3;
+  --accent-solid: #497eae;
+  --accent-solid-hover: #5a8dbd;
+  --accent-hover: #b8d6f7;
+  --accent-selected: #33506f;
+  --accent-subtle: #273b52;
+  --wb-soft-shadow: 0 0 0 1px #ffffff0f;
+  --wb-raised-shadow: none;
+}
+
+:root[data-layout='workbench'] .markdown-content a {
+  color: var(--wb-link);
+}
+
+/* Shell: the title bar and the rail form one continuous L-shaped chrome on the window canvas.
+   The sidebar and the main frame sit inside it as a single card that only rounds its top-left corner
+   and runs flush to the right and bottom window edges. */
+:root[data-layout='workbench'] .app-shell {
+  padding-top: var(--wb-titlebar-height);
+}
+
+:root[data-layout='workbench'] .app-titlebar {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  height: var(--wb-titlebar-height);
+  align-items: center;
+  background: var(--surface-canvas);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+:root[data-layout='workbench'] .app-titlebar__brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding-left: calc((var(--wb-rail-width) - 22px) / 2);
+  gap: var(--space-2);
+}
+
+:root[data-layout='workbench'] .app-titlebar__brand .brand__mark {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border-radius: 6px;
+}
+
+:root[data-layout='workbench'] .app-titlebar__name strong {
+  color: var(--text-secondary);
+  font-size: var(--font-body);
+  font-weight: 600;
+}
+
+/* Workbar and theme toggles sit in the title bar, just left of the window controls. */
+:root[data-layout='workbench'] .app-titlebar .topbar__actions {
+  margin-right: var(--space-2);
+  margin-left: auto;
+  -webkit-app-region: no-drag;
+}
+
+:root[data-layout='workbench'] .app-titlebar .icon-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+}
+
+:root[data-layout='workbench'] .app-titlebar .window-controls {
+  -webkit-app-region: no-drag;
+}
+
+:root[data-layout='workbench'] .app-titlebar .window-control {
+  width: 44px;
+  min-width: 44px;
+}
+
+:root[data-layout='workbench'] .app-rail {
+  position: relative;
+  display: flex;
+  width: var(--wb-rail-width);
+  flex: 0 0 var(--wb-rail-width);
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-2) 0 var(--space-3);
+  gap: var(--space-2);
+}
+
+:root[data-layout='workbench'] .app-rail .primary-nav {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+  overflow-y: auto;
+  border: 0;
+  gap: var(--space-1);
+  scrollbar-width: none;
+}
+
+:root[data-layout='workbench'] .app-rail .sidebar-footer {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-2) 0 0;
+  margin: 0;
+  border: 0;
+  gap: var(--space-1);
+}
+
+:root[data-layout='workbench'] .app-rail .sidebar-footer__divider {
+  width: 24px;
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--border-default);
+}
+
+/* Icon-only rail entries: the label stays in the accessibility tree and appears as a hover title. */
+:root[data-layout='workbench'] .app-rail .nav-item {
+  position: relative;
+  display: grid;
+  width: 40px;
+  min-height: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: var(--radius-control);
+  place-items: center;
+}
+
+:root[data-layout='workbench'] .app-rail .nav-item > svg {
+  width: 20px;
+  height: 20px;
+}
+
+:root[data-layout='workbench'] .app-rail .nav-item > svg:nth-child(3) {
+  display: none;
+}
+
+:root[data-layout='workbench'] .app-rail .nav-item span:nth-child(2) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+:root[data-layout='workbench'] .app-rail .nav-item:hover {
+  background: var(--surface-muted);
+}
+
+:root[data-layout='workbench'] .app-rail .nav-item--active,
+:root[data-layout='workbench'] .app-rail .nav-item--active:hover {
+  background: var(--surface-raised);
+  color: var(--accent);
+  box-shadow: var(--wb-raised-shadow);
+}
+
+:root[data-layout='workbench'] .app-rail .nav-item__badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 16px;
+  background: var(--accent-solid);
+  color: var(--text-on-accent);
+}
+
+/* Project and conversation sidebar: left part of the content card, flush with the bottom edge. */
+:root[data-layout='workbench'] .sidebar {
+  padding: var(--space-3) var(--space-2) var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-right-color: var(--border-subtle);
+  border-bottom: 0;
+  border-radius: var(--radius-card) 0 0 0;
+  background: var(--surface-subtle);
+}
+
+:root[data-layout='workbench'] .sidebar--closed {
+  padding-right: 0;
+  padding-left: 0;
+  border-width: 0;
+}
+
+:root[data-layout='workbench'] .sidebar-conversations {
+  padding: var(--space-1) 0 0;
+  background: transparent;
+}
+
+:root[data-layout='workbench'] .conversation-item--active,
+:root[data-layout='workbench'] .conversation-item--active:hover {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+:root[data-layout='workbench'] .sidebar-search,
+:root[data-layout='workbench'] .new-chat {
+  border-radius: var(--wb-radius-pill);
+}
+
+:root[data-layout='workbench'] .project-switcher__trigger {
+  border-color: var(--border-subtle);
+}
+
+:root[data-layout='workbench'] .project-switcher__trigger:hover,
+:root[data-layout='workbench'] .project-switcher__trigger[aria-expanded='true'] {
+  border-color: var(--border-default);
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+/* New chat is a quiet row action; the composer's send button stays the strongest control. */
+:root[data-layout='workbench'] .new-chat {
+  border-color: var(--border-subtle);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+:root[data-layout='workbench'] .new-chat:hover {
+  border-color: var(--border-default);
+  background: var(--surface-muted);
+}
+
+:root[data-layout='workbench'] .new-chat span {
+  font-weight: 500;
+}
+
+/* Main frame: right part of the content card, flush with the right and bottom edges. */
+:root[data-layout='workbench'] .app-frame {
+  overflow: hidden;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  grid-template-rows: 52px minmax(0, 1fr);
+}
+
+:root[data-layout='workbench'] .sidebar--closed ~ .app-frame {
+  border-left: 1px solid var(--border-subtle);
+  border-top-left-radius: var(--radius-card);
+}
+
+:root[data-layout='workbench'] .topbar {
+  padding-right: var(--space-3);
+}
+
+:root[data-layout='workbench'] .app-shell:not([data-frosted-glass='true']) .topbar {
+  border-bottom-color: transparent;
+  background: var(--surface-raised);
+}
+
+:root[data-layout='workbench'] .app-shell[data-frosted-glass='true'] .workspace:has(> [data-route='chat']:not([hidden]) .chat-history-pane[data-active='true']) {
+  margin-top: -52px;
+}
+
+:root[data-layout='workbench'] .app-shell[data-frosted-glass='true'] .chat-history-context {
+  top: 52px;
+}
+
+:root[data-layout='workbench'] .app-shell[data-frosted-glass='true'] .chat-content {
+  padding-top: calc(52px + var(--chat-context-height, 0px) + var(--page-gutter));
+}
+
+/* The workbar spans the full height beside the top bar, like the conversation sidebar on the left.
+   .app-content stays in the DOM for tests and focus handling but no longer boxes its children. */
+:root[data-layout='workbench'] .app-frame {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+:root[data-layout='workbench'] .app-content {
+  display: contents;
+}
+
+:root[data-layout='workbench'] .app-frame > .topbar,
+:root[data-layout='workbench'] .app-content > .workspace {
+  grid-column: 1;
+}
+
+:root[data-layout='workbench'] .app-content > .assistant-sidebar {
+  grid-row: 1 / -1;
+  grid-column: 2;
+}
+
+/* Pages other than chat are independent pages: no conversation column and no chat top bar.
+   Their own page header and object list start at the top of the content card. */
+:root[data-layout='workbench'] .app-frame:not([data-view='chat']) {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+:root[data-layout='workbench'] .app-frame:not([data-view='chat']) > .topbar {
+  display: none;
+}
+
+:root[data-layout='workbench'] .app-frame:not([data-view='chat']) > .app-content > .workspace {
+  grid-row: 1;
+}
+
+:root[data-layout='workbench'] .assistant-sidebar--open {
+  border-left-color: var(--border-subtle);
+  background: var(--surface-subtle);
+}
+
+:root[data-layout='workbench'] .app-content > .assistant-sidebar--browser-fullscreen {
+  grid-column: 1 / -1;
+}
+
+:root[data-layout='workbench'] .workbar-shell__tab-row {
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom-color: var(--border-subtle);
+}
+
+:root[data-layout='workbench'] .workbar-shell__tab-strip,
+:root[data-layout='workbench'] .workbar-shell__tablist {
+  align-items: center;
+}
+
+:root[data-layout='workbench'] .workbar-shell__tab-item {
+  height: 32px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+}
+
+:root[data-layout='workbench'] .workbar-shell__tab-item:hover {
+  background: var(--surface-muted);
+}
+
+:root[data-layout='workbench'] .workbar-shell__tab-item--active,
+:root[data-layout='workbench'] .workbar-shell__tab-item--active:hover {
+  background: var(--surface-raised);
+  box-shadow: var(--wb-raised-shadow);
+}
+
+/* Chat: rounded composer, circular send button and soft user bubbles. */
+:root[data-layout='workbench'] .composer {
+  border-color: var(--border-subtle);
+  border-radius: var(--wb-radius-xl);
+  box-shadow: var(--wb-soft-shadow);
+}
+
+:root[data-layout='workbench'] .composer:focus-within {
+  border-color: var(--border-default);
+}
+
+:root[data-layout='workbench'] .send-button {
+  border-radius: var(--wb-radius-pill);
+}
+
+:root[data-layout='workbench'] .message--user .message__content {
+  border-color: transparent;
+  border-radius: 20px 6px 20px 20px;
+  background: var(--wb-fill);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+:root[data-layout='workbench'][data-theme='dark'] .message--user .message__content {
+  border-color: transparent;
+  background: var(--wb-fill);
+  color: var(--text-primary);
+}
+
+:root[data-layout='workbench'] .message--user .message__content :not(pre) > code {
+  background: var(--surface-raised);
+}
+
+/* Shared controls: pill-shaped actions, tabs and segmented choices. */
+:root[data-layout='workbench'] :is(.primary-button, .secondary-button, .danger-button, .danger-solid) {
+  border-radius: var(--wb-radius-pill);
+  padding-inline: var(--space-4);
+}
+
+:root[data-layout='workbench'] .icon-button {
+  border-radius: var(--wb-radius-pill);
+}
+
+:root[data-layout='workbench'] :is(.segmented-control, .page-tabs--segmented) {
+  border-color: transparent;
+  border-radius: var(--wb-radius-pill);
+  background: var(--surface-muted);
+}
+
+:root[data-layout='workbench'] :is(.segmented-control__option, .page-tabs--segmented .page-tabs__tab) {
+  border-radius: var(--wb-radius-pill);
+}
+
+:root[data-layout='workbench'] .page-tabs__tab {
+  border-radius: var(--wb-radius-pill);
+}
+
+/* Selection follows the demo: neutral raised/muted fills with primary text, no accent outlines. */
+:root[data-layout='workbench'] .page-tabs__tab:hover:where(:not(.page-tabs__tab--active)) {
+  background: var(--wb-fill);
+}
+
+:root[data-layout='workbench'] .page-tabs--default .page-tabs__tab--active {
+  border-color: transparent;
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+:root[data-layout='workbench'] :is(.segmented-control__option--active, .page-tabs--segmented .page-tabs__tab--active) {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: var(--wb-raised-shadow);
+}
+
+/* Knowledge page as a workbench page: the library list is the second column, like the conversation
+   column on the chat page. Page title and actions head that column; details fill the rest, flush with
+   the content card. CSS-only regrouping: .knowledge-workspace becomes a transparent box (its dialogs
+   render through portals), so its sidebar and main pane are placed on the page grid. */
+:root[data-layout='workbench'] .page-shell--master-detail:has(> .knowledge-page) {
+  padding: 0;
+  overflow: hidden;
+}
+
+:root[data-layout='workbench'] .knowledge-page {
+  display: grid;
+  gap: 0;
+  grid-template-columns: var(--wb-object-list-width) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+:root[data-layout='workbench'] .knowledge-page > .knowledge-workspace {
+  display: contents;
+}
+
+:root[data-layout='workbench'] .knowledge-page > .page-header,
+:root[data-layout='workbench'] .knowledge-workspace__sidebar {
+  grid-column: 1;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
+}
+
+/* Column head: title row, short description, actions on their own row. */
+:root[data-layout='workbench'] .knowledge-page > .page-header {
+  grid-row: 1;
+  flex-direction: column;
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-bottom: 0;
+  gap: var(--space-3);
+}
+
+:root[data-layout='workbench'] .knowledge-page > .page-header h1 {
+  font-size: var(--font-section-title);
+  font-weight: 650;
+}
+
+/* The column head is a navigation header, like the conversation column: the long page description
+   belongs to the empty state and the details pane, not above the list. */
+:root[data-layout='workbench'] .knowledge-page > .page-header .page-header__description {
+  display: none;
+}
+
+/* One action row: "new library" fills the row like "new conversation", external instances is an icon. */
+:root[data-layout='workbench'] .knowledge-page > .page-header .page-header__actions {
+  width: 100%;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+}
+
+:root[data-layout='workbench'] .knowledge-page > .page-header .page-header__actions > .primary-button {
+  min-width: 0;
+  flex: 1;
+  order: -1;
+}
+
+:root[data-layout='workbench'] .knowledge-page__manage-external {
+  width: var(--control-height);
+  flex: 0 0 auto;
+  padding: 0;
+}
+
+:root[data-layout='workbench'] .knowledge-page__manage-external > .knowledge-page__action-label,
+:root[data-layout='workbench'] .knowledge-workspace__sidebar .knowledge-field__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Filters: compact, label read from the visually hidden text and shown as the placeholder. */
+:root[data-layout='workbench'] .knowledge-workspace__sidebar > .external-knowledge__filters {
+  gap: var(--space-2);
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__sidebar {
+  gap: var(--space-2);
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__sidebar .knowledge-field {
+  gap: 0;
+}
+
+/* The column head already names the list: keep the heading row for assistive tech only. */
+:root[data-layout='workbench'] .knowledge-workspace__sidebar-heading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__library-meta {
+  margin-top: 2px;
+  padding-left: 22px;
+  font-size: var(--font-caption);
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__library-empty {
+  border: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-1);
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__sidebar {
+  grid-row: 2;
+  min-height: 0;
+  padding-top: 0;
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__main {
+  grid-column: 2;
+  grid-row: 1 / -1;
+}
+
+/* Narrow shell: one column. The list replaces the details only when opened ("back to libraries"),
+   and the page shell owns the only scrollbar again. */
+@container page-shell (max-width: 780px) {
+  :root[data-layout='workbench'] .page-shell--master-detail:has(> .knowledge-page) {
+    overflow: hidden auto;
+  }
+
+  :root[data-layout='workbench'] .knowledge-page {
+    height: auto;
+    min-height: 100%;
+    align-content: start;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    grid-auto-rows: auto;
+  }
+
+  :root[data-layout='workbench'] .knowledge-page > .page-header,
+  :root[data-layout='workbench'] .knowledge-workspace__sidebar,
+  :root[data-layout='workbench'] .knowledge-workspace__main {
+    grid-column: 1;
+    grid-row: auto;
+    border-right: 0;
+  }
+
+  :root[data-layout='workbench'] .knowledge-workspace__sidebar {
+    padding-top: var(--space-3);
+  }
+
+  /* One row again: title on the left, actions on the right. */
+  :root[data-layout='workbench'] .knowledge-page > .page-header {
+    flex-direction: row;
+    align-items: center;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  :root[data-layout='workbench'] .knowledge-page > .page-header .page-header__actions {
+    width: auto;
+  }
+
+  :root[data-layout='workbench'] .knowledge-page > .page-header .page-header__actions > .primary-button {
+    flex: 0 1 auto;
+  }
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__library-list {
+  gap: 2px;
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__library-button {
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__library-button:hover {
+  background: var(--wb-fill);
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__library-button--selected,
+:root[data-layout='workbench'] .knowledge-workspace__library-button--selected:hover {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__library-button--selected strong {
+  font-weight: 650;
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__library-button--selected .knowledge-workspace__library-identity > svg {
+  color: var(--accent);
+}
+
+:root[data-layout='workbench'] .knowledge-page :is(input:not([type]), input[type='text'], input[type='search'], input[type='url'], input[type='number'], textarea, select) {
+  border-color: transparent;
+  background: var(--wb-fill);
+}
+
+:root[data-layout='workbench'] .knowledge-page :is(input, textarea, select):focus-visible {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+}
+
+:root[data-layout='workbench'] .knowledge-workspace__sidebar :is(input, select) {
+  background: var(--surface-muted);
+}
+
+:root[data-layout='workbench'] .knowledge-chunk-list-item--selected {
+  border-color: var(--border-default);
+  background: var(--surface-muted);
+  box-shadow: none;
+}
+
+:root[data-layout='workbench'] .knowledge-task__disclosure:hover {
+  background: var(--wb-fill);
+  color: var(--text-primary);
+}
+
+:root[data-layout='workbench'] .scope-badge {
+  border-color: transparent;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+
+:root[data-layout='workbench'] .settings-panel {
+  border-color: var(--border-subtle);
+  border-radius: var(--wb-radius-xl);
+}
+
+/* Settings preview cards for the layout choice (both layouts render them). */
+.layout-preview {
+  grid-template-columns: 30% 1fr 28%;
+  grid-template-rows: 1fr;
+}
+
+.layout-preview i:first-child {
+  grid-column: auto;
+}
+
+.layout-preview i:nth-child(2) {
+  grid-row: auto;
+}
+
+.layout-preview i:nth-child(3) {
+  grid-column: auto;
+  grid-row: auto;
+}
+
+.layout-preview--workbench {
+  grid-template-columns: 9% 24% 1fr 26%;
+}
+
+.layout-preview.layout-preview--workbench {
+  border-color: #d7dfe7;
+  background: #edf1f5;
+}
+
+.layout-preview--workbench i {
+  border-radius: 5px;
+}
+
+.layout-preview--workbench i:first-child {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px #d7dfe7;
+}
+
+.layout-preview--workbench i:nth-child(2) {
+  background: #f7f8fa;
+}
+
+.layout-preview--workbench i:nth-child(3) {
+  background: #fff;
+}
+
+.layout-preview--workbench i:nth-child(4) {
+  background: #e9f0f8;
+}
+
+:root[data-theme='dark'] .layout-preview {
+  border-color: #29445a;
+  background: #07131f;
+}
+
+:root[data-theme='dark'] .layout-preview i {
+  background: #0d1d2c;
+}
+
+:root[data-theme='dark'] .layout-preview i:last-child {
+  background: #123b5b;
+}
+
+:root[data-theme='dark'] .layout-preview.layout-preview--workbench {
+  border-color: #415064;
+  background: #141b25;
+}
+
+:root[data-theme='dark'] .layout-preview--workbench i {
+  background: #1d2632;
+}
+
+:root[data-theme='dark'] .layout-preview--workbench i:first-child {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px #415064;
+}
+
+:root[data-theme='dark'] .layout-preview--workbench i:last-child {
+  background: #273b52;
+}
+
+.appearance-options--layout {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 899px) {
+  :root[data-layout='workbench'] .sidebar {
+    top: var(--wb-titlebar-height);
+    bottom: 0;
+    left: var(--wb-rail-width);
+  }
+
+  :root[data-layout='workbench'] .sidebar-backdrop {
+    top: var(--wb-titlebar-height);
+  }
+
+  :root[data-layout='workbench'] .app-frame {
+    border-left: 1px solid var(--border-subtle);
+    border-top-left-radius: var(--radius-card);
+  }
+}
+
+@media (forced-colors: active) {
+  :root[data-layout='workbench'] .app-rail .nav-item--active {
+    outline: 2px solid Highlight;
+  }
+}
+
+/* Magic notes page as a workbench page (see page-level-applications.md). */
+/* Same shape as the knowledge page: the page header and the library (notes or todos) form the second
+   column; the open note, the note cards (overview) or the selected todo fill the rest, flush with the
+   content card. CSS-only regrouping: the workspace, its list section and, where needed, the library
+   panel become transparent boxes so their parts sit on the page grid.
+   Component JS kept: the notes width/drawer state feeds `--magic-notes-notes-width`, the drawer and
+   the resize handles, which the grid ignores or hides (display: none, so they are not focusable). The
+   drawer/narrow width is measured on `.magic-notes-page` (content box), which keeps a real box here;
+   two columns need more than 780px, so the drawer (< 600px) never opens while they are shown.
+   "Hide note list" still works: the column collapses and the page is one column.
+   Below 780px every rule here stops applying and the classic single-column flow (drawer, list toggle,
+   todo back button) takes over. */
+:root[data-layout='workbench'] .page-shell--master-detail:has(> .magic-notes-page) {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* The shell is the container and cannot query itself: narrow pages restore the gutter on the page. */
+@container page-shell (max-width: 780px) {
+  :root[data-layout='workbench'] .magic-notes-page {
+    padding: var(--page-gutter);
+  }
+}
+
+@container page-shell (width > 780px) {
+  :root[data-layout='workbench'] .magic-notes-page {
+    display: grid;
+    gap: 0;
+    grid-template-columns: var(--wb-object-list-width) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  /* One fill and border for the whole list column, whatever its rows hold. */
+  :root[data-layout='workbench'] .magic-notes-page::before {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    border-right: 1px solid var(--border-subtle);
+    background: var(--surface-subtle);
+    content: '';
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page > .magic-notes-workspace,
+  :root[data-layout='workbench'] .magic-notes-page > .magic-notes-workspace > .magic-notes-overview:not([hidden]) {
+    display: contents;
+  }
+
+  /* The classic split's width handle and drawer backdrop; the page grid owns the column. */
+  :root[data-layout='workbench'] .magic-notes-page :is(.magic-notes-notes-resize-handle, .magic-notes-list-backdrop) {
+    display: none;
+  }
+
+  /* Column head: title row, actions on one row (new note fills it, the rest are icon buttons). */
+  :root[data-layout='workbench'] .magic-notes-page > .page-header {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    flex-direction: column;
+    padding: var(--space-4) var(--space-4) var(--space-3);
+    border-bottom: 0;
+    gap: var(--space-3);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page > .page-header h1 {
+    font-size: var(--font-section-title);
+    font-weight: 650;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page > .page-header .page-header__actions {
+    width: 100%;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page > .page-header .page-header__actions > .primary-button {
+    min-width: 0;
+    flex: 1;
+    order: -1;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page > .page-header .page-header__actions > :is(.secondary-button, #magic-library-switch) {
+    width: var(--control-height);
+    flex: 0 0 auto;
+    align-self: auto;
+    padding: 0;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page > .page-header .magic-notes-page__action-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Load failure and refresh errors belong to the content area, not the list column. */
+  :root[data-layout='workbench'] .magic-notes-page > .empty-state {
+    grid-column: -2;
+    grid-row: 1 / -1;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page > .magic-note-delete-confirmation {
+    z-index: 2;
+    grid-column: -2;
+    grid-row: 1;
+    align-self: start;
+    margin: var(--space-3) var(--space-4);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page .magic-notes-search input {
+    border-color: transparent;
+    background: var(--surface-muted);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page .magic-notes-search input:focus-visible {
+    border-color: var(--accent);
+    background: var(--surface-raised);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page .magic-notes-pane-heading {
+    min-height: var(--control-height);
+    font-size: var(--font-body);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page .magic-note-list-item[aria-current='true'],
+  :root[data-layout='workbench'] .magic-notes-page .magic-note-list-item[aria-current='true']:hover {
+    background: var(--surface-muted);
+    box-shadow: none;
+  }
+
+  /* Open note: the library panel scrolls under the column head; the note fills the content area. */
+  :root[data-layout='workbench'] .magic-notes-page .magic-notes-library-panel {
+    grid-column: 1;
+    grid-row: 2;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0 var(--space-3) var(--space-3);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page .magic-notes-detail-container {
+    grid-column: -2;
+    grid-row: 1 / -1;
+  }
+
+  /* Overview (no note open): heading, search, tags and the create form head the list column; the
+     note cards fill the content area. */
+  :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace--overview) {
+    grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-workspace--overview .magic-notes-library-panel {
+    display: contents;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-workspace--overview .magic-notes-library-panel > :not(.magic-notes-card-grid) {
+    grid-column: 1;
+    min-width: 0;
+    margin: 0 var(--space-3) var(--space-2);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-workspace--overview .magic-notes-library-panel > .magic-notes-pane-heading { grid-row: 2; }
+  :root[data-layout='workbench'] .magic-notes-workspace--overview .magic-notes-library-panel > .magic-notes-search { grid-row: 3; }
+
+  :root[data-layout='workbench'] .magic-notes-workspace--overview .magic-notes-library-panel > .magic-note-tag-filter {
+    grid-row: 4;
+    max-height: 30vh;
+    overflow: hidden auto;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-workspace--overview .magic-notes-library-panel > .magic-notes-create { grid-row: 5; }
+
+  :root[data-layout='workbench'] .magic-notes-workspace--overview .magic-notes-card-grid {
+    grid-column: -2;
+    grid-row: 1 / -1;
+    min-height: 0;
+    padding: var(--space-5) var(--space-6) var(--space-6);
+    background: var(--surface-raised);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-workspace--overview .magic-note-list-item {
+    border-color: var(--border-subtle);
+  }
+
+  /* Todos: heading, search and filter head the list column, the todo list scrolls under them and the
+     selected todo fills the content area. The classic todo split (width, handle) is not used here. */
+  :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace > .magic-notes-overview--todos:not([hidden])) {
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-overview--todos > .magic-notes-library-panel,
+  :root[data-layout='workbench'] .magic-notes-overview--todos .magic-todo-workspace {
+    display: contents;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-overview--todos > .magic-notes-library-panel > :is(.magic-notes-pane-heading, .magic-todo-toolbar),
+  :root[data-layout='workbench'] .magic-notes-overview--todos .magic-todo-workspace > .magic-notes-list {
+    grid-column: 1;
+    min-width: 0;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-overview--todos > .magic-notes-library-panel > .magic-notes-pane-heading {
+    grid-row: 2;
+    padding-inline: var(--space-4);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-overview--todos > .magic-notes-library-panel > .magic-todo-toolbar {
+    grid-row: 3;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0 var(--space-3) var(--space-3);
+    gap: var(--space-2);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-overview--todos .magic-todo-toolbar .magic-notes-search {
+    flex: 0 0 auto;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-overview--todos .magic-todo-workspace > .magic-notes-list {
+    grid-row: 4;
+    padding: 0 var(--space-3) var(--space-3);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-overview--todos .magic-notes-todo-resize-handle {
+    display: none;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-overview--todos .magic-todo-detail {
+    grid-column: -2;
+    grid-row: 1 / -1;
+    padding: var(--space-5) var(--space-6) var(--space-6);
+    background: var(--surface-raised);
+  }
+
+  /* No list (note list hidden, or a todo's source note is open): one column, header on one row. */
+  :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace > .magic-notes-overview[hidden]) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace > .magic-notes-overview[hidden])::before {
+    content: none;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace > .magic-notes-overview[hidden]) .magic-notes-detail-container {
+    grid-row: 2;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace > .magic-notes-overview[hidden]) > .page-header {
+    flex-direction: row;
+    align-items: center;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace > .magic-notes-overview[hidden]) > .page-header .page-header__actions {
+    width: auto;
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace > .magic-notes-overview[hidden]) > .page-header .page-header__actions > :is(.primary-button, .secondary-button) {
+    width: auto;
+    flex: 0 1 auto;
+    padding-inline: var(--space-4);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace > .magic-notes-overview[hidden]) > .page-header .magic-notes-page__action-label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+  }
+}

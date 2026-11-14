@@ -132,7 +132,6 @@ export const magicNotes = {
     create: '新建“{{name}}”',
     createButton: '新建标签',
     remove: '移除标签 {{name}}',
-    limitReached: '每篇笔记最多 {{count}} 个标签',
     manage: '管理标签',
     managerTitle: '管理标签',
     managerDescription: '重命名或删除标签会同步到所有笔记，笔记本身不会被删除。',

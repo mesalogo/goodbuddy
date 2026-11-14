@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createMainWindow, loadMainWindow, resolveWindowIcon } from './window'
-import { dialog } from 'electron'
+import { dialog, nativeImage, nativeTheme } from 'electron'
 
 const electronMocks = vi.hoisted(() => ({
   options: [] as Array<Record<string, unknown>>,
@@ -8,6 +8,12 @@ const electronMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
+  nativeTheme: {
+    shouldUseDarkColorsForSystemIntegratedUI: false,
+    shouldUseDarkColors: false,
+    on: vi.fn(),
+    removeListener: vi.fn()
+  },
   app: {
     isPackaged: false,
     getLocale: vi.fn(() => 'en-US'),
@@ -54,6 +60,7 @@ vi.mock('electron', () => ({
 }))
 
 afterEach(() => {
+  Object.assign(nativeTheme, { shouldUseDarkColorsForSystemIntegratedUI: false, shouldUseDarkColors: false })
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
 })
@@ -139,6 +146,23 @@ describe('window recovery', () => {
 })
 
 describe('createMainWindow', () => {
+  it.runIf(process.platform === 'win32')('follows the Windows shell theme independently of the app theme and unsubscribes on close', () => {
+    Object.assign(nativeTheme, { shouldUseDarkColorsForSystemIntegratedUI: true, shouldUseDarkColors: false })
+    const window = createMainWindow(() => false)
+    expect(nativeImage.createFromPath).toHaveBeenLastCalledWith('C:\\source\\build\\icon-taskbar-dark.ico')
+    const update = vi.mocked(nativeTheme.on).mock.calls.at(-1)![1] as () => void
+    Object.assign(nativeTheme, { shouldUseDarkColorsForSystemIntegratedUI: false, shouldUseDarkColors: true })
+    update()
+    expect(nativeImage.createFromPath).toHaveBeenLastCalledWith('C:\\source\\build\\icon-taskbar.ico')
+    expect(window.setIcon).toHaveBeenCalledTimes(2)
+    vi.mocked(window.isDestroyed).mockReturnValue(true)
+    update()
+    expect(window.setIcon).toHaveBeenCalledTimes(2)
+    const onceCalls = vi.mocked(window.once).mock.calls as unknown as Array<[string, () => void]>
+    const close = onceCalls.find(([event]) => event === 'closed')![1]
+    close()
+    expect(nativeTheme.removeListener).toHaveBeenCalledWith('updated', update)
+  })
   it('disables the system frame while preserving renderer isolation', () => {
     createMainWindow(() => false)
 
@@ -166,6 +190,12 @@ describe('createMainWindow', () => {
 })
 
 describe('resolveWindowIcon', () => {
+  it.each([true, false])('uses the bright G on a dark Windows shell (packaged=%s)', isPackaged => {
+    expect(resolveWindowIcon({
+      platform: 'win32', isPackaged, appPath: 'C:\\app',
+      resourcesPath: 'C:\\app\\resources', darkSystemTheme: true
+    })).toBe(`C:\\app\\${isPackaged ? 'resources' : 'build'}\\icon-taskbar-dark.ico`)
+  })
   it('uses the packaged Windows taskbar icon', () => {
     expect(
       resolveWindowIcon({

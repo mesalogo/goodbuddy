@@ -26,8 +26,12 @@
 .device-sharing__authentication legend { padding-inline: var(--space-1); font-size: var(--font-body); }
 .device-sharing__authentication p { margin: 0; }
 .device-sharing__account-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+/* Page-owned error alert; mirrors .remote-hosts-warning. */
+.device-sharing__alert { margin: 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--warning-border); border-radius: var(--radius-control); background: var(--warning-subtle); color: var(--text-secondary); font-size: var(--font-caption); line-height: 1.55; }
+:root[data-theme='dark'] .device-sharing__alert { color: var(--warning); }
+.device-sharing__answer { white-space: pre-wrap; overflow-wrap: anywhere; }
 
-@media (max-width: 640px) {
+@container page-shell (max-width: 640px) {
   .device-sharing__section { padding: var(--space-4); }
   .device-sharing__settings-form, .device-sharing__publication-form, .device-sharing__publication-form > fieldset { grid-template-columns: 1fr; }
   .device-sharing__account-fields { grid-template-columns: 1fr; }

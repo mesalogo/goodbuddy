@@ -2,6 +2,10 @@ import { availableParallelism } from 'node:os'
 import react from '@vitejs/plugin-react'
 import { configDefaults, defineConfig } from 'vitest/config'
 
+// Real Electron UI tests: each file starts an Electron instance, so they are the slowest phase.
+const electronTests = ['tests/**/*.electron.test.ts']
+
+// Process/socket tests that must not run in parallel (see BUILD.md).
 const serialTests = [
   ...configDefaults.include.map((pattern) => `tests/${pattern}`),
   'src/main/agent/**/*runtime*.test.ts',
@@ -37,9 +41,19 @@ export default defineConfig({
         test: {
           name: 'integration',
           include: serialTests,
+          exclude: electronTests,
           maxWorkers: 1,
           // Keep process/socket tests separate from the parallel unit phase.
           sequence: { groupOrder: 1 }
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'electron',
+          include: electronTests,
+          maxWorkers: 1,
+          sequence: { groupOrder: 2 }
         }
       }
     ],

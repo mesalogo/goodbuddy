@@ -1,13 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  TERMINAL_LIMITS,
   type TerminalEvent,
   type TerminalSnapshot,
   type TerminalTarget
 } from '../../shared/terminal-contracts'
 import {
   TerminalSessionManager,
-  TerminalSessionManagerError,
   type ManagedTerminalSession,
   type TerminalSessionManagerDependencies
 } from './terminal-session-manager'
@@ -289,22 +287,16 @@ describe('TerminalSessionManager ownership and lifecycle', () => {
     expect(test.localSessions[0]?.write).not.toHaveBeenCalled()
   })
 
-  it('enforces the per-window limit without affecting another owner', async () => {
+  it('does not cap terminal sessions per window', async () => {
     const test = harness()
-    for (let index = 0;
-      index < TERMINAL_LIMITS.maximumSessionsPerWindow;
-      index += 1) {
+    for (let index = 0; index < 13; index += 1) {
       await test.manager.create(1, {
         target: { type: 'local' },
         cols: 80,
         rows: 24
       })
     }
-    await expect(test.manager.create(1, {
-      target: { type: 'local' },
-      cols: 80,
-      rows: 24
-    })).rejects.toBeInstanceOf(TerminalSessionManagerError)
+    expect(test.localSessions).toHaveLength(13)
     await expect(test.manager.create(2, {
       target: { type: 'local' },
       cols: 80,

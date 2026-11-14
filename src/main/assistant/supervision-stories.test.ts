@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
 import { assignStories } from './story-assignment-service'
 import { SupervisorService } from './supervisor-service'
 import type { ReviewConfiguration } from './supervision-review-store'
@@ -227,7 +228,7 @@ it('protects user adjustments from later assignment and undoes them', async () =
 it('runs after publication inside the review and records failure without failing the review', async () => {
   const f = await fixture()
   const project = f.a
-  f.db.replaceConversations([{ id: randomUUID(), projectId: project.id, title: 'C', updatedAt: Date.now(), messages: [
+  seedConversations(f.db, [{ id: randomUUID(), projectId: project.id, title: 'C', updatedAt: Date.now(), messages: [
     { id: randomUUID(), role: 'user', content: 'Work on the timeline', createdAt: Date.now(), state: 'complete' }] }])
   const summarize = vi.fn(async (input: { evidence: Array<{ id: string; occurredAt: string; sourceType: string }> }) => ({ summary: 'S', changeDigest: '', openItems: [], entities: [], entityChanges: [], relations: [],
     events: input.evidence[0]?.sourceType === 'note' ? [] : [{ title: 'Timeline', description: 'd', occurredAt: input.evidence[0]!.occurredAt, eventType: 'discussion', entityIds: [], sourceReferenceIds: [input.evidence[0]!.id] }] }))

@@ -8,6 +8,7 @@ import { build } from 'esbuild'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { Worker } from 'node:worker_threads'
 import { AssistantDatabase } from './assistant/assistant-database'
+import { seedConversations } from './assistant/conversation-seed-fixture'
 import { KnowledgeDatabase } from './knowledge/knowledge-database'
 import { ReadonlyQueryReader, ReadonlyWorkerUnavailableError, type ReadonlyQueryKind } from './readonly-query-reader'
 
@@ -163,7 +164,7 @@ describe('assistant readonly worker', () => {
         messages: [{ id: randomUUID(), role: 'user' as const, state: 'complete' as const, content: text, createdAt: index * 10 },
           { id: randomUUID(), role: 'assistant' as const, state: 'complete' as const, content: `reply ${index}`, createdAt: index * 10 + 1 }]
       }))
-      database.replaceConversations(conversations)
+      seedConversations(database, conversations)
       const queries = ['äpfel', 'ÄPFEL', 'Äp', 'STRASSE', 'straße', 'İstanbul', 'i̇stanbul', 'ISI', 'σίσυφος', 'ΣΊΣΥΦΟΣ', '平台桌面', '审批',
         '%_', '100%', '_', '\\x', 'ǆ', 'Ǆemal', 'reply 1', 'REPLY', 'title', 'conversation 7', '  plain  ', 'missing', ' ']
       const expected = queries.map(query => referenceSearch(database, query))
@@ -188,7 +189,7 @@ describe('assistant readonly worker', () => {
         { id: randomUUID(), title: 'Done', updatedAt: 3, messages: [message('q', 5, 'complete', 'user'), message('a', 9), message('b', 7)] },
         { id: randomUUID(), title: 'Single', updatedAt: 0, messages: [message('x', 3)] }
       ]
-      database.replaceConversations(conversations)
+      seedConversations(database, conversations)
       const full = database.listConversations()
       expect(full).toHaveLength(4)
       for (const item of full) expect(item).toEqual(database.getConversation(item.id))
@@ -220,7 +221,7 @@ describe('assistant readonly worker', () => {
         messages: index === 0 ? [] : Array.from({ length: index }, (_, at) =>
           message(`m${index}-${at} 跨平台`, index * 10 + at, index === 5 && at === index - 1 ? 'streaming' : 'complete', at === 0 ? 'user' : 'assistant'))
       }))
-      database.replaceConversations(conversations)
+      seedConversations(database, conversations)
       const detailSets = [[], [conversations[3]!.id], conversations.map(item => item.id), [randomUUID()]]
       const expected = detailSets.map(ids => database.listConversationSummaries(ids))
       const expectedFull = conversations.map(item => database.getConversation(item.id))

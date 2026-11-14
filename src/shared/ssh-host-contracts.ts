@@ -3,7 +3,6 @@ import { componentVersionSchema } from './agent-installation-contracts'
 import { utf8ByteLength } from './agent-protocol/contracts'
 
 export const SSH_HOST_LIMITS = {
-  maximumHosts: 100,
   maximumNameLength: 120,
   maximumHostnameLength: 253,
   maximumUsernameLength: 128,

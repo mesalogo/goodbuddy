@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
 import { SupervisorService, type SupervisorSummarizerRequest } from './supervisor-service'
 import type { SupervisionRunRequest } from '../../shared/supervision-contracts'
 import type { ReviewConfiguration } from './supervision-review-store'
@@ -191,7 +192,7 @@ async function fixture(contents: string[][], overrides: Partial<ReviewConfigurat
   const conversations = contents.map((messages, index) => ({ id: randomUUID(), projectId: project.id,
     title: `Conversation ${index}`, updatedAt: time, messages: messages.map(content => ({ id: randomUUID(),
       role: 'user' as const, content, createdAt: time, state: 'complete' as const })) }))
-  db.replaceConversations(conversations)
+  seedConversations(db, conversations)
   const summarize = vi.fn(async (input: SupervisorSummarizerRequest) => ({ ...empty,
     events: input.evidence[0]?.sourceType === 'note' ? [] : input.evidence.map(source => ({
       title: 'Retained fact', description: 'Model claim', occurredAt: source.occurredAt, eventType: 'discussion' as const,

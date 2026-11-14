@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
 import { SupervisorService, type SupervisorSummarizer, type SupervisorSummarizerRequest } from './supervisor-service'
 import { HeartbeatService } from './heartbeat-service'
 import type { SupervisionRunRequest } from '../../shared/supervision-contracts'
@@ -34,7 +35,7 @@ async function fixture(contents = ['Atlas release uses SQLite.']) {
   const conversationId = randomUUID()
   const messages = contents.map((content) => ({ id: randomUUID(), role: 'user' as const, content,
     createdAt: now.getTime() - 1000, state: 'complete' as const }))
-  db.replaceConversations([{ id: conversationId, projectId: project.id, title: 'Atlas', updatedAt: now.getTime(), messages }])
+  seedConversations(db, [{ id: conversationId, projectId: project.id, title: 'Atlas', updatedAt: now.getTime(), messages }])
   const summarize = vi.fn<SupervisorSummarizer['summarize']>(async (input) => output(input))
   const supervisor = new SupervisorService({
     collect: async () => db.collectIncrementalReview(request, 'supervisor').evidence,

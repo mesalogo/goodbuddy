@@ -27,6 +27,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.agent.json && tsc --noEmit -p tsconfig.web.json",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:electron": "vitest run --project electron",
+    "test:fast": "vitest run --project unit --project integration",
     "test:watch": "vitest",
     "test:browser": "node build/run-managed-browser-e2e.cjs",
     "perf:app": "node build/run-app-perf.cjs",
@@ -162,6 +166,14 @@
       {
         "from": "build/icon-taskbar.ico",
         "to": "icon.ico"
+      },
+      {
+        "from": "build/icon-taskbar-dark.ico",
+        "to": "icon-taskbar-dark.ico"
+      },
+      {
+        "from": "build/icon-tray-dark.png",
+        "to": "tray-icon-dark.png"
       },
       {
         "from": "build/icon.png",

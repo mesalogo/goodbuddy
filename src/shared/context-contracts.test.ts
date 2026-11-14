@@ -6,9 +6,10 @@ import {
 } from './contracts'
 
 describe('context contracts', () => {
-  it('validates file batches without accepting empty paths or more than eight files', () => {
+  it('validates file batches without accepting empty paths or capping the file count', () => {
     expect(contextImportFilesSchema.parse({ paths: ['C:\\notes.txt', '/tmp/report.pdf'] }).paths).toHaveLength(2)
-    for (const paths of [[], [''], Array(9).fill('/tmp/notes.txt'), [42]]) {
+    expect(contextImportFilesSchema.parse({ paths: Array(20).fill('/tmp/notes.txt') }).paths).toHaveLength(20)
+    for (const paths of [[], [''], [42]]) {
       expect(contextImportFilesSchema.safeParse({ paths }).success).toBe(false)
     }
     expect(contextImportFilesSchema.safeParse({ paths: ['/tmp/a.txt'], extra: true }).success).toBe(false)

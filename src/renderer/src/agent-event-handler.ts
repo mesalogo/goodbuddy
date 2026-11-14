@@ -709,7 +709,7 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
       ...message,
       artifactIds: [
         ...new Set([...(message.artifactIds ?? []), event.artifactId]),
-      ].slice(-8),
+      ],
       imageContextNotice: event.imageContextNotice,
       status: tRef.current("chat.status.savingImage"),
     }));
@@ -746,7 +746,7 @@ export function handleAgentEvent(event: AgentEvent, deps: AgentEventDependencies
         ...(message.sourceReferences ?? []).filter(
           (reference) => !incomingKeys.has(knowledgeReferenceKey(reference)),
         ),
-      ].slice(0, 20);
+      ];
       return {
         ...message,
         sourceReferences: references,

@@ -7,6 +7,11 @@ import {
   ASSISTANT_DATABASE_SCHEMA_VERSION,
   AssistantDatabase
 } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
+import {
+  HEARTBEAT_RETENTION_DAYS_MAX,
+  heartbeatCreateSchema
+} from '../../shared/assistant-contracts'
 
 const temporaryDirectories: string[] = []
 const historicalModeColumns = `
@@ -124,6 +129,43 @@ describe('AssistantDatabase heartbeat persistence', () => {
     expect(heartbeatTableCount).toBe(4)
   })
 
+  it('accepts retention beyond one year and keeps older history', async () => {
+    expect(
+      heartbeatCreateSchema.safeParse({ ...input, retentionDays: 3_650 }).success
+    ).toBe(true)
+    expect(
+      heartbeatCreateSchema.safeParse({
+        ...input,
+        retentionDays: HEARTBEAT_RETENTION_DAYS_MAX + 1
+      }).success
+    ).toBe(false)
+    const { database, path } = await createDatabase()
+    const config = database.createHeartbeatConfig(
+      { ...input, retentionDays: 3_650 },
+      now
+    )
+    expect(database.getHeartbeatConfig(config.id).retentionDays).toBe(3_650)
+    database.updateHeartbeatConfig(
+      config.id,
+      { ...input, retentionDays: HEARTBEAT_RETENTION_DAYS_MAX },
+      now
+    )
+    expect(database.getHeartbeatConfig(config.id).retentionDays).toBe(
+      HEARTBEAT_RETENTION_DAYS_MAX
+    )
+    database.close()
+    const check = new DatabaseSync(path)
+    const definition = (
+      check
+        .prepare(
+          "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'heartbeat_configs'"
+        )
+        .get() as { sql: string }
+    ).sql
+    check.close()
+    expect(definition).not.toContain('BETWEEN 1 AND 365)')
+  })
+
   it('migrates a legacy single-project heartbeat into explicit scope', async () => {
     const { database, path } = await createDatabase()
     const project = database.listProjects()[0]!
@@ -179,7 +221,7 @@ describe('AssistantDatabase heartbeat persistence', () => {
       description: '',
       rootPath: 'C:\\Excluded',
     })
-    database.replaceConversations(
+    seedConversations(database,
       [first, second, excluded].map((project, index) => ({
         id: `00000000-0000-4000-8000-00000000040${index}`,
         projectId: project.id,
@@ -226,6 +268,33 @@ describe('AssistantDatabase heartbeat persistence', () => {
           .filter(Boolean)
       )
     ).toEqual(new Set([first.id, second.id]))
+    database.close()
+  })
+
+  it('lists every retained heartbeat report unless a limit is given', async () => {
+    const { database, path } = await createDatabase()
+    const config = database.createHeartbeatConfig(input, now)
+    const raw = new DatabaseSync(path)
+    try {
+      const run = raw.prepare(
+        `INSERT INTO heartbeat_runs (id, config_id, trigger, scheduled_for, idempotency_key,
+           status, attempt_count, created_at, updated_at)
+         VALUES (?, ?, 'manual', ?, ?, 'completed', 1, ?, ?)`)
+      const entry = raw.prepare(
+        `INSERT INTO heartbeat_entries (id, config_id, run_id, scheduled_for, summary,
+           highlights_json, proposed_memory_ids_json, follow_up_task_ids_json, created_at)
+         VALUES (?, ?, ?, ?, 'Report', '[]', '[]', '[]', ?)`)
+      raw.exec('BEGIN')
+      for (let index = 0; index < 250; index += 1) {
+        const at = new Date(now.getTime() + index * 1000).toISOString()
+        run.run(`run-${index}`, config.id, at, `key-${index}`, at, at)
+        entry.run(`entry-${index}`, config.id, `run-${index}`, at, at)
+      }
+      raw.exec('COMMIT')
+    } finally { raw.close() }
+    expect(database.listHeartbeatEntries(config.id)).toHaveLength(250)
+    expect(database.listHeartbeatEntries()).toHaveLength(250)
+    expect(database.listHeartbeatEntries(config.id, 20)).toHaveLength(20)
     database.close()
   })
 

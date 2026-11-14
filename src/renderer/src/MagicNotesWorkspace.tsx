@@ -615,6 +615,8 @@ function MagicNotesWorkspaceView({
   const lastDraftAnalysisStartedAtRef = useRef(0)
   const magicNotesLayoutRef = useRef<HTMLDivElement>(null)
   const workspaceRef = useRef<HTMLDivElement>(null)
+  // The page root always has a box; the workspace is `display: contents` in the workbench two-column grid.
+  const pageRef = useRef<HTMLDivElement>(null)
   const streamRef = useRef<HTMLElement>(null)
   const editingReturnPosition = useRef<{ entryId: string; scrollTop: number } | undefined>(undefined)
   const noteScrollPositions = useRef(new Map<string, number>())
@@ -709,18 +711,24 @@ function MagicNotesWorkspaceView({
   }, [indexPaneOpen, indexPaneWidth, aiPanePinned, aiPaneWidth, todoPaneWidth, notesPaneOpen, notesPaneWidth])
 
   useEffect(() => {
-    const workspace = workspaceRef.current
-    if (!workspace) return
+    // Drawer/narrow decisions use the page's content width: in classic and narrow workbench layouts it
+    // equals the workspace width, and it stays measurable when the workbench grid flattens the workspace.
+    const page = pageRef.current
+    if (!page) return
     const update = (): void => {
-      const width = workspace.getBoundingClientRect().width || window.innerWidth
-      setWorkspaceWidth(width)
-      if (width >= 600) setNarrowNotesOpen(false)
+      const style = getComputedStyle(page)
+      const inset = ['paddingLeft', 'paddingRight', 'borderLeftWidth', 'borderRightWidth']
+        .reduce((total, key) => total + (parseFloat(style[key as 'paddingLeft']) || 0), 0)
+      const width = page.getBoundingClientRect().width - inset
+      const measured = width > 0 ? width : window.innerWidth
+      setWorkspaceWidth(measured)
+      if (measured >= 600) setNarrowNotesOpen(false)
     }
     update()
     const observer = new ResizeObserver(update)
-    observer.observe(workspace)
+    observer.observe(page)
     return () => observer.disconnect()
-  }, [loadStatus])
+  }, [])
 
   useEffect(() => {
     const stream = streamRef.current
@@ -2321,7 +2329,7 @@ function MagicNotesWorkspaceView({
   )
 
   return (
-    <div className="magic-notes-page">
+    <div ref={pageRef} className="magic-notes-page">
       <PageHeader
         actions={
           <>
@@ -2331,10 +2339,11 @@ function MagicNotesWorkspaceView({
                 className="secondary-button"
                 onClick={() => requestDraftSwitch({ kind: 'overview' })}
                 disabled={Boolean(busy)}
+                title={t(libraryView === 'todos' ? 'actions.backToTodos' : 'actions.backToOverview')}
                 type="button"
               >
                 <ArrowLeft aria-hidden="true" size={15} />
-                {t(libraryView === 'todos' ? 'actions.backToTodos' : 'actions.backToOverview')}
+                <span className="magic-notes-page__action-label">{t(libraryView === 'todos' ? 'actions.backToTodos' : 'actions.backToOverview')}</span>
               </button>
             )}
             {!detailView && (
@@ -2344,10 +2353,11 @@ function MagicNotesWorkspaceView({
                 className="secondary-button"
                 disabled={Boolean(busy)}
                 onClick={() => requestDraftSwitch({ kind: 'library-view', value: libraryView === 'notes' ? 'todos' : 'notes' })}
+                title={t(libraryView === 'notes' ? 'actions.switchToTodos' : 'actions.switchToNotes')}
                 type="button"
               >
                 {libraryView === 'notes' ? <ListTodo aria-hidden="true" size={15} /> : <BookOpen aria-hidden="true" size={15} />}
-                {t(libraryView === 'notes' ? 'actions.switchToTodos' : 'actions.switchToNotes')}
+                <span className="magic-notes-page__action-label">{t(libraryView === 'notes' ? 'actions.switchToTodos' : 'actions.switchToNotes')}</span>
               </button>
               </>
             )}

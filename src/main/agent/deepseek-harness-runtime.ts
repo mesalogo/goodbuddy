@@ -7,7 +7,6 @@ import type {
   RuntimeNativeTool
 } from '../../shared/contracts'
 import {
-  runtimeNativeInventoryLimits,
   runtimeNativeSkillSchema,
   runtimeNativeToolSchema
 } from '../../shared/runtime-customization-contracts'
@@ -47,9 +46,7 @@ const DEFAULT_MAX_STDERR_BYTES = 64 * 1024
 const DEFAULT_MAX_EVENT_CHARACTERS = 64 * 1024
 const MAX_QUEUED_UPDATES = 1_000
 const MAX_APPROVAL_DETAIL_CHARACTERS = 4_000
-const MAX_MCP_PROXY_TOOLS = 100
 const MAX_MCP_TOOL_DESCRIPTION_CHARACTERS = 1_000
-const MAX_NATIVE_TOOLS = runtimeNativeInventoryLimits.tools
 const MAX_MCP_TOOL_SCHEMA_BYTES = 32 * 1024
 const MAIN_WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 const DSH_BUILTIN_TOOL_KINDS: Readonly<
@@ -381,11 +378,6 @@ function boundedProxyToolCatalog(
       isMainWebTool(tool) || isStoryGraphTool(tool.name) ||
       tool.source === 'mcp' || isMainImageTool(tool.name)
   )
-  if (catalog.length > MAX_MCP_PROXY_TOOLS) {
-    throw new Error(
-      'DeepSeek Harness MCP 工具数量超过安全限制'
-    )
-  }
   const names = new Set<string>()
   return catalog.map((tool) => {
     if (
@@ -1190,7 +1182,6 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         })
         return parsed.success ? [parsed.data] : []
       })
-      .slice(0, runtimeNativeInventoryLimits.skills)
     const rawTools = Array.isArray(response.tools)
       ? response.tools
       : []
@@ -1233,7 +1224,6 @@ export class DeepSeekHarnessRuntime implements AgentRuntime {
         })
         return parsed.success ? [parsed.data] : []
       })
-      .slice(0, MAX_NATIVE_TOOLS)
     return {
       provider: 'deepseek-harness',
       available: true,

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
 import { SupervisorService, type StoredSupervisionResult } from './supervisor-service'
 import { HeartbeatService } from './heartbeat-service'
 
@@ -53,7 +54,7 @@ it.each([false, true])('groups heartbeat and downstream supervision with truthfu
   db.initialize(process.cwd())
   try {
     let finish!: () => void
-    db.replaceConversations([{ id: crypto.randomUUID(), projectId: db.listProjects()[0]!.id, title: 'Review input',
+    seedConversations(db, [{ id: crypto.randomUUID(), projectId: db.listProjects()[0]!.id, title: 'Review input',
       updatedAt: Date.parse('2026-09-23T08:00:00Z'), messages: [{ id: crypto.randomUUID(), role: 'user',
         content: 'New review input', createdAt: Date.parse('2026-09-23T08:00:00Z'), state: 'complete' }] }])
     let entered!: () => void

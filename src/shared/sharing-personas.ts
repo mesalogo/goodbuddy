@@ -5,7 +5,7 @@ export const personaDraftSchema = z.object({
   id: sharingIdSchema.optional(), revision: z.number().int().positive().optional(),
   name: z.string().trim().min(1).max(120), description: z.string().max(2000),
   instructions: z.string().trim().min(1).max(8000), modelId: sharingIdSchema,
-  sourceIds: z.array(sharingIdSchema).max(8), memberIds: z.array(sharingIdSchema).max(200), groupIds: z.array(sharingIdSchema).max(100),
+  sourceIds: z.array(sharingIdSchema), memberIds: z.array(sharingIdSchema), groupIds: z.array(sharingIdSchema),
   status: z.enum(['draft', 'published', 'paused'])
 }).strict()
 export const sharedPersonaSchema = personaDraftSchema.omit({ instructions: true, memberIds: true, groupIds: true, status: true }).extend({

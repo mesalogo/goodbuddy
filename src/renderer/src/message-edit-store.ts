@@ -3,7 +3,6 @@ import type { ConversationQueueUserInput } from '../../shared/contracts'
 import type { Conversation } from './chat-conversation'
 import type { ConversationStore } from './conversation-store'
 import type { ConversationPersistence } from './conversation-persistence'
-import { maximumAttachmentsPerMessage } from '../../shared/attachment-limits'
 
 export type MessageEditState = {
   conversationId: string
@@ -26,7 +25,6 @@ export type MessageEditHost = {
   setDraft: (id: string, content: string) => void
   branchTitle: (source: Conversation) => string
   fallbackError: () => string
-  attachmentLimitError: () => string
 }
 
 export function createMessageEditStore(getHost: () => MessageEditHost) {
@@ -63,13 +61,6 @@ export function createMessageEditStore(getHost: () => MessageEditHost) {
       try {
         const added = await window.goodbuddy.context.selectFiles()
         for (const item of added) ownedAttachments.add(item.id)
-        if (state.attachments.length + added.length > maximumAttachmentsPerMessage) {
-          for (const item of added) {
-            await window.goodbuddy.context.remove(item.id)
-            ownedAttachments.delete(item.id)
-          }
-          throw new Error(getHost().attachmentLimitError())
-        }
         publish({ ...state, attachments: [...state.attachments, ...added], addingFiles: false })
       } catch (error) { publish({ ...state, addingFiles: false, error: errorText(error) }) }
     },

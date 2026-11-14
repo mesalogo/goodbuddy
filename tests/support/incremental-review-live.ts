@@ -69,7 +69,7 @@ void app.whenReady().then(async () => {
   try {
     const now = new Date()
     const messageId = randomUUID()
-    db.replaceConversations([{ id: randomUUID(), projectId: db.listProjects()[0]!.id, title: 'Atlas release', updatedAt: now.getTime(),
+    db.saveLocalConversations([{ header: { id: randomUUID(), projectId: db.listProjects()[0]!.id, title: 'Atlas release', updatedAt: now.getTime() },
       messages: [{ id: messageId, role: 'user', state: 'complete', createdAt: now.getTime() - 1000,
         content: 'The Atlas release uses SQLite. The release date is October 4. Track Atlas as one release entity.' }] }])
     const request: SupervisionRunRequest = { trigger: 'heartbeat', scope: { kind: 'global' }, timeRange: {

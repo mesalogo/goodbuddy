@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, dialog, nativeImage, nativeTheme, shell } from 'electron'
 import { dirname, join, posix, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { DesktopDiagnosticFailureObserver } from './desktop-diagnostics'
@@ -10,6 +10,7 @@ type WindowIconEnvironment = {
   isPackaged: boolean
   appPath: string
   resourcesPath: string
+  darkSystemTheme?: boolean
 }
 
 export function resolveWindowIcon(
@@ -17,7 +18,8 @@ export function resolveWindowIcon(
     platform: process.platform,
     isPackaged: app.isPackaged,
     appPath: app.getAppPath(),
-    resourcesPath: process.resourcesPath
+    resourcesPath: process.resourcesPath,
+    darkSystemTheme: nativeTheme.shouldUseDarkColorsForSystemIntegratedUI
   }
 ): string | undefined {
   if (environment.platform === 'darwin') {
@@ -25,7 +27,9 @@ export function resolveWindowIcon(
   }
   const fileName =
     environment.platform === 'win32'
-      ? environment.isPackaged
+      ? environment.darkSystemTheme
+        ? 'icon-taskbar-dark.ico'
+        : environment.isPackaged
         ? 'icon.ico'
         : 'icon-taskbar.ico'
       : 'icon.png'
@@ -79,6 +83,17 @@ export function createMainWindow(
   })
   if (usableIcon) {
     window.setIcon(usableIcon)
+  }
+  if (process.platform === 'win32') {
+    const updateIcon = () => {
+      if (window.isDestroyed()) return
+      const path = resolveWindowIcon()
+      if (!path) return
+      const nextIcon = nativeImage.createFromPath(path)
+      if (!nextIcon.isEmpty()) window.setIcon(nextIcon)
+    }
+    nativeTheme.on('updated', updateIcon)
+    window.once('closed', () => nativeTheme.removeListener('updated', updateIcon))
   }
 
   window.once('ready-to-show', () => {

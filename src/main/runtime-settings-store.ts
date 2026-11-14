@@ -87,7 +87,7 @@ const version5StoredModelProfileSchema = z.object({
 const version5StoredSettingsSchema = z.object({
   version: z.literal(5),
   provider: runtimeProviderSchema,
-  modelProfiles: z.array(version5StoredModelProfileSchema).min(1).max(20),
+  modelProfiles: z.array(version5StoredModelProfileSchema).min(1),
   defaultModelProfileId: z.string().uuid(),
   opencodeModelSource: runtimeModelSourceSchema,
   continueModelSource: runtimeModelSourceSchema,
@@ -114,8 +114,7 @@ const version6StoredSettingsSchema = version5StoredSettingsSchema
     version: z.literal(6),
     modelProfiles: z
       .array(version6StoredModelProfileSchema)
-      .min(1)
-      .max(20),
+      .min(1),
     runtimeSandboxMode: legacyRuntimeSandboxModeSchema.default('auto'),
     knowledgeEmbeddingEnabled: z.boolean().default(false),
     knowledgeEmbeddingBaseUrl: z
@@ -139,7 +138,7 @@ const version8StoredSettingsSchema = version7StoredSettingsSchema
   .omit({ version: true, modelProfiles: true })
   .extend({
     version: z.literal(8),
-    modelProfiles: z.array(storedModelProfileSchema).min(1).max(20)
+    modelProfiles: z.array(storedModelProfileSchema).min(1)
   })
 
 const version9StoredSettingsSchema = version8StoredSettingsSchema
@@ -191,7 +190,6 @@ const version13StoredSettingsSchema = version12StoredSettingsSchema
     modelProfiles: z
       .array(currentStoredModelProfileSchema)
       .min(1)
-      .max(20)
   })
 
 const version14StoredSettingsSchema = version13StoredSettingsSchema
@@ -276,8 +274,7 @@ const version19StoredSettingsSchema = version18StoredSettingsSchema
     version: z.literal(19),
     embeddingConnections: z
       .array(storedEmbeddingConnectionSchema)
-      .min(1)
-      .max(20),
+      .min(1),
     activeEmbeddingConnectionId: z.string().uuid()
   })
 
@@ -299,8 +296,7 @@ const version21StoredSettingsSchema = version20StoredSettingsSchema
           requestBody: modelRequestBodySchema
         })
       )
-      .min(1)
-      .max(20),
+      .min(1),
     defaultImageModelProfileId: z.string().uuid().nullable().optional(),
     roleSelectionModelProfileId: z.string().uuid().nullable().optional()
   })
@@ -2075,7 +2071,6 @@ export class RuntimeSettingsStore {
     const operation = this.updateQueue.then(async () => {
       const current = await this.load()
       if (current.modelProfiles.some(item => item.id === profile.id)) return { imported: false }
-      if (current.modelProfiles.length >= 20) throw new Error('模型连接已达到 20 个，请先在模型设置中删除不需要的连接。')
       const names = new Set(current.modelProfiles.map(item => item.name.toLowerCase()))
       let name = profile.name
       for (let suffix = 2; names.has(name.toLowerCase()); suffix++) name = `${profile.name.slice(0, 55)} (${suffix})`

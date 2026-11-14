@@ -546,11 +546,7 @@ export const RuntimeCustomizationSection = forwardRef<
   )
 
   const addPreset = (): void => {
-    if (
-      !settings ||
-      settings.continue.presets.length >=
-        runtimeCustomizationLimits.presets
-    ) {
+    if (!settings) {
       return
     }
     const id = crypto.randomUUID()
@@ -738,10 +734,6 @@ export const RuntimeCustomizationSection = forwardRef<
             </label>
             <button
               className="secondary-button"
-              disabled={
-                settings.continue.presets.length >=
-                runtimeCustomizationLimits.presets
-              }
               onClick={addPreset}
               type="button"
             >
@@ -834,10 +826,6 @@ export const RuntimeCustomizationSection = forwardRef<
                   </strong>
                   <button
                     className="secondary-button"
-                    disabled={
-                      selectedPreset.rules.length >=
-                      runtimeCustomizationLimits.rulesPerPreset
-                    }
                     onClick={() =>
                       updateSelectedPreset((current) => ({
                         ...current,
@@ -969,10 +957,6 @@ export const RuntimeCustomizationSection = forwardRef<
                   </strong>
                   <button
                     className="secondary-button"
-                    disabled={
-                      selectedPreset.prompts.length >=
-                      runtimeCustomizationLimits.promptsPerPreset
-                    }
                     onClick={() =>
                       updateSelectedPreset((current) => ({
                         ...current,

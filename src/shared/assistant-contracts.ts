@@ -571,12 +571,13 @@ export const conversationMessageSchema = z
     createdAt: z.number().int().nonnegative(),
     state: z.enum(['streaming', 'complete', 'error']),
     terminalStatus: z.enum(['failed', 'cancelled']).optional(),
-    status: z.string().max(4_000).optional(),
+    // Stored message fields carry no count/length caps: a stored row that
+    // exceeds a display bound must still load instead of failing the parse.
+    status: z.string().optional(),
     contextCompression:
       conversationContextCompressionMarkerSchema.optional(),
     contextCompressions: z
       .array(conversationContextCompressionMarkerSchema)
-      .max(2)
       .optional(),
     tools: z.array(conversationToolActivitySchema).optional(),
     subagents: z.array(conversationSubagentActivitySchema).optional(),
@@ -585,22 +586,22 @@ export const conversationMessageSchema = z
      * renames or deletions do not rewrite history.
      */
     expert: conversationMessageExpertSchema.optional(),
-    sources: z.array(z.string().max(8_192)).max(100).optional(),
+    sources: z.array(z.string()).optional(),
     sourceReferences: z
       .array(
         z
           .object({
             libraryId: assistantIdSchema,
-            libraryName: z.string().max(200),
+            libraryName: z.string(),
             documentId: assistantIdSchema.optional(),
             external: externalKnowledgeLocatorSchema.optional(),
-            warnings: z.array(z.string().max(500)).max(20).optional(),
+            warnings: z.array(z.string()).optional(),
             chunkId: assistantIdSchema.optional(),
-            documentName: z.string().max(500),
-            sourceName: z.string().max(500),
-            sourceLocation: z.string().max(4_096).optional(),
-            locator: z.string().max(1_000).optional(),
-            snippet: z.string().max(16_000),
+            documentName: z.string(),
+            sourceName: z.string(),
+            sourceLocation: z.string().optional(),
+            locator: z.string().optional(),
+            snippet: z.string(),
             rank: z.number().finite(),
             score: z.number().finite().optional(),
             lexicalRank: z.number().int().positive().optional(),
@@ -613,12 +614,10 @@ export const conversationMessageSchema = z
               .optional(),
             evidenceIds: z
               .array(assistantIdSchema)
-              .max(100)
               .optional()
           })
           .strict()
       )
-      .max(20)
       .optional(),
     knowledgeRetrieval: z
       .object({
@@ -631,19 +630,19 @@ export const conversationMessageSchema = z
           'failed',
           'cancelled'
         ]),
-        libraryCount: z.number().int().min(1).max(20),
-        resultCount: z.number().int().nonnegative().max(20),
+        libraryCount: z.number().int().min(1),
+        resultCount: z.number().int().nonnegative(),
         durationMs: z.number().int().nonnegative().optional(),
         usedChannels: z
           .array(z.enum(['fts', 'cjk', 'vector', 'graph']))
           .max(4),
-        warnings: z.array(z.string().max(500)).max(20)
+        warnings: z.array(z.string())
       })
       .strict()
       .optional(),
-    artifactIds: z.array(assistantIdSchema).max(8).optional(),
+    artifactIds: z.array(assistantIdSchema).optional(),
     imageOperations: z.array(imageOperationSchema).optional(),
-    imageSourceArtifactIds: z.array(assistantIdSchema).max(8).optional(),
+    imageSourceArtifactIds: z.array(assistantIdSchema).optional(),
     imageContextNotice: z
       .enum(['reference-unavailable', 'editing-unavailable'])
       .optional(),
@@ -656,7 +655,6 @@ export const conversationMessageSchema = z
       .optional(),
     attachments: z
       .array(conversationAttachmentSchema)
-      .max(8)
       .optional(),
     answeredQuestions: z.array(conversationAnsweredQuestionSchema).optional()
   })
@@ -763,7 +761,7 @@ export const conversationSnapshotSchema = z
     projectId: assistantIdSchema.optional(),
     /** Conversation layer; absent means follow the project. */
     runtimeSelection: runtimeSelectionLayerSchema.optional(),
-    knowledgeLibraryIds: z.array(assistantIdSchema).max(20).optional(),
+    knowledgeLibraryIds: z.array(assistantIdSchema).optional(),
     knowledgeRetrievalMode: z.enum(['auto', 'always']).optional(),
     storyGraphEnabled: z.boolean().optional(),
     /** Role picked in the composer for this conversation; absent means the general assistant. */
@@ -827,10 +825,6 @@ export const conversationSetStoryGraphSchema = z.object({
 export type ConversationSetPinnedInput = z.infer<
   typeof conversationSetPinnedSchema
 >
-
-export const conversationSnapshotsSchema = z
-  .array(conversationSnapshotSchema)
-  .max(100)
 
 export const localConversationHeaderSchema = conversationSnapshotSchema
   .omit({
@@ -1044,6 +1038,34 @@ export type AssistantArtifact = {
   updatedAt: string
 }
 
+/** Keyset cursor for newest-first history lists: rows strictly older than this. */
+export const listCursorSchema = z
+  .object({
+    createdAt: z.string().min(1).max(64),
+    id: z.string().min(1).max(256)
+  })
+  .strict()
+export type ListCursor = z.infer<typeof listCursorSchema>
+
+export const taskListPageRequestSchema = z
+  .object({
+    before: listCursorSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional()
+  })
+  .strict()
+export type TaskListPageRequest = z.infer<typeof taskListPageRequestSchema>
+export type TaskListPage = { tasks: AssistantTask[]; nextCursor?: ListCursor }
+
+export const artifactListPageRequestSchema = z
+  .object({
+    projectId: assistantIdSchema.optional(),
+    before: listCursorSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional()
+  })
+  .strict()
+export type ArtifactListPageRequest = z.infer<typeof artifactListPageRequestSchema>
+export type ArtifactListPage = { artifacts: AssistantArtifact[]; nextCursor?: ListCursor }
+
 export const memoryCreateSchema = z
   .object({
     scope: z.enum(['global', 'project', 'conversation']),
@@ -1126,7 +1148,6 @@ export const heartbeatScopeSchema = z.discriminatedUnion('kind', [
       projectIds: z
         .array(assistantIdSchema)
         .min(1)
-        .max(100)
         .refine(
           (projectIds) => new Set(projectIds).size === projectIds.length,
           'Project IDs must be unique'
@@ -1140,6 +1161,8 @@ export const heartbeatScopeSchema = z.discriminatedUnion('kind', [
 export const heartbeatInterventionSchema = z.enum(['suggest', 'memory'])
 export type HeartbeatIntervention = z.infer<typeof heartbeatInterventionSchema>
 export const defaultHeartbeatIntervention: HeartbeatIntervention = 'suggest'
+// History retention is the user's choice; 100 years is effectively "keep".
+export const HEARTBEAT_RETENTION_DAYS_MAX = 36_500
 
 export const heartbeatCreateSchema = z
   .object({
@@ -1149,7 +1172,7 @@ export const heartbeatCreateSchema = z
     recurrence: heartbeatRecurrenceSchema,
     enabled: z.boolean(),
     lookbackHours: z.number().int().min(1).max(24 * 30),
-    retentionDays: z.number().int().min(1).max(365),
+    retentionDays: z.number().int().min(1).max(HEARTBEAT_RETENTION_DAYS_MAX),
     intervention: heartbeatInterventionSchema.optional()
   })
   .strict()
@@ -1165,7 +1188,9 @@ export const heartbeatListSchema = z
 export const heartbeatHistorySchema = z
   .object({
     configId: assistantIdSchema.optional(),
-    limit: z.number().int().min(1).max(200).default(50)
+    // Without a limit every retained report is returned (retention bounds
+    // them); runs are not listed in the UI and keep their default window.
+    limit: z.number().int().min(1).max(200).optional()
   })
   .strict()
 
@@ -1323,7 +1348,6 @@ export const expertCreateSchema = z
     modelProfileId: assistantIdSchema.optional(),
     routingKeywords: z
       .array(routingKeywordSchema)
-      .max(32)
       .default([])
       .transform((keywords) => [...new Set(keywords)])
   })

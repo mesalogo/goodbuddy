@@ -1,7 +1,6 @@
 export const app = {
   messageEdit: {
     copy: '复制消息',
-    attachmentLimit: '每条消息最多添加 8 个附件，请先移除不需要的附件。',
     title: '编辑消息', action: '编辑', content: '消息内容', cancel: '取消', submit: '保存并重新回复', submitting: '正在提交…',
     hint: '将从此处创建新分支并重新回复，原对话会保留。已执行的文件和外部操作不会撤销。',
     addAttachment: '添加附件', adding: '正在添加附件…', removeAttachment: '移除附件 {{name}}',
@@ -21,14 +20,29 @@ export const app = {
     refresh: '刷新列表', working: '正在处理…', loadFailed: '列表读取失败，已有列表可能过期。请检查服务地址并刷新。',
     thisDevice: '本机', deviceId: '设备 ID', serverUrl: '服务地址', deviceName: '设备名称', save: '保存设置', saved: '共享设置已保存',
     register: '注册本机', registered: '本机注册信息已保存到服务', saveFirst: '请先保存设置，再注册或发布。',
-    tabsLabel: '设备共享内容', tabs: { mine: '我的设备', shared: '共享给我的' }, sharedDevices: '共享设备', noSharedDevices: '暂无共享设备', sharedDevicesHelp: '其他设备注册后会显示在这里。', sharedPublications: '共享目录', noSharedPublications: '暂无共享条目', sharedPublicationsHelp: '其他设备发布的元数据会显示在这里。',
+    tabsLabel: '设备共享内容', tabs: { mine: '我的设备', shared: '共享给我的', personas: '数字分身' }, personasRequireRegistration: '请先保存服务器地址并完成设备注册。', sharedDevices: '共享设备', noSharedDevices: '暂无共享设备', sharedDevicesHelp: '其他设备注册后会显示在这里。', sharedPublications: '共享目录', noSharedPublications: '暂无共享条目', sharedPublicationsHelp: '其他设备发布的元数据会显示在这里。',
     devices: '已注册设备', noDevices: '暂无注册设备', registerFirst: '注册本机后即可发布元数据。', updatedAt: '更新时间',
     publishMetadata: '发布元数据', sourceHelp: '来源模式只描述条目来源。选择“服务器”不会上传或同步内容；知识权限只保存声明。',
     name: '条目名称', description: '描述', kind: '类型', capability: '能力', knowledge: '知识', sourceMode: '来源模式', device: '设备', server: '服务器',
     permissions: '知识权限声明', search: '搜索', read: '读取', download: '下载', target: '发布到', publishedNotice: '元数据已发布',
     publications: '发布目录', noPublications: '暂无发布条目', publishHelp: '填写名称、类型与来源后发布一条元数据。',
     published: '已发布', revoked: '已撤销', yes: '允许', no: '不允许', revoke: '撤销发布', confirmRevoke: '确认撤销发布', cancel: '取消',
-    revokeHelp: '撤销后保留目录记录并标记为已撤销。此操作只修改元数据，不删除本机内容。', revokedNotice: '发布条目已撤销'
+    revokeHelp: '撤销后保留目录记录并标记为已撤销。此操作只修改元数据，不删除本机内容。', revokedNotice: '发布条目已撤销',
+    personas: {
+      title: '数字分身', help: '配置发布到 {{serverUrl}}，由服务器托管执行。发布后 GB 离线仍可使用；本地项目、记忆、文件与密钥不会自动上传。',
+      create: '创建共享分身', edit: '编辑共享分身', refresh: '刷新分身', loading: '正在读取分身…', search: '搜索分身',
+      empty: '暂无可访问的分身。可发布自己的配置，或由管理员授予成员使用权。',
+      status: { draft: '草稿', published: '已发布', paused: '已暂停', revoked: '已撤回' },
+      originDevice: 'GB 客户端共享 · {{device}}', originAdmin: '管理员创建', serverHosted: '服务器托管',
+      chat: '与分身对话', configure: '配置与授权', pause: '暂停分身', pausedNotice: '分身已暂停',
+      withdraw: '撤回共享', withdrawHelp: '撤回后其他成员不能继续调用；之后可由本设备编辑并重新发布。', confirmWithdraw: '确认撤回分身', cancelWithdraw: '取消撤回', withdrawnNotice: '分身已撤回',
+      savedNotice: '分身配置已保存到服务器', save: '保存分身配置', cancelEdit: '取消编辑',
+      fields: { name: '分身名称', description: '分身说明', instructions: '角色与回答规则', model: '服务器执行模型', modelPlaceholder: '请选择模型', sources: '可选站点知识', members: '允许使用的成员', groups: '允许使用的用户组', status: '发布状态' },
+      sourcesHelp: '可不选择知识。选择后使用者须有来源下载权；匿名设备不能选择成员知识。支持 TXT、Markdown、CSV、JSON、LOG。不会上传本地资料。',
+      chatLabel: '分身对话', chatTitle: '{{name}} · AI 对话', chatHelp: '当前为独立文本问答；问题和回答只保留在当前页面。',
+      question: '向分身提问', send: '发送问题', cancelAnswer: '取消回答', answerTitle: 'AI 回答 · {{model}}',
+      source: '[S{{index}}] {{name}} · {{filename}} · 版本 {{version}}'
+    }
   },
   runtimeChecklist: {
     title: '执行清单', count: '已完成 {{completed}}/{{total}}',
@@ -53,7 +67,7 @@ export const app = {
     pinHelp: '常驻只控制左侧捷径。',
     disableHelp: '关闭应用保留数据和常驻偏好，不停止已有请求或后台服务。',
     deviceSharingHelp: '测试阶段默认关闭。启用后可打开页面，向配置的 ShareServer 注册设备和发布元数据。关闭只隐藏入口并退出页面，不清除目录或撤销已发布记录，也不停止已有请求。',
-    disabledPage: '应用已关闭', close: '关闭应用中心', retry: '重新读取', back: '返回应用中心',
+    disabledPage: '应用已关闭', disabledPageDescription: '在应用中心重新开启后，这里会恢复原来的内容。', close: '关闭应用中心', retry: '重新读取', back: '返回应用中心',
     search: '搜索内置应用', noResults: '未找到相关应用', clear: '清除搜索', builtin: '内置',
     enabled: '已启用', disabled: '已关闭', open: '打开', moveUp: '上移 {{name}}', moveDown: '下移 {{name}}',
     orderUpdated: '应用顺序已更新', loadFailed: '无法读取应用设置', saveFailed: '应用设置保存失败',
@@ -587,7 +601,7 @@ export const app = {
       emptyFeishu: '没有找到匹配的文档。只能搜到共享给飞书应用的知识空间和文件夹中的文档。',
       resolve: '前往处理',
       remove: '移除引用 {{name}}',
-      limit: '每条消息最多引用 5 篇文档，重复的文档不会再次添加',
+      duplicate: '该文档已引用，重复的文档不会再次添加',
       feishuCategoriesOff: '已关闭“文档”“知识库”和“云空间”类别',
       wecomCategoryOff: '已关闭“文档管理”类别，无法搜索文档',
       defaultPrompt: '请阅读以下文档。'
@@ -752,7 +766,6 @@ export const app = {
       pasteImageType: '仅支持粘贴 JPEG、PNG 或 WebP 图片',
       pasteFilePath: '无法读取此剪贴板文件，请保存到本地后通过附件按钮添加',
       pasteImageSize: '粘贴图片不能超过 12MB',
-      attachmentLimit: '单次消息最多添加 8 个附件',
       addContext: '添加上下文失败'
     }
   },

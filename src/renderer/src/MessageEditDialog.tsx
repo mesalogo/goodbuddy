@@ -4,7 +4,6 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import type { MessageEditStore } from './message-edit-store'
-import { maximumAttachmentsPerMessage } from '../../shared/attachment-limits'
 import { useWorkspaceUnsavedChanges } from './workspace-unsaved-changes'
 
 export function MessageEditDialog({ store, unavailable }: { store: MessageEditStore; unavailable?: string }): React.JSX.Element | null {
@@ -29,7 +28,7 @@ export function MessageEditDialog({ store, unavailable }: { store: MessageEditSt
           if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); if (!unavailable) void store.submit() }
         }} /></label>
         <div className="message-attachments">{state.attachments.map(attachment => <div className="message-attachment" key={attachment.id}><span>{attachment.name}</span><button type="button" className="icon-button" disabled={busy} aria-label={t('messageEdit.removeAttachment', { name: attachment.name })} onClick={() => store.removeAttachment(attachment.id)}><X size={16} /></button></div>)}</div>
-        <button type="button" className="secondary-button" disabled={busy || state.attachments.length >= maximumAttachmentsPerMessage} onClick={() => void store.addFiles()}><Paperclip size={16} />{t(state.addingFiles ? 'messageEdit.adding' : 'messageEdit.addAttachment')}</button>
+        <button type="button" className="secondary-button" disabled={busy} onClick={() => void store.addFiles()}><Paperclip size={16} />{t(state.addingFiles ? 'messageEdit.adding' : 'messageEdit.addAttachment')}</button>
         {unavailable && <p role="status">{unavailable}</p>}
         {state.error && <p role="alert">{state.error}</p>}
         {state.branch && state.error && <p>{t('messageEdit.branchSaved')}</p>}

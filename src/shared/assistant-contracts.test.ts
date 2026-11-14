@@ -9,6 +9,7 @@ import {
   conversationMessageSchema,
   conversationSubagentActivitySchema,
   conversationSnapshotSchema,
+  expertCreateSchema,
   isUntouchedBuiltInDefaultProject,
   localConversationSaveBatchSchema,
   persistedProjectExecutionSpaceSchema,
@@ -20,6 +21,53 @@ import {
   agentQuestionResponseSchema,
   subagentEventSchema
 } from './contracts'
+import { magicNoteTagListSchema } from './magic-notes-contracts'
+import {
+  defaultRuntimeCustomizationSettings,
+  runtimeCustomizationSettingsSchema
+} from './runtime-customization-contracts'
+
+describe('user-owned collections have no count caps', () => {
+  it('accepts more than the former routing keyword, tag, and preset counts', () => {
+    const keywords = Array.from({ length: 40 }, (_, index) => `keyword-${index}`)
+    expect(
+      expertCreateSchema.parse({
+        name: 'Router',
+        description: '',
+        systemInstructions: 'Route',
+        routingKeywords: keywords
+      }).routingKeywords
+    ).toHaveLength(40)
+
+    const tags = Array.from({ length: 15 }, (_, index) => `tag-${index}`)
+    expect(magicNoteTagListSchema.parse(tags)).toEqual(tags)
+    expect(magicNoteTagListSchema.safeParse(['x'.repeat(25)]).success).toBe(false)
+
+    const id = (index: number): string =>
+      `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`
+    const presets = Array.from({ length: 13 }, (_, index) => ({
+      id: id(index + 1),
+      name: `Preset ${index}`,
+      rules: Array.from({ length: index === 0 ? 33 : 0 }, (_, rule) => ({
+        id: id(1_000 + rule),
+        name: `Rule ${rule}`,
+        content: 'Do it',
+        enabled: true
+      })),
+      prompts: Array.from({ length: index === 0 ? 33 : 0 }, (_, prompt) => ({
+        id: id(2_000 + prompt),
+        name: `Prompt ${prompt}`,
+        prompt: 'Say it'
+      }))
+    }))
+    expect(
+      runtimeCustomizationSettingsSchema.safeParse({
+        ...defaultRuntimeCustomizationSettings,
+        continue: { presets }
+      }).success
+    ).toBe(true)
+  })
+})
 
 const untouchedProject: AssistantProject = {
   id: '00000000-0000-4000-8000-000000000101',
@@ -358,7 +406,7 @@ describe('conversation branch contracts', () => {
 })
 
 describe('conversation knowledge scope contracts', () => {
-  it('persists a bounded per-conversation knowledge library selection', () => {
+  it('persists a per-conversation knowledge library selection without a count cap', () => {
     const knowledgeLibraryIds = [
       '00000000-0000-4000-8000-000000000301',
       '00000000-0000-4000-8000-000000000302'
@@ -385,7 +433,7 @@ describe('conversation knowledge scope contracts', () => {
         updatedAt: 1,
         messages: []
       }).success
-    ).toBe(false)
+    ).toBe(true)
   })
 })
 

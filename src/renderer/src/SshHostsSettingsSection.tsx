@@ -660,18 +660,18 @@ export function SshHostsSettingsSection({
         </button>
       </div>
       {error && (
-        <p className="settings-warning" role="alert">
+        <p className="remote-hosts-warning" role="alert">
           {error}
         </p>
       )}
 
-      <div className="settings-notice">
+      <div className="remote-hosts-notice">
         <ShieldCheck aria-hidden="true" size={16} />
         <span>{t('sshHosts.securityNotice')}</span>
       </div>
 
       {!secureStorageAvailable && !loading && (
-        <div className="settings-warning" role="alert">
+        <div className="remote-hosts-warning" role="alert">
           {t('sshHosts.secureStorageUnavailable')}
         </div>
       )}
@@ -799,7 +799,7 @@ export function SshHostsSettingsSection({
             return (
               <section
                 aria-label={host.name}
-                className={`settings-section ssh-host-card${expanded ? ' ssh-host-card--expanded' : ''}`}
+                className={`ssh-host-card${expanded ? ' ssh-host-card--expanded' : ''}`}
                 key={host.id}
               >
                 <div className="ssh-host-card__summary">

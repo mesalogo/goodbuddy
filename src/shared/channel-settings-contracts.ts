@@ -8,7 +8,6 @@ import { settingsWarningsSchema } from './settings-warning-contracts'
 export const CHANNEL_SETTINGS_LIMITS = {
   maximumIdentifierLength: 256,
   maximumSecretLength: 4_096,
-  maximumAllowedSenders: 100,
   maximumStatusMessageLength: 500,
   maximumWarningLength: 500
 } as const
@@ -29,12 +28,10 @@ const senderIdentifierSchema = identifierSchema.min(1)
 
 export const allowedSenderIdsSchema = z
   .array(senderIdentifierSchema)
-  .max(CHANNEL_SETTINGS_LIMITS.maximumAllowedSenders)
   .transform((values) => [...new Set(values)])
 
 export const telegramAllowedSenderIdsSchema = z
   .array(senderIdentifierSchema.regex(/^[1-9][0-9]*$/u))
-  .max(CHANNEL_SETTINGS_LIMITS.maximumAllowedSenders)
   .transform((values) => [...new Set(values)])
 
 export const channelSecretUpdateSchema = z.discriminatedUnion('action', [

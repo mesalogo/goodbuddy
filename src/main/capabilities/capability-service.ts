@@ -85,7 +85,6 @@ const DEFAULT_DISABLED_BUILTIN_SKILL_IDS = new Set([
   'product-evidence',
   'product-presentation'
 ])
-const MAX_SKILL_DISCOVERY_RESULTS = 64
 const MAX_SKILL_INSTRUCTION_CHARACTERS = 262_144
 const SKILL_DISCOVERY_IGNORED_DIRECTORIES = new Set([
   'node_modules',
@@ -184,7 +183,7 @@ const storedCapabilitiesV1Schema = z
   .object({
     version: z.literal(1),
     skills: z.record(skillIdSchema, skillStateSchema),
-    mcpServers: z.array(storedMcpServerSchema).max(64)
+    mcpServers: z.array(storedMcpServerSchema)
   })
   .strict()
 
@@ -199,7 +198,7 @@ const storedCapabilitiesV2Schema = z
   .object({
     version: z.literal(2),
     skills: z.record(skillIdSchema, skillStateSchema),
-    mcpServers: z.array(storedMcpServerSchema).max(64),
+    mcpServers: z.array(storedMcpServerSchema),
     computerCapabilities: z
       .object({
         'host-browser-control': computerCapabilityStateSchema,
@@ -219,7 +218,7 @@ const storedCapabilitiesV3Schema = z
   .object({
     version: z.literal(3),
     skills: z.record(skillIdSchema, skillStateSchema),
-    mcpServers: z.array(storedMcpServerSchema).max(64),
+    mcpServers: z.array(storedMcpServerSchema),
     webSearch: webSearchStateSchema,
     computerCapabilities: z
       .object({
@@ -442,7 +441,7 @@ async function discoverSkillDirectories(root: string): Promise<string[]> {
   }
   const found: string[] = []
   const walk = async (current: string, depth: number): Promise<void> => {
-    if (depth > MAX_SKILL_DISCOVERY_DEPTH || found.length > MAX_SKILL_DISCOVERY_RESULTS) {
+    if (depth > MAX_SKILL_DISCOVERY_DEPTH) {
       return
     }
     let entries
@@ -468,11 +467,6 @@ async function discoverSkillDirectories(root: string): Promise<string[]> {
     }
   }
   await walk(root, 0)
-  if (found.length > MAX_SKILL_DISCOVERY_RESULTS) {
-    throw new Error(
-      `所选目录包含的 Skill 超过 ${MAX_SKILL_DISCOVERY_RESULTS} 个，请选择更精确的目录`
-    )
-  }
   return found.sort((left, right) => left.localeCompare(right))
 }
 
@@ -977,9 +971,6 @@ export class CapabilityService {
       ...builtins,
       ...imported.filter((skill) => !builtinIds.has(skill.id))
     ]
-    if (catalog.length > 256) {
-      throw new Error('Skill 数量超过 256 个安全限制')
-    }
     return catalog
   }
 
@@ -1828,9 +1819,6 @@ export class CapabilityService {
       const existing = state.mcpServers.find((server) => server.id === id)
       if (serverId && !existing) {
         throw new Error('MCP Server 不存在')
-      }
-      if (!existing && state.mcpServers.length >= 64) {
-        throw new Error('MCP Server 数量不能超过 64 个')
       }
       if (
         existing &&

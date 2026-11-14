@@ -4,7 +4,6 @@ import type { app as chineseApp } from '../zh-CN/app'
 export const app = {
   messageEdit: {
     copy: 'Copy message',
-    attachmentLimit: 'A message can contain up to 8 attachments. Remove unused attachments first.',
     title: 'Edit message', action: 'Edit', content: 'Message', cancel: 'Cancel', submit: 'Save and regenerate', submitting: 'Submitting…',
     hint: 'Create a new branch from here and generate a new reply. The original conversation is preserved. File changes and external actions already performed will not be undone.',
     addAttachment: 'Add attachment', adding: 'Adding attachments…', removeAttachment: 'Remove attachment {{name}}',
@@ -24,14 +23,29 @@ export const app = {
     refresh: 'Refresh lists', working: 'Working…', loadFailed: 'Could not load the lists. Previous results may be stale. Check the service URL and refresh.',
     thisDevice: 'This device', deviceId: 'Device ID', serverUrl: 'Service URL', deviceName: 'Device name', save: 'Save settings', saved: 'Sharing settings saved',
     register: 'Register this device', registered: 'Device registration saved to the service', saveFirst: 'Save settings before registering or publishing.',
-    tabsLabel: 'Device sharing content', tabs: { mine: 'My device', shared: 'Shared with me' }, sharedDevices: 'Shared devices', noSharedDevices: 'No shared devices', sharedDevicesHelp: 'Devices registered by others will appear here.', sharedPublications: 'Shared catalog', noSharedPublications: 'No shared entries', sharedPublicationsHelp: 'Metadata published by other devices will appear here.',
+    tabsLabel: 'Device sharing content', tabs: { mine: 'My device', shared: 'Shared with me', personas: 'Digital personas' }, personasRequireRegistration: 'Save the server address and register this device first.', sharedDevices: 'Shared devices', noSharedDevices: 'No shared devices', sharedDevicesHelp: 'Devices registered by others will appear here.', sharedPublications: 'Shared catalog', noSharedPublications: 'No shared entries', sharedPublicationsHelp: 'Metadata published by other devices will appear here.',
     devices: 'Registered devices', noDevices: 'No registered devices', registerFirst: 'Register this device to publish metadata.', updatedAt: 'Updated at',
     publishMetadata: 'Publish metadata', sourceHelp: 'Source mode describes the entry only. Selecting Server does not upload or sync content; knowledge permissions are declarations only.',
     name: 'Entry name', description: 'Description', kind: 'Kind', capability: 'Capability', knowledge: 'Knowledge', sourceMode: 'Source mode', device: 'Device', server: 'Server',
     permissions: 'Knowledge permission declarations', search: 'Search', read: 'Read', download: 'Download', target: 'Publish to', publishedNotice: 'Metadata published',
     publications: 'Publication catalog', noPublications: 'No publications', publishHelp: 'Enter a name, kind and source to publish metadata.',
     published: 'Published', revoked: 'Revoked', yes: 'Allowed', no: 'Not allowed', revoke: 'Revoke publication', confirmRevoke: 'Confirm revocation', cancel: 'Cancel',
-    revokeHelp: 'The catalog record will remain with a revoked status. This changes metadata only and does not delete local content.', revokedNotice: 'Publication revoked'
+    revokeHelp: 'The catalog record will remain with a revoked status. This changes metadata only and does not delete local content.', revokedNotice: 'Publication revoked',
+    personas: {
+      title: 'Digital personas', help: 'Configurations are published to {{serverUrl}} and run on the server. Once published, they stay available while GB is offline. Local projects, memories, files and keys are never uploaded automatically.',
+      create: 'Create shared persona', edit: 'Edit shared persona', refresh: 'Refresh personas', loading: 'Loading personas…', search: 'Search personas',
+      empty: 'No personas available. Publish your own configuration, or ask an administrator to grant member access.',
+      status: { draft: 'Draft', published: 'Published', paused: 'Paused', revoked: 'Withdrawn' },
+      originDevice: 'Shared from GB client · {{device}}', originAdmin: 'Created by administrator', serverHosted: 'Hosted on server',
+      chat: 'Chat with persona', configure: 'Configure and grant access', pause: 'Pause persona', pausedNotice: 'Persona paused',
+      withdraw: 'Withdraw sharing', withdrawHelp: 'Other members can no longer use it after withdrawal. You can edit and republish it from this device later.', confirmWithdraw: 'Confirm withdrawal', cancelWithdraw: 'Keep sharing', withdrawnNotice: 'Persona withdrawn',
+      savedNotice: 'Persona configuration saved to the server', save: 'Save persona configuration', cancelEdit: 'Cancel editing',
+      fields: { name: 'Persona name', description: 'Persona description', instructions: 'Role and answering rules', model: 'Server model', modelPlaceholder: 'Select a model', sources: 'Site knowledge (optional)', members: 'Allowed members', groups: 'Allowed user groups', status: 'Publishing status' },
+      sourcesHelp: 'Knowledge is optional. Users need download permission for selected sources; anonymous devices cannot select member knowledge. Supports TXT, Markdown, CSV, JSON and LOG. Local files are not uploaded.',
+      chatLabel: 'Persona chat', chatTitle: '{{name}} · AI chat', chatHelp: 'Single-turn text Q&A. Questions and answers stay on this page only.',
+      question: 'Ask the persona', send: 'Send question', cancelAnswer: 'Stop answer', answerTitle: 'AI answer · {{model}}',
+      source: '[S{{index}}] {{name}} · {{filename}} · version {{version}}'
+    }
   },
   runtimeChecklist: {
     title: 'Execution checklist', count: '{{completed}}/{{total}} completed',
@@ -56,7 +70,7 @@ export const app = {
     pinHelp: 'Pinning only controls the sidebar shortcut.',
     disableHelp: 'Disabling preserves data and pins without stopping existing requests or background services.',
     deviceSharingHelp: 'Off by default during testing. Enable to open the page and register devices or publish metadata to the configured ShareServer. Disabling hides the entry and leaves the page without clearing the catalog, revoking publications, or stopping existing requests.',
-    disabledPage: 'Application is disabled', close: 'Close application center', retry: 'Reload settings', back: 'Back to application center',
+    disabledPage: 'Application is disabled', disabledPageDescription: 'Turn it on again in the application center to restore this page.', close: 'Close application center', retry: 'Reload settings', back: 'Back to application center',
     search: 'Search built-in applications', noResults: 'No matching applications', clear: 'Clear search', builtin: 'Built-in',
     enabled: 'Enabled', disabled: 'Disabled', open: 'Open', moveUp: 'Move {{name}} up', moveDown: 'Move {{name}} down',
     orderUpdated: 'Application order updated', loadFailed: 'Could not load application settings', saveFailed: 'Could not save application settings',
@@ -604,7 +618,7 @@ export const app = {
       emptyFeishu: 'No matching documents. Only documents in wiki spaces and folders shared with the Feishu app can be found.',
       resolve: 'Go resolve',
       remove: 'Remove reference {{name}}',
-      limit: 'A message can reference up to 5 documents, and the same document is added only once',
+      duplicate: 'This document is already referenced; the same document is added only once',
       feishuCategoriesOff: 'The Docs, Wiki and Drive categories are turned off',
       wecomCategoryOff: 'The Document management category is turned off, so documents cannot be searched',
       defaultPrompt: 'Please read the following documents.'
@@ -788,7 +802,6 @@ export const app = {
       pasteImageType: 'Only JPEG, PNG, or WebP images can be pasted',
       pasteFilePath: 'Cannot read this clipboard file. Save it locally, then use Add attachment.',
       pasteImageSize: 'Pasted images cannot exceed 12 MB',
-      attachmentLimit: 'A message can include up to 8 attachments',
       addContext: 'Failed to add context'
     }
   },

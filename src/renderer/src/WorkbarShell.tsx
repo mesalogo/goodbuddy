@@ -25,7 +25,6 @@ import { ChannelIcon } from './ChannelIcon'
 import './workbar-catalog.css'
 import {
   WORKBAR_APP_DEFINITIONS,
-  WORKBAR_LIMITS,
   orderWorkbarInstances,
   type WorkbarAppDefinition,
   type WorkbarAppId,
@@ -309,10 +308,6 @@ export function WorkbarShell({
         onActiveInstanceChange(existing.id)
         return
       }
-    }
-
-    if (instances.length >= WORKBAR_LIMITS.maximumOpenInstances) {
-      return
     }
 
     const insertAfterInstanceId = activeInstanceId
@@ -600,14 +595,9 @@ export function WorkbarShell({
                 const availability = definition.availability
                 const unavailable =
                   availability.state === 'unavailable'
-                const atLimit =
-                  !existing &&
-                  instances.length >=
-                    WORKBAR_LIMITS.maximumOpenInstances
                 // An open tab stays reachable even when the app is unavailable.
                 const disabled =
                   (unavailable && !existing) ||
-                  atLimit ||
                   creatingAppId !== null
                 return (
                   <li
@@ -654,12 +644,6 @@ export function WorkbarShell({
                           </button>
                         ) : null}
                       </div>
-                    ) : atLimit ? (
-                      <small className="workbar-shell__limit">
-                        {t('sidebar.workbar.limit', {
-                          count: WORKBAR_LIMITS.maximumOpenInstances
-                        })}
-                      </small>
                     ) : null}
                   </li>
                 )

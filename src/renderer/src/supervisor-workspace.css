@@ -1104,7 +1104,17 @@
   gap: var(--space-4);
 }
 
-.supervisor-center__sections > .heartbeat-center__section-heading {
+/* Automatic-plan tab content. Not a container: its rules query the page's heartbeat-center container. */
+.heartbeat-sections {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.heartbeat-sections > .heartbeat-center__section-heading {
   flex-wrap: wrap;
   margin-bottom: 0;
   gap: var(--space-3);

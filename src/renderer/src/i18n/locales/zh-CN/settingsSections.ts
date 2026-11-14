@@ -518,10 +518,9 @@ export const settingsSections = {
       routingSeparator: '、',
       routingPlaceholder: '例如：代码审查、TypeScript、性能分析',
       routingHelp:
-        '使用逗号或换行分隔，保存时会去重并规范化。最多 32 个，每个 2 至 48 个字符。'
+        '使用逗号或换行分隔，保存时会去重并规范化。每个 2 至 48 个字符。'
     },
     validation: {
-      tooManyKeywords: '路由关键词最多 32 个。',
       invalidKeyword: '关键词“{{keyword}}”需为 2 至 48 个字符。'
     },
     errors: {

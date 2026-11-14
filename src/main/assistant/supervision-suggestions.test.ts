@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
 import { SupervisorService, type SupervisorSummarizerRequest } from './supervisor-service'
 import { deriveSuggestions, type SuggestionPhraser } from './supervision-suggester'
 import type { SupervisionRunRequest } from '../../shared/supervision-contracts'
@@ -39,7 +40,7 @@ async function fixture() {
   cleanups.push(async () => { sql.close(); db.close(); await rm(directory, { recursive: true, force: true }) })
   const project = db.listProjects()[0]!
   const messageId = randomUUID()
-  db.replaceConversations([{ id: randomUUID(), projectId: project.id, title: 'Scheduling', updatedAt: time,
+  seedConversations(db, [{ id: randomUUID(), projectId: project.id, title: 'Scheduling', updatedAt: time,
     messages: [{ id: messageId, role: 'user', content: 'Should reviews pause after 300 seconds?', createdAt: time, state: 'complete' }] }])
   let openItem = 'Decide the review page size'
   const summarize = vi.fn(async (input: SupervisorSummarizerRequest) => graph(input, openItem))

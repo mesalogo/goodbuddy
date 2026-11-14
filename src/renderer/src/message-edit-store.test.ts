@@ -26,7 +26,7 @@ function fixture() {
   Object.defineProperty(window, 'goodbuddy', { configurable: true, value: { conversations: { branchLocal }, conversationQueue: { enqueueUser }, context: { remove, saveDraft, selectFiles } } })
   const openConversation = vi.fn(), setDraft = vi.fn(), unavailable = vi.fn<() => string | undefined>(() => undefined)
   const store = createMessageEditStore(() => ({ conversations, persistence, flush: () => persistence.persist(), unavailable,
-    queueDefaults: () => ({ knowledgeLibraryIds: [] }), openConversation, setDraft, branchTitle: () => 'branch', fallbackError: () => 'failed', attachmentLimitError: () => 'too many attachments' }))
+    queueDefaults: () => ({ knowledgeLibraryIds: [] }), openConversation, setDraft, branchTitle: () => 'branch', fallbackError: () => 'failed' }))
   return { source, conversations, branchLocal, enqueueUser, saveDraft, selectFiles, remove, openConversation, setDraft, unavailable, store }
 }
 
@@ -106,16 +106,15 @@ it('adds files independently of the source draft and only releases newly importe
   expect(f.saveDraft).not.toHaveBeenCalled()
 })
 
-it('releases a rejected over-limit import immediately while retaining the original selection', async () => {
+it('accepts more attachments than the former per-message count cap', async () => {
   const f = fixture()
-  f.selectFiles.mockResolvedValueOnce(Array.from({ length: 8 }, (_, index) => ({ id: `extra-${index}`, name: 'extra.txt', size: 1, preview: 'x', kind: 'text' })))
+  f.selectFiles.mockResolvedValueOnce(Array.from({ length: 12 }, (_, index) => ({ id: `extra-${index}`, name: 'extra.txt', size: 1, preview: 'x', kind: 'text' })))
   f.store.open('source', 'edit')
   await f.store.addFiles()
-  expect(f.store.getState()).toMatchObject({ addingFiles: false, error: 'too many attachments' })
-  expect(f.store.getState()?.attachments.map(item => item.id)).toEqual(['asset'])
-  expect(f.remove).toHaveBeenCalledTimes(8)
-  await f.store.cancel()
-  expect(f.remove).toHaveBeenCalledTimes(8)
+  expect(f.store.getState()).toMatchObject({ addingFiles: false })
+  expect(f.store.getState()?.error).toBeUndefined()
+  expect(f.store.getState()?.attachments).toHaveLength(13)
+  expect(f.remove).not.toHaveBeenCalled()
 })
 
 it('hands imported attachments to the accepted queue without removing an in-flight context', async () => {

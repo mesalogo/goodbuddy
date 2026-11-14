@@ -107,8 +107,6 @@ import { safeToolErrorDetail } from './approval-summary'
 const MAX_REQUEST_BODY_BYTES = 64 * 1024
 const MAX_RESULT_BYTES = 128 * 1024
 const MAX_CUSTOM_MCP_RESULT_BYTES = 256 * 1024
-const MAX_CUSTOM_MCP_SERVERS = 16
-const MAX_CUSTOM_MCP_TOOLS = 100
 const MAX_DOWNSTREAM_MCP_SESSIONS_PER_CAPABILITY = 8
 const CUSTOM_MCP_TIMEOUT_MS = 30_000
 const CUSTOM_MCP_MAX_TOTAL_TIMEOUT_MS = 5 * 60_000
@@ -653,11 +651,6 @@ export class KnowledgeMcpGateway {
     if (servers.length === 0) {
       return undefined
     }
-    if (servers.length > MAX_CUSTOM_MCP_SERVERS) {
-      throw new Error(
-        `Agent Runtime 最多可加载 ${MAX_CUSTOM_MCP_SERVERS} 个 MCP Server`
-      )
-    }
     if (
       servers.some(
         (server) =>
@@ -928,11 +921,6 @@ export class KnowledgeMcpGateway {
     server: ResolvedMcpServer,
     tools: Awaited<ReturnType<Client['listTools']>>['tools']
   ): CustomMcpBinding[] {
-    if (tools.length > MAX_CUSTOM_MCP_TOOLS) {
-      throw new Error(
-        `MCP Server「${server.name}」提供的工具数量超过安全限制`
-      )
-    }
     return tools.map((tool) => {
       if (!isValidMcpToolName(tool.name)) {
         throw new Error(
@@ -972,7 +960,6 @@ export class KnowledgeMcpGateway {
     signal: AbortSignal
   ): Promise<Awaited<ReturnType<Client['listTools']>>['tools']> {
     return listAllMcpTools(client, server.name, signal, {
-      maximumTools: MAX_CUSTOM_MCP_TOOLS,
       pageTimeoutMs: CUSTOM_MCP_TIMEOUT_MS,
       totalTimeoutMs: CUSTOM_MCP_MAX_TOTAL_TIMEOUT_MS
     })
@@ -1226,11 +1213,12 @@ export class KnowledgeMcpGateway {
     const bindings = new Map<string, CustomMcpBinding>()
     for (const connection of connections) {
       for (const binding of connection.bindings) {
-        if (bindings.size >= MAX_CUSTOM_MCP_TOOLS) {
-          throw new Error('Agent Runtime MCP 工具总数超过 100 个安全限制')
-        }
         if (bindings.has(binding.exposedTool.name)) {
-          throw new Error('Agent Runtime MCP 工具名称发生冲突')
+          // Isolate the conflict to this tool instead of failing the request.
+          console.warn(
+            `Agent Runtime MCP tool name conflict skipped: ${binding.server.name} / ${binding.originalName}`
+          )
+          continue
         }
         bindings.set(binding.exposedTool.name, binding)
       }

@@ -44,14 +44,14 @@ async function collect(
 }
 
 describe('image conversation context', () => {
-  it('accepts bounded artifact references without expanding text history contracts', () => {
+  it('accepts artifact references without expanding text history contracts', () => {
     expect(agentRequestSchema.parse(request()).imageContextArtifactIds).toEqual([artifactId])
     expect(() => agentRequestSchema.parse({
       ...request(), imageContextArtifactIds: ['not-an-id']
     })).toThrow()
-    expect(() => agentRequestSchema.parse({
+    expect(agentRequestSchema.parse({
       ...request(), imageContextArtifactIds: Array(9).fill(artifactId)
-    })).toThrow()
+    }).imageContextArtifactIds).toHaveLength(9)
   })
 
   it('loads persisted images without runtime memory and sends both image and text context', async () => {

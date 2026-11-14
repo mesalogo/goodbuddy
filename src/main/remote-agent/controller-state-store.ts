@@ -9,13 +9,16 @@ import {
 } from '../../shared/agent-protocol'
 import {
   isMissingFileError,
+  isolateCorruptSettingsFile,
   writeJsonFileAtomically
 } from '../settings-file-utils'
 
-const MAXIMUM_CONNECTION_RECORDS = 128
-const MAXIMUM_EVENT_CURSORS = 1_024
-const MAXIMUM_NONTERMINAL_OPERATIONS = 4_096
-const MAXIMUM_ACP_BINDINGS = 128
+// Connection records and ACP recovery bindings are deliberately uncapped.
+// Rejecting a new record would block connecting to a Host or opening a
+// conversation channel, and a read-side cap would make a file the writer
+// legitimately produced unloadable. Records stay small (no payloads), are
+// replaced per cache key, cleared on Host invalidation, and ACP bindings
+// are dropped whenever the daemon boot or capability generation changes.
 const ACP_BINDING_WRITE_DELAY_MS = 25
 
 const eventCursorSchema = z
@@ -47,7 +50,6 @@ const connectionStateSchema = z
     capabilityGeneration: z.number().int().min(1).max(0xffff_ffff),
     acpBindings: z
       .array(acpRecoveryBindingSchema)
-      .max(MAXIMUM_ACP_BINDINGS)
       .default([])
   })
   .strict()
@@ -68,18 +70,10 @@ const connectionStateSchema = z
 
 const compatibleConnectionStateSchema = z
   .object({
-    eventCursors: z
-      .array(eventCursorSchema)
-      .max(MAXIMUM_EVENT_CURSORS)
-      .optional(),
-    nonterminalOperationIds: z
-      .array(agentIdentifierSchema)
-      .max(MAXIMUM_NONTERMINAL_OPERATIONS)
-      .optional(),
-    acpBindingIds: z
-      .array(agentIdentifierSchema)
-      .max(MAXIMUM_ACP_BINDINGS)
-      .optional()
+    // Legacy fields: validated for shape only and then discarded.
+    eventCursors: z.array(eventCursorSchema).optional(),
+    nonterminalOperationIds: z.array(agentIdentifierSchema).optional(),
+    acpBindingIds: z.array(agentIdentifierSchema).optional()
   })
   .passthrough()
   .transform((state) => {
@@ -94,9 +88,7 @@ const persistedControllerStateSchema = z
   .object({
     version: z.literal(1),
     controllerId: agentIdentifierSchema,
-    connections: z
-      .array(connectionStateSchema)
-      .max(MAXIMUM_CONNECTION_RECORDS)
+    connections: z.array(connectionStateSchema)
   })
   .strict()
   .superRefine((state, context) => {
@@ -118,9 +110,7 @@ const persistedControllerStateReadSchema = z
   .object({
     version: z.literal(1),
     controllerId: agentIdentifierSchema,
-    connections: z
-      .array(compatibleConnectionStateSchema)
-      .max(MAXIMUM_CONNECTION_RECORDS)
+    connections: z.array(compatibleConnectionStateSchema)
   })
   .strict()
   .transform((state) => persistedControllerStateSchema.parse(state))
@@ -138,24 +128,47 @@ export type PersistedControllerState = z.infer<
 export interface ControllerStateFile {
   read(): Promise<unknown | undefined>
   write(value: PersistedControllerState): Promise<void>
+  /**
+   * Moves unreadable persisted state aside as a backup so startup can
+   * continue with fresh state. When absent, corrupt state stays fatal.
+   */
+  isolateCorrupt?(): Promise<void>
 }
+
+export class CorruptControllerStateError extends Error {}
 
 export class JsonControllerStateFile implements ControllerStateFile {
   constructor(readonly filePath: string) {}
 
   async read(): Promise<unknown | undefined> {
+    let contents: string
     try {
-      return JSON.parse(await readFile(this.filePath, 'utf8')) as unknown
+      contents = await readFile(this.filePath, 'utf8')
     } catch (error) {
       if (isMissingFileError(error)) {
         return undefined
       }
       throw error
     }
+    try {
+      return JSON.parse(contents) as unknown
+    } catch (error) {
+      throw new CorruptControllerStateError(
+        'Controller state file is not valid JSON',
+        { cause: error }
+      )
+    }
   }
 
   async write(value: PersistedControllerState): Promise<void> {
     await writeJsonFileAtomically(this.filePath, value)
+  }
+
+  async isolateCorrupt(): Promise<void> {
+    await isolateCorruptSettingsFile(
+      this.filePath,
+      'Controller state is corrupt and could not be isolated'
+    )
   }
 }
 
@@ -204,9 +217,6 @@ export class ControllerStateStore {
       if (index >= 0) {
         state.connections[index] = parsed
       } else {
-        if (state.connections.length >= MAXIMUM_CONNECTION_RECORDS) {
-          throw new Error('Controller connection state limit reached')
-        }
         state.connections.push(parsed)
       }
       await this.#writeState(state)
@@ -305,9 +315,6 @@ export class ControllerStateStore {
         (candidate) => candidate.bindingId !== parsedBindingId
       )
       if (parsed !== undefined) {
-        if (connection.acpBindings.length >= MAXIMUM_ACP_BINDINGS) {
-          throw new Error('Controller ACP recovery state limit reached')
-        }
         connection.acpBindings.push(parsed)
       }
       this.#acpBindingsDirty = true
@@ -378,16 +385,31 @@ export class ControllerStateStore {
   }
 
   async #loadState(): Promise<PersistedControllerState> {
-    const value = await this.#file.read()
-    const state =
-      value === undefined
-        ? {
-            version: 1 as const,
-            controllerId: randomUUID(),
-            connections: []
-          }
-        : persistedControllerStateReadSchema.parse(value)
-    if (value === undefined) {
+    let state: PersistedControllerState | undefined
+    try {
+      const value = await this.#file.read()
+      if (value !== undefined) {
+        state = persistedControllerStateReadSchema.parse(value)
+      }
+    } catch (error) {
+      const corrupt =
+        error instanceof CorruptControllerStateError ||
+        error instanceof z.ZodError
+      if (!corrupt || this.#file.isolateCorrupt === undefined) {
+        throw error
+      }
+      // Recovery state only enables resuming live remote channels; losing
+      // it costs a reconnect. Keep the unreadable file as a backup rather
+      // than blocking every future startup.
+      await this.#file.isolateCorrupt()
+      state = undefined
+    }
+    if (state === undefined) {
+      state = {
+        version: 1 as const,
+        controllerId: randomUUID(),
+        connections: []
+      }
       await this.#file.write(state)
     }
     this.#state = state

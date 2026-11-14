@@ -42,7 +42,6 @@ import type {
   ConversationQueueItem,
 } from "../../shared/assistant-contracts";
 import type { ExternalKnowledgeInstanceSummary } from "../../shared/external-knowledge-contracts";
-import { maximumAttachmentsPerMessage } from "../../shared/attachment-limits";
 import { getEffectiveContextTriggerTokens } from "../../shared/context-window";
 import {
   agentRuntimeSelectionKey,
@@ -273,7 +272,7 @@ export const Composer = memo(function Composer({
     if (!referenceStore || !current) return;
     const selected = referencesInDraft(composerDrafts.get(conversationId), references);
     if (!referenceStore.add(conversationId, reference, selected.map(referenceKey))) {
-      actions.setContextError(t("composer.references.limit"));
+      actions.setContextError(t("composer.references.duplicate"));
       return;
     }
     // Keep the selected document at the exact position of the typed mention.
@@ -840,10 +839,6 @@ export const Composer = memo(function Composer({
                 event.preventDefault();
                 if (actions.isSelectingContextFiles()) {
                   actions.setContextError(t("composer.attachmentProgress.waitBeforeSending"));
-                  return;
-                }
-                if (files.length > maximumAttachmentsPerMessage) {
-                  actions.setContextError(t("composer.errors.attachmentLimit"));
                   return;
                 }
                 try {

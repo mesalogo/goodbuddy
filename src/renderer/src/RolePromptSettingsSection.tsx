@@ -67,9 +67,6 @@ function validateRoutingKeywords(
   keywords: readonly string[],
   t: TFunction<'settingsSections'>
 ): string | undefined {
-  if (keywords.length > 32) {
-    return t('roles.validation.tooManyKeywords')
-  }
   const invalid = keywords.find(
     (keyword) => keyword.length < 2 || keyword.length > 48
   )

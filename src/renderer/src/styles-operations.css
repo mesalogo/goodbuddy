@@ -984,7 +984,7 @@
 }
 
 .heartbeat-center > .page-tabs {
-  padding: 14px 0;
+  padding: var(--space-4) 0;
 }
 
 .heartbeat-center__panel {

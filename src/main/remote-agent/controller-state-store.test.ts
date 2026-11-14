@@ -20,6 +20,23 @@ class MemoryStateFile implements ControllerStateFile {
   }
 }
 
+class IsolatingMemoryStateFile extends MemoryStateFile {
+  isolated: unknown[] = []
+  readError?: Error
+
+  override async read(): Promise<unknown | undefined> {
+    if (this.readError !== undefined) {
+      throw this.readError
+    }
+    return await super.read()
+  }
+
+  async isolateCorrupt(): Promise<void> {
+    this.isolated.push(structuredClone(this.value))
+    this.value = undefined
+  }
+}
+
 const connection: ControllerConnectionState = {
   cacheKey: 'a'.repeat(64),
   hostId: 'host-1',
@@ -132,6 +149,68 @@ describe('ControllerStateStore', () => {
     }
     const malformed = new ControllerStateStore(file)
     await expect(malformed.getControllerId()).rejects.toThrow()
+  })
+
+  it('isolates corrupt persisted state instead of blocking startup', async () => {
+    const file = new IsolatingMemoryStateFile()
+    file.value = {
+      version: 1,
+      controllerId: 'controller-1',
+      connections: [{ cacheKey: 'not-a-hash' }]
+    }
+    const store = new ControllerStateStore(file)
+    const controllerId = await store.getControllerId()
+    expect(controllerId).not.toBe('controller-1')
+    expect(file.isolated).toEqual([
+      {
+        version: 1,
+        controllerId: 'controller-1',
+        connections: [{ cacheKey: 'not-a-hash' }]
+      }
+    ])
+    expect(file.value).toEqual({
+      version: 1,
+      controllerId,
+      connections: []
+    })
+  })
+
+  it('does not isolate state on non-corruption read failures', async () => {
+    const file = new IsolatingMemoryStateFile()
+    file.readError = Object.assign(new Error('EACCES'), { code: 'EACCES' })
+    const store = new ControllerStateStore(file)
+    await expect(store.getControllerId()).rejects.toThrow('EACCES')
+    expect(file.isolated).toEqual([])
+  })
+
+  it('stores and reloads more connections and bindings than the former caps', async () => {
+    const file = new MemoryStateFile()
+    const store = new ControllerStateStore(file)
+    for (let index = 0; index < 130; index += 1) {
+      await store.updateConnection({
+        ...connection,
+        cacheKey: index.toString(16).padStart(64, '0'),
+        acpBindings: []
+      })
+    }
+    for (let index = 0; index < 130; index += 1) {
+      await store.updateAcpBinding('0'.repeat(64), `binding-${index}`, {
+        ...connection.acpBindings[0]!,
+        bindingId: `binding-${index}`,
+        channelId: `binding-${index}`
+      })
+    }
+    await store.flush()
+    store.dispose()
+
+    const reloaded = new ControllerStateStore(file)
+    expect(await reloaded.getControllerId()).toBe(
+      (file.value as PersistedControllerState).controllerId
+    )
+    expect((file.value as PersistedControllerState).connections).toHaveLength(130)
+    expect(
+      (await reloaded.getConnection('0'.repeat(64)))?.acpBindings
+    ).toHaveLength(130)
   })
 
   it('atomically advances and removes one ACP recovery binding', async () => {

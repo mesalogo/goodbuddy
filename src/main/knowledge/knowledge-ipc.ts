@@ -56,7 +56,7 @@ import { supportedDocumentExtensions } from './document-parser'
 
 const knowledgeSearchSchema = z
   .object({
-    libraryIds: z.array(knowledgeIdSchema).max(20),
+    libraryIds: z.array(knowledgeIdSchema),
     query: z.string().trim().min(1).max(512)
   })
   .strict()

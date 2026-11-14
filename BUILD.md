@@ -43,21 +43,31 @@ npm run typecheck
 npm run lint
 ```
 
-Vitest runs two ordered projects from `vitest.config.ts`. The `unit` project runs
-first with up to four workers, bounded by Node's available CPU parallelism. Once
-it finishes, the `integration` project runs with one worker. The serial group
-contains all test files under `tests/` (including `*.electron.test.ts`),
-`src/main/agent/**/*runtime*.test.ts`, and
-`src/agent-daemon/private-endpoint.test.ts`. Other tests remain in the unit group.
-Both projects inherit the React plugin, jsdom environment, renderer setup, and
-existing exclusions; test-file isolation remains enabled.
+Vitest runs three ordered projects from `vitest.config.ts`:
 
-This preserves serialization for the process/socket tests that previously timed
-out on Linux with two workers (commit `93721d6`). `sequence.groupOrder` keeps the
-two phases from overlapping. Existing file filters still work, for example
-`npm test -- src/main/agent/opencode-runtime.test.ts`. To select a whole phase,
-use `npm test -- --project unit` or `npm test -- --project integration`. To inspect
-file selection without running tests, use `npx vitest list --filesOnly`.
+| Project | Files | Workers | Script |
+|---|---|---|---|
+| `unit` | everything not listed below | up to four, bounded by CPU parallelism | `npm run test:unit` |
+| `integration` | `tests/` except `*.electron.test.ts`, `src/main/agent/**/*runtime*.test.ts`, `src/agent-daemon/private-endpoint.test.ts` | one | `npm run test:integration` |
+| `electron` | `tests/**/*.electron.test.ts` (each file starts a real Electron instance) | one | `npm run test:electron` |
+
+`npm run test:fast` runs `unit` and `integration`. `npm test` still runs all three.
+All projects inherit the React plugin, jsdom environment, renderer setup, and
+existing exclusions; test-file isolation remains enabled. `sequence.groupOrder`
+keeps the phases from overlapping.
+
+Measured on the Windows development machine on 2026-11-14: `test:fast` about
+10 minutes (597 files), `test:electron` about 7 minutes (36 files).
+
+Use `test:fast` while iterating on a change. Run `test:electron` when the change
+touches renderer UI, window/overlay behaviour, or Main/Preload code those tests
+exercise, and always before committing such a change. `npm test` remains the
+full gate before a release candidate.
+
+Serial execution preserves the process/socket tests that previously timed out
+on Linux with two workers (commit `93721d6`). Existing file filters still work,
+for example `npm test -- src/main/agent/opencode-runtime.test.ts`. To inspect
+file selection without running tests, use `npx vitest list --filesOnly --project <name>`.
 
 For activity-history persistence, run
 `npx vitest run src/main/assistant/activity-history-io.test.ts`. This checks both
@@ -118,10 +128,12 @@ Windows x64 解包应用已验证；物理断网、安装器及其他系统验�
 npm run icons
 ```
 
-脚本会精确裁出亮色和深色圆角卡片，清理圆角外侧背景并使用适合主题的
-边缘颜色生成透明抗锯齿，避免缩放后出现白边。它会统一更新 `build` 中的
-PNG / ICO、Renderer 图标，以及官网使用的亮色和深色品牌图标。任务栏和
-托盘图标保持透明背景。
+脚本使用 `icons/g-logo-light.png` 和 `icons/g-logo-dark.png` 生成带圆角透明
+边缘的亮／暗图标，统一更新 `build` 中的 PNG / ICO、Renderer 图标，以及
+官网和 README 使用的品牌图标。Windows 运行中的任务栏和托盘根据系统主题
+切换 `icons/g-logo-light-transparent.png`／`icons/g-logo-dark-transparent.png`
+生成的透明图标，深色任务栏使用浅蓝紫色 G；EXE 和快捷方式保留静态图标。完整素材与输出
+说明见 [Logo 资源说明](./icons/README.md)。
 
 ## 平台打包
 

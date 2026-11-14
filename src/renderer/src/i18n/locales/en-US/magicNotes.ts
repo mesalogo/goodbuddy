@@ -137,7 +137,6 @@ export const magicNotes = {
     create: 'Create "{{name}}"',
     createButton: 'New tag',
     remove: 'Remove tag {{name}}',
-    limitReached: 'A note can have at most {{count}} tags',
     manage: 'Manage tags',
     managerTitle: 'Manage tags',
     managerDescription: 'Renaming or deleting a tag updates every note. Notes themselves are never deleted.',

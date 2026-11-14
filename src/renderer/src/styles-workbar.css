@@ -445,8 +445,7 @@
 
 .workbar-shell__catalog-copy span,
 .workbar-shell__catalog-copy small,
-.workbar-shell__unavailable,
-.workbar-shell__limit {
+.workbar-shell__unavailable {
   color: var(--text-secondary);
   font-size: var(--font-caption);
 }

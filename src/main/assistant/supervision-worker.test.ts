@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { build } from 'esbuild'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
 import { createProductionSupervisorService } from './supervision-production'
 import { SupervisionModelPool } from './supervision-model-pool'
 import type { AgentRuntime } from '../agent/runtime'
@@ -40,7 +41,7 @@ async function fixture() {
   const conversations = [project, other].map(p => ({ id: randomUUID(), projectId: p.id, title: p.name, updatedAt: now,
     messages: Array.from({ length: 211 }, (_, index) => ({ id: randomUUID(), role: 'user' as const,
       state: 'complete' as const, content: index === 210 ? '' : `Source ${index} \u{1f600}`, createdAt: now })) }))
-  db.replaceConversations(conversations)
+  seedConversations(db, conversations)
   sql.prepare('UPDATE messages SET metadata_json = ? WHERE id = ?').run(JSON.stringify({ sourceReferences: [
     { documentId: 'document', documentName: 'Reference', snippet: 'Knowledge \u{1f600}', chunkId: 'chunk' }
   ] }), conversations[0]!.messages[0]!.id)

@@ -10,9 +10,7 @@ import type { TerminalSnapshot } from "../../shared/terminal-contracts";
 import LocalInferencePage from "./LocalInferencePage";
 import { ApplicationMenu } from './ApplicationMenu';
 import { DocumentConversationContext } from './DocumentConversationContext';
-import { maximumAttachmentsPerMessage } from '../../shared/attachment-limits';
 import { buildRuntimeHistory } from '../../shared/runtime-history';
-import { DeviceSharingPage } from './DeviceSharingPage';
 import { useMessageEdit } from './use-message-edit';
 import { MessageEditDialog } from './MessageEditDialog';
 import {
@@ -37,7 +35,10 @@ import {
   CircleAlert,
   Download,
   Grid2X2,
+  HeartPulse,
+  History,
   Info,
+  LayoutGrid,
   LoaderCircle,
   Maximize2,
   MessageSquarePlus,
@@ -119,7 +120,6 @@ import type {
   AssistantTask,
   TokenUsageSummary,
   ConversationQueueItem,
-  ConversationSnapshot,
   ConversationAttachment,
   ProjectCreateInput,
   ProjectChannel,
@@ -183,6 +183,7 @@ import {
   useTaskStatusRows,
 } from "./task-selectors";
 import {
+  loadOlderTasks,
   refreshTasks,
   useArtifactHydration,
   useInitialArtifactSync,
@@ -192,6 +193,7 @@ import {
   createConversationPersistence,
   createLocalConversationSaveBatch,
   mergePersistedConversations,
+  saveLocalConversationBatchIsolatingFailures,
   toConversationMessage,
   toLocalConversationHeader,
   withRecoveredQuestions,
@@ -249,6 +251,12 @@ import {
   saveAppearanceTheme,
   type AppearanceTheme,
 } from "./theme";
+import {
+  applyInterfaceLayout,
+  loadInterfaceLayout,
+  saveInterfaceLayout,
+  type InterfaceLayout,
+} from "./interface-layout";
 import {
   describeSpeechRecognitionError,
   getSpeechRecognitionConstructor,
@@ -309,6 +317,10 @@ const remoteHostsPageRoute = createPreloadableComponent(
   () => import("./RemoteHostsPage"),
   (module) => module.RemoteHostsPage,
 );
+const deviceSharingPageRoute = createPreloadableComponent(
+  () => import("./DeviceSharingPage"),
+  (module) => module.DeviceSharingPage,
+);
 const idleRouteModuleLoaders = [heartbeatCenterRoute.preload] as const;
 
 const KnowledgeWorkspace = knowledgeWorkspaceRoute.Component;
@@ -317,6 +329,7 @@ const MagicNotesWorkspace = magicNotesWorkspaceRoute.Component;
 const SettingsPanel = settingsPanelRoute.Component;
 const ActivityPanel = activityPanelRoute.Component;
 const RemoteHostsPage = remoteHostsPageRoute.Component;
+const DeviceSharingPage = deviceSharingPageRoute.Component;
 
 const conversationPersistenceIntervalMs = 500;
 // How often streaming deltas are absorbed into the conversation store; rows render them live.
@@ -448,6 +461,16 @@ function RouteLoadError({
   );
 }
 
+/** Error boundary and loading fallback around one lazily loaded page. */
+function LazyRoute({ children, route }: { children: ReactNode; route: string }): React.JSX.Element {
+  const { t } = useTranslation("app");
+  return (
+    <RouteErrorBoundary key={route} fallback={<RouteLoadError message={t("route.loadFailed")} reloadLabel={t("route.reload")} />}>
+      <Suspense fallback={<RouteLoadingStatus label={t("route.loading")} />}>{children}</Suspense>
+    </RouteErrorBoundary>
+  );
+}
+
 function AppNotificationItem({
   notification,
   dispatch,
@@ -569,6 +592,7 @@ const intentRoutePreloaders: Partial<
   activity: activityPanelRoute.preload,
   settings: settingsPanelRoute.preload,
   "remote-hosts": remoteHostsPageRoute.preload,
+  "device-sharing": deviceSharingPageRoute.preload,
 };
 
 function preloadWorkspaceRouteOnIntent(view: WorkspaceView): void {
@@ -593,12 +617,13 @@ const emptyTokenUsage: TokenUsageSummary = {
 };
 
 const storageKey = "goodbuddy.conversations.v1";
+const legacyConversationBackupStorageKey = `${storageKey}.unmigrated-backup`;
 const emptyConversationTasks: AssistantTask[] = [];
 const emptyAttachments: ContextAttachment[] = [];
 type RightSidebarHandlers = Required<Pick<RightAssistantSidebarProps,
   | "onBeforeCloseNotes" | "onOpenSupervisionGraph" | "onContinueSupervision" | "onCreateCustomTask"
   | "onBackBrowser" | "onNavigateBrowser" | "onReloadBrowser" | "onStopLoadingBrowser"
-  | "onOpenTask"
+  | "onOpenTask" | "onLoadOlderTasks"
 >>;
 const emptyImageReferences: AssistantArtifact[] = [];
 
@@ -724,7 +749,6 @@ function loadConversations(
     const conversations = parsed
       .map(stripLegacyConversationModes)
       .filter(isConversation)
-      .slice(0, 100)
       .map((conversation) => ({
         ...conversation,
         contextMetrics:
@@ -768,7 +792,6 @@ function isConversation(value: unknown): value is Conversation {
       runtimeSelectionLayerSchema.safeParse(item.runtimeSelection).success) &&
     (item.knowledgeLibraryIds === undefined ||
       (Array.isArray(item.knowledgeLibraryIds) &&
-        item.knowledgeLibraryIds.length <= 20 &&
         item.knowledgeLibraryIds.every(
           (libraryId) =>
             typeof libraryId === "string" &&
@@ -814,7 +837,6 @@ function isConversation(value: unknown): value is Conversation {
           ).success) &&
         (entry.contextCompressions === undefined ||
           (Array.isArray(entry.contextCompressions) &&
-            entry.contextCompressions.length <= 2 &&
             entry.contextCompressions.every(
               (compression) =>
                 conversationContextCompressionMarkerSchema.safeParse(
@@ -829,7 +851,6 @@ function isConversation(value: unknown): value is Conversation {
             ))) &&
         (entry.artifactIds === undefined ||
           (Array.isArray(entry.artifactIds) &&
-            entry.artifactIds.length <= 8 &&
             entry.artifactIds.every(
               (artifactId) => typeof artifactId === "string",
             ))) &&
@@ -841,34 +862,37 @@ function isConversation(value: unknown): value is Conversation {
               "string")) &&
         (entry.attachments === undefined ||
           (Array.isArray(entry.attachments) &&
-            entry.attachments.length <= 8 &&
             entry.attachments.every(isConversationAttachment)))
       );
     })
   );
 }
 
-function toConversationSnapshots(
-  conversations: Conversation[],
-): ConversationSnapshot[] {
-  return conversations
-    .filter((conversation) => !conversation.remote)
-    .slice(0, 100)
-    .map((conversation) => ({
-      id: conversation.id,
-      projectId: conversation.projectId,
-      runtimeSelection: conversation.runtimeSelection,
-      knowledgeLibraryIds: conversation.knowledgeLibraryIds,
-      knowledgeRetrievalMode: conversation.knowledgeRetrievalMode,
-      storyGraphEnabled: conversation.storyGraphEnabled,
-      selectedExpertId: conversation.selectedExpertId,
-      contextMetrics: conversation.contextMetrics,
-      contextCompressionState: conversation.contextCompressionState,
-      ...(conversation.branch ? { branch: conversation.branch } : {}),
-      title: conversation.title,
-      updatedAt: conversation.updatedAt,
-      messages: conversation.messages.map(toConversationMessage),
-    }));
+/**
+ * Removes the legacy localStorage key only when every legacy conversation is
+ * stored in Main (migrated now or already present); otherwise the raw payload
+ * is copied to a backup key first, so data the import could not migrate is
+ * never deleted.
+ */
+function finishLegacyConversationMigration(storedConversationIds: ReadonlySet<string>): void {
+  const value = localStorage.getItem(storageKey);
+  if (value === null) return;
+  let complete: boolean;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    complete = Array.isArray(parsed) && parsed.every((entry) => {
+      const conversation = stripLegacyConversationModes(entry);
+      // Remote rows are owned by Main's channel store and never migrated.
+      return isConversation(conversation) &&
+        (conversation.remote !== undefined || storedConversationIds.has(conversation.id));
+    });
+  } catch {
+    complete = false;
+  }
+  if (!complete) {
+    localStorage.setItem(legacyConversationBackupStorageKey, value);
+  }
+  localStorage.removeItem(storageKey);
 }
 
 /** Resolves global → project → conversation layers into the selection a run uses. */
@@ -1241,6 +1265,9 @@ function App(): React.JSX.Element {
   const [runtimeSwitching, setRuntimeSwitching] = useState(false);
   const [appearanceTheme, setAppearanceTheme] =
     useState<AppearanceTheme>(loadAppearanceTheme);
+  const [interfaceLayout, setInterfaceLayout] =
+    useState<InterfaceLayout>(loadInterfaceLayout);
+  const workbenchLayout = interfaceLayout === "workbench";
   const [brandingPreferences, setBrandingPreferences] = useState(
     loadBrandingPreferences,
   );
@@ -1317,7 +1344,9 @@ function App(): React.JSX.Element {
   const [narrowWindow, setNarrowWindow] = useState(
     () => window.innerWidth < 900,
   );
-  const [sidebarOpen, setSidebarOpen] = useState(
+  // The user's preference for the conversation column; see `sidebarOpen` below
+  // for whether it is shown.
+  const [sidebarPreferredOpen, setSidebarOpen] = useState(
     () => window.innerWidth >= 900,
   );
   const [primarySidebarWidth, setPrimarySidebarWidth] = useState(
@@ -1337,6 +1366,11 @@ function App(): React.JSX.Element {
     Record<string, Record<string, BrowserLiveState>>
   >({});
   const [view, setViewState] = useState<WorkspaceView>("chat");
+  // In the workbench layout the conversation column belongs to the chat page:
+  // other pages bring their own object list (notes, libraries, ...). The column
+  // stays mounted and the preference is kept for the return to chat.
+  const conversationColumnAvailable = !workbenchLayout || view === "chat";
+  const sidebarOpen = sidebarPreferredOpen && conversationColumnAvailable;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [localInferenceOpen, setLocalInferenceOpen] = useState(false);
   const [applicationCenterOpen, setApplicationCenterOpen] = useState(false);
@@ -1900,7 +1934,9 @@ function App(): React.JSX.Element {
   }, []);
   const resizePrimarySidebarFromClientX = useCallback(
     (clientX: number, commit: boolean): void => {
-      const width = clampPrimarySidebarWidth(clientX, window.innerWidth);
+      // The workbench application rail sits left of the sidebar; measure from the sidebar edge.
+      const left = sidebarRef.current?.getBoundingClientRect().left ?? 0;
+      const width = clampPrimarySidebarWidth(clientX - left, window.innerWidth - left);
       livePrimarySidebarWidthRef.current = width;
       if (commit) {
         setPrimarySidebarWidth(width);
@@ -2101,10 +2137,10 @@ function App(): React.JSX.Element {
       return;
     }
     const focusFrame = requestAnimationFrame(() => {
-      sidebarRef.current
-        ?.querySelector<HTMLButtonElement>(
-          '.primary-nav button[aria-current="page"], .primary-nav button',
-        )
+      const sidebar = sidebarRef.current;
+      // The workbench layout moves primary navigation to the rail, so fall back to the first sidebar control.
+      (sidebar?.querySelector<HTMLButtonElement>('.primary-nav button[aria-current="page"], .primary-nav button')
+        ?? sidebar?.querySelector<HTMLButtonElement>("button"))
         ?.focus();
     });
     const closeOnEscape = (event: KeyboardEvent): void => {
@@ -2134,6 +2170,11 @@ function App(): React.JSX.Element {
   useEffect(() => {
     saveAppearanceTheme(appearanceTheme);
   }, [appearanceTheme]);
+
+  useLayoutEffect(() => {
+    saveInterfaceLayout(interfaceLayout);
+    applyInterfaceLayout(interfaceLayout);
+  }, [interfaceLayout]);
 
   useEffect(() => {
     const revision = applicationSettingsRevisionRef;
@@ -3686,12 +3727,13 @@ function App(): React.JSX.Element {
         );
         nextConversations = [projectConversation, ...nextConversations];
       }
-      const acknowledgedLocalConversations = new Map(
+      const acknowledgedLocalConversations = new Map<string, Conversation>(
         persistedLocalConversations.map((conversation) => [
           conversation.id,
           conversation,
         ]),
       );
+      const failedMigrationIds = new Set<string>();
       if (
         nextConversations.some(
           (conversation) =>
@@ -3700,30 +3742,25 @@ function App(): React.JSX.Element {
               conversation,
         )
       ) {
-        if (persistedConversations.length === 0) {
-          const migratedSnapshots = toConversationSnapshots(nextConversations);
-          await window.goodbuddy.conversations.replace(migratedSnapshots);
-          const migratedSnapshotIds = new Set(
-            migratedSnapshots.map((conversation) => conversation.id),
-          );
-          for (const conversation of nextConversations) {
-            if (migratedSnapshotIds.has(conversation.id)) {
-              acknowledgedLocalConversations.set(conversation.id, conversation);
-            }
-          }
-        }
+        // Upsert-only migration in batches; never deletes rows already in Main.
+        // A conversation Main rejects stays unacknowledged (the periodic save
+        // retries it) and must not block the others.
         while (true) {
           const migration = createLocalConversationSaveBatch(
             nextConversations,
             acknowledgedLocalConversations,
-            new Set(),
+            failedMigrationIds,
           );
           if (migration.batch.length === 0) {
             break;
           }
-          await window.goodbuddy.conversations.saveLocal(migration.batch);
-          for (const conversation of migration.acknowledgements) {
-            acknowledgedLocalConversations.set(conversation.id, conversation);
+          const failures = await saveLocalConversationBatchIsolatingFailures(
+            migration,
+            acknowledgedLocalConversations,
+            window.goodbuddy.conversations.saveLocal,
+          );
+          for (const failure of failures) {
+            failedMigrationIds.add(failure.conversation.id);
           }
         }
       }
@@ -3734,10 +3771,20 @@ function App(): React.JSX.Element {
       setConversations(nextConversations);
       setActiveId(projectConversation?.id ?? "");
       try {
-        localStorage.removeItem(storageKey);
+        finishLegacyConversationMigration(new Set([
+          ...persistedConversationIds,
+          ...acknowledgedLocalConversations.keys(),
+        ]));
         conversationMigrationStoragePresent.current = false;
       } catch {
-        // The SQLite migration has already completed successfully.
+        // Keep the legacy key when the backup copy could not be written.
+      }
+      if (failedMigrationIds.size > 0) {
+        notify({
+          tone: "error",
+          message: tRef.current("notices.conversationPersistenceFailed"),
+          dedupeKey: "conversation-persistence",
+        });
       }
       setConversationStoreReady(true);
     });
@@ -4184,7 +4231,7 @@ function App(): React.JSX.Element {
           imageOperations: message.imageOperations?.some(item => item.id === operation.id)
             ? message.imageOperations.map(item => item.id === operation.id ? operation : item)
             : [...(message.imageOperations ?? []), operation],
-          artifactIds: [...new Set([...(message.artifactIds ?? []), ...operation.artifactIds])].slice(-8),
+          artifactIds: [...new Set([...(message.artifactIds ?? []), ...operation.artifactIds])],
         }),
       }));
     });
@@ -5633,14 +5680,7 @@ function App(): React.JSX.Element {
       const unique = selected.filter(
         (item) => !current.some((existing) => existing.id === item.id),
       );
-      const accepted = unique.slice(0, Math.max(0, maximumAttachmentsPerMessage - current.length));
-      for (const attachment of unique.slice(accepted.length)) {
-        void window.goodbuddy.context.remove(attachment.id);
-      }
-      updateAttachments([...current, ...accepted]);
-      if (accepted.length < unique.length) {
-        setContextError(t("composer.errors.attachmentLimit"));
-      }
+      updateAttachments([...current, ...unique]);
     } catch (reason) {
       notify({
         tone: "error",
@@ -6657,6 +6697,7 @@ function App(): React.JSX.Element {
         browserApi.stopLoading({ conversationId, tabId }),
       ),
     onOpenTask: openAssistantTask,
+    onLoadOlderTasks: () => loadOlderTasks(taskStore),
   });
   const notesPanelActive = assistantSidebarOpen && magicNotesEnabled;
   const notesPanel = useMemo(
@@ -6802,8 +6843,162 @@ function App(): React.JSX.Element {
     openConversation: id => { conversationListRowHandlers.select(id); showChatAndFocusComposer(); }, setDraft: setConversationInput,
     branchTitle: source => createConversationBranchTitle(getConversationDisplayTitle(source, t('conversation.defaultTitle')), t('conversation.branch.suffix')),
     fallbackError: () => t('notices.conversationBranchFailed'),
-    attachmentLimitError: () => t('messageEdit.attachmentLimit'),
   });
+
+  const brandLogo =
+    brandingPreferences.logoDataUrl ??
+    (resolvedAppearanceTheme === "dark" ? goodbuddyDarkIcon : goodbuddyLightIcon);
+  const primaryNavigation = (
+    <nav className="primary-nav" aria-label={t("navigation.label")}>
+      <button
+        aria-current={view === "chat" ? "page" : undefined}
+        className={
+          view === "chat" ? "nav-item nav-item--active" : "nav-item"
+        }
+        onClick={(event) =>
+          navigateFromSidebar("chat", event.currentTarget)
+        }
+        title={workbenchLayout ? t("navigation.chat") : undefined}
+        type="button"
+      >
+        <MessageSquare aria-hidden="true" size={17} />
+        <span>{t("navigation.chat")}</span>
+      </button>
+      {visibleApplications.map((id) => {
+        const definition = applicationDefinitions[id];
+        const Icon = definition.icon;
+        return (
+          <button
+            key={id}
+            type="button"
+            className={view === id ? "nav-item nav-item--active" : "nav-item"}
+            aria-current={view === id ? "page" : undefined}
+            title={workbenchLayout ? t(definition.title) : undefined}
+            onClick={(event) => navigateFromSidebar(id, event.currentTarget)}
+            onFocus={() => preloadWorkspaceRouteOnIntent(id)}
+            onPointerEnter={() => preloadWorkspaceRouteOnIntent(id)}
+          >
+            <Icon size={17} aria-hidden="true" />
+            <span>{t(definition.title)}</span>
+            {id === "magic-notes" && magicNotesShowIncompleteTodoCount && incompleteMagicTodoCount > 0 && (
+              <span className="nav-item__badge" aria-label={t("navigation.incompleteTodos", { count: incompleteMagicTodoCount })}>
+                {incompleteMagicTodoCount > 99 ? "99+" : incompleteMagicTodoCount}
+              </span>
+            )}
+            {id === "heartbeat" && pendingHeartbeatSuggestionCount > 0 && (
+              <span className="nav-item__badge" aria-label={t("navigation.pendingSuggestions", { count: pendingHeartbeatSuggestionCount })}>
+                {pendingHeartbeatSuggestionCount}
+              </span>
+            )}
+          </button>
+        );
+      })}
+      <button
+        aria-current={view === "activity" ? "page" : undefined}
+        className={
+          view === "activity" ? "nav-item nav-item--active" : "nav-item"
+        }
+        onFocus={() => preloadWorkspaceRouteOnIntent("activity")}
+        onClick={(event) =>
+          navigateFromSidebar("activity", event.currentTarget)
+        }
+        onPointerEnter={() => preloadWorkspaceRouteOnIntent("activity")}
+        title={workbenchLayout ? t("navigation.activity") : undefined}
+        type="button"
+      >
+        {workbenchLayout ? <History aria-hidden="true" size={17} /> : <ChartColumn aria-hidden="true" size={17} />}
+        <span>{t("navigation.activity")}</span>
+      </button>
+    </nav>
+  );
+  const applicationFooter = (
+    <div className="sidebar-footer sidebar-footer--applications">
+      <button
+        className="nav-item"
+        type="button"
+        ref={applicationMenuTriggerRef}
+        aria-haspopup="menu"
+        aria-expanded={applicationMenuOpen}
+        aria-controls="application-menu"
+        title={workbenchLayout ? t("applications.menuLabel") : undefined}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+          event.preventDefault();
+          if (!applicationMenuOpen) {
+            setApplicationMenuOpen(true);
+            void reloadApplicationSettings();
+          }
+        }}
+        onClick={() => {
+          setApplicationMenuOpen(!applicationMenuOpen);
+          if (!applicationMenuOpen) void reloadApplicationSettings();
+        }}
+      >
+        {workbenchLayout ? <LayoutGrid size={17} aria-hidden="true" /> : <Grid2X2 size={17} aria-hidden="true" />}
+        <span>{t("applications.menuLabel")}</span>
+        <ChevronUp size={16} aria-hidden="true" />
+      </button>
+      <div className="sidebar-footer__divider" aria-hidden="true" />
+      <button
+        className="nav-item"
+        aria-label={t('navigation.settings')}
+        title={t('navigation.settings')}
+        type="button"
+        onFocus={() => preloadWorkspaceRouteOnIntent("settings")}
+        onClick={(event) => {
+          preloadWorkspaceRouteOnIntent("settings");
+          navigateFromSidebar("settings", event.currentTarget);
+        }}
+        onPointerEnter={() => preloadWorkspaceRouteOnIntent("settings")}
+      >
+        <Settings size={16} aria-hidden="true" />
+        <span>{t('navigation.settings')}</span>
+      </button>
+    </div>
+  );
+
+  const topbarActions = (
+    <div className="topbar__actions">
+      <button
+        aria-controls="assistant-sidebar"
+        aria-expanded={assistantSidebarOpen}
+        aria-label={t("topbar.toggleAssistantSidebar")}
+        className="icon-button assistant-sidebar-toggle"
+        onClick={() => setAssistantSidebarOpen((current) => !current)}
+        ref={assistantSidebarToggleRef}
+        title={t("topbar.toggleAssistantSidebar")}
+        type="button"
+      >
+        {assistantSidebarOpen ? (
+          <PanelRightClose aria-hidden="true" size={18} />
+        ) : (
+          <PanelRightOpen aria-hidden="true" size={18} />
+        )}
+      </button>
+      <button
+        aria-label={
+          resolvedAppearanceTheme === "dark"
+            ? t("topbar.switchLight")
+            : t("topbar.switchDark")
+        }
+        aria-pressed={resolvedAppearanceTheme === "dark"}
+        className="icon-button theme-toggle-button"
+        onClick={toggleAppearanceTheme}
+        title={
+          resolvedAppearanceTheme === "dark"
+            ? t("topbar.switchLight")
+            : t("topbar.switchDark")
+        }
+        type="button"
+      >
+        {resolvedAppearanceTheme === "dark" ? (
+          <Sun aria-hidden="true" size={18} />
+        ) : (
+          <Moon aria-hidden="true" size={18} />
+        )}
+      </button>
+    </div>
+  );
 
   return (
     <div className="app-shell" data-frosted-glass={applicationSettings?.transparentFrostedEffectEnabled ? 'true' : undefined}>
@@ -6827,6 +7022,25 @@ function App(): React.JSX.Element {
         notify: (message) => notify({ tone: 'success', message }),
         openImage: (src, title, trigger) => { imageViewerTriggerRef.current = trigger; setImageViewerItem({ src, title }); }
       }}>
+      {workbenchLayout && (
+        <>
+          <div className="app-titlebar">
+            <BrandLockup
+              className="app-titlebar__brand"
+              copyClassName="app-titlebar__name"
+              logo={brandLogo}
+              markClassName="brand__mark"
+              name={brandingPreferences.name}
+            />
+            {topbarActions}
+            <WindowControls onError={handleWindowControlError} />
+          </div>
+          <div className="app-rail">
+            {primaryNavigation}
+            {applicationFooter}
+          </div>
+        </>
+      )}
       <aside
         aria-label={
           narrowWindow && sidebarOpen ? t("sidebar.label") : undefined
@@ -6857,19 +7071,16 @@ function App(): React.JSX.Element {
           } as React.CSSProperties
         }
       >
-        <BrandLockup
-          className="brand"
-          copyClassName="brand__copy"
-          logo={
-            brandingPreferences.logoDataUrl ??
-            (resolvedAppearanceTheme === "dark"
-              ? goodbuddyDarkIcon
-              : goodbuddyLightIcon)
-          }
-          markClassName="brand__mark"
-          name={brandingPreferences.name}
-          subtitle={brandingSubtitle || undefined}
-        />
+        {!workbenchLayout && (
+          <BrandLockup
+            className="brand"
+            copyClassName="brand__copy"
+            logo={brandLogo}
+            markClassName="brand__mark"
+            name={brandingPreferences.name}
+            subtitle={brandingSubtitle || undefined}
+          />
+        )}
 
         <ProjectSwitcher
           activeProjectId={activeProjectId}
@@ -6944,64 +7155,7 @@ function App(): React.JSX.Element {
           </div>
         </div>
 
-        <nav className="primary-nav" aria-label={t("navigation.label")}>
-          <button
-            aria-current={view === "chat" ? "page" : undefined}
-            className={
-              view === "chat" ? "nav-item nav-item--active" : "nav-item"
-            }
-            onClick={(event) =>
-              navigateFromSidebar("chat", event.currentTarget)
-            }
-            type="button"
-          >
-            <MessageSquare aria-hidden="true" size={17} />
-            <span>{t("navigation.chat")}</span>
-          </button>
-          {visibleApplications.map((id) => {
-            const definition = applicationDefinitions[id];
-            const Icon = definition.icon;
-            return (
-              <button
-                key={id}
-                type="button"
-                className={view === id ? "nav-item nav-item--active" : "nav-item"}
-                aria-current={view === id ? "page" : undefined}
-                onClick={(event) => navigateFromSidebar(id, event.currentTarget)}
-                onFocus={() => preloadWorkspaceRouteOnIntent(id)}
-                onPointerEnter={() => preloadWorkspaceRouteOnIntent(id)}
-              >
-                <Icon size={17} aria-hidden="true" />
-                <span>{t(definition.title)}</span>
-                {id === "magic-notes" && magicNotesShowIncompleteTodoCount && incompleteMagicTodoCount > 0 && (
-                  <span className="nav-item__badge" aria-label={t("navigation.incompleteTodos", { count: incompleteMagicTodoCount })}>
-                    {incompleteMagicTodoCount > 99 ? "99+" : incompleteMagicTodoCount}
-                  </span>
-                )}
-                {id === "heartbeat" && pendingHeartbeatSuggestionCount > 0 && (
-                  <span className="nav-item__badge" aria-label={t("navigation.pendingSuggestions", { count: pendingHeartbeatSuggestionCount })}>
-                    {pendingHeartbeatSuggestionCount}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-          <button
-            aria-current={view === "activity" ? "page" : undefined}
-            className={
-              view === "activity" ? "nav-item nav-item--active" : "nav-item"
-            }
-            onFocus={() => preloadWorkspaceRouteOnIntent("activity")}
-            onClick={(event) =>
-              navigateFromSidebar("activity", event.currentTarget)
-            }
-            onPointerEnter={() => preloadWorkspaceRouteOnIntent("activity")}
-            type="button"
-          >
-            <ChartColumn aria-hidden="true" size={17} />
-            <span>{t("navigation.activity")}</span>
-          </button>
-        </nav>
+        {!workbenchLayout && primaryNavigation}
 
         <ConversationSidebar
           actions={conversationSidebarActions}
@@ -7034,48 +7188,7 @@ function App(): React.JSX.Element {
           unreadConversationIds={unreadConversationIds}
         />
 
-        <div className="sidebar-footer sidebar-footer--applications">
-          <button
-            className="nav-item"
-            type="button"
-            ref={applicationMenuTriggerRef}
-            aria-haspopup="menu"
-            aria-expanded={applicationMenuOpen}
-            aria-controls="application-menu"
-            onKeyDown={(event) => {
-              if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-              event.preventDefault();
-              if (!applicationMenuOpen) {
-                setApplicationMenuOpen(true);
-                void reloadApplicationSettings();
-              }
-            }}
-            onClick={() => {
-              setApplicationMenuOpen(!applicationMenuOpen);
-              if (!applicationMenuOpen) void reloadApplicationSettings();
-            }}
-          >
-            <Grid2X2 size={17} aria-hidden="true" />
-            <span>{t("applications.menuLabel")}</span>
-            <ChevronUp size={16} aria-hidden="true" />
-          </button>
-          <div className="sidebar-footer__divider" aria-hidden="true" />
-          <button
-            className="nav-item"
-            aria-label={t('navigation.settings')}
-            title={t('navigation.settings')}
-            type="button"
-            onFocus={() => preloadWorkspaceRouteOnIntent("settings")}
-            onClick={(event) => {
-              preloadWorkspaceRouteOnIntent("settings");
-              navigateFromSidebar("settings", event.currentTarget);
-            }}
-            onPointerEnter={() => preloadWorkspaceRouteOnIntent("settings")}
-          >
-            <Settings size={16} aria-hidden="true" />
-            <span>{t('navigation.settings')}</span>
-          </button>
-        </div>
+        {!workbenchLayout && applicationFooter}
       </aside>
       {sidebarOpen && (
         <div
@@ -7134,17 +7247,21 @@ function App(): React.JSX.Element {
         />
       )}
 
-      <div className="app-frame">
+      <div className="app-frame" data-view={view}>
         <header className="topbar">
-          <button
-            className="icon-button sidebar-toggle"
-            type="button"
-            aria-label={t("sidebar.toggle")}
-            onClick={() => setSidebarOpen((open) => !open)}
-            ref={sidebarToggleRef}
-          >
-            <PanelLeft aria-hidden="true" size={18} />
-          </button>
+          {conversationColumnAvailable && (
+            <button
+              className="icon-button sidebar-toggle"
+              type="button"
+              aria-label={t("sidebar.toggle")}
+              aria-controls="primary-sidebar"
+              aria-expanded={sidebarOpen}
+              onClick={() => setSidebarOpen((open) => !open)}
+              ref={sidebarToggleRef}
+            >
+              <PanelLeft aria-hidden="true" size={18} />
+            </button>
+          )}
           {view === "chat" && (
             <>
               <div className="conversation-title-group">
@@ -7197,47 +7314,8 @@ function App(): React.JSX.Element {
               </div>
             </>
           )}
-          <div className="topbar__actions">
-            <button
-              aria-controls="assistant-sidebar"
-              aria-expanded={assistantSidebarOpen}
-              aria-label={t("topbar.toggleAssistantSidebar")}
-              className="icon-button assistant-sidebar-toggle"
-              onClick={() => setAssistantSidebarOpen((current) => !current)}
-              ref={assistantSidebarToggleRef}
-              title={t("topbar.toggleAssistantSidebar")}
-              type="button"
-            >
-              {assistantSidebarOpen ? (
-                <PanelRightClose aria-hidden="true" size={18} />
-              ) : (
-                <PanelRightOpen aria-hidden="true" size={18} />
-              )}
-            </button>
-            <button
-              aria-label={
-                resolvedAppearanceTheme === "dark"
-                  ? t("topbar.switchLight")
-                  : t("topbar.switchDark")
-              }
-              aria-pressed={resolvedAppearanceTheme === "dark"}
-              className="icon-button theme-toggle-button"
-              onClick={toggleAppearanceTheme}
-              title={
-                resolvedAppearanceTheme === "dark"
-                  ? t("topbar.switchLight")
-                  : t("topbar.switchDark")
-              }
-              type="button"
-            >
-              {resolvedAppearanceTheme === "dark" ? (
-                <Sun aria-hidden="true" size={18} />
-              ) : (
-                <Moon aria-hidden="true" size={18} />
-              )}
-            </button>
-          </div>
-          <WindowControls onError={handleWindowControlError} />
+          {!workbenchLayout && topbarActions}
+          {!workbenchLayout && <WindowControls onError={handleWindowControlError} />}
         </header>
 
         <div className="app-content">
@@ -7411,23 +7489,9 @@ function App(): React.JSX.Element {
                 >
                   <ApplicationAvailability enabled={magicNotesEnabled}>
                   <PageShell variant="master-detail">
-                    <RouteErrorBoundary
-                      key="magic-notes"
-                      fallback={
-                        <RouteLoadError
-                          message={t("route.loadFailed")}
-                          reloadLabel={t("route.reload")}
-                        />
-                      }
-                    >
-                      <Suspense
-                        fallback={
-                          <RouteLoadingStatus label={t("route.loading")} />
-                        }
-                      >
+                    <LazyRoute route="magic-notes">
                         <MagicNotesWorkspace onNotify={notify} applicationSettings={applicationSettings} onBeforeLeave={registerNotesLeaveRequester} navigation={notesNavigation} onOpenSource={magicNotesActions.onOpenSource} />
-                      </Suspense>
-                    </RouteErrorBoundary>
+                      </LazyRoute>
                   </PageShell>
                   </ApplicationAvailability>
                 </KeepAliveRoute>
@@ -7440,20 +7504,7 @@ function App(): React.JSX.Element {
                 route="knowledge"
               >
                 <PageShell variant="master-detail">
-                  <RouteErrorBoundary
-                    key="knowledge"
-                    fallback={
-                      <RouteLoadError
-                        message={t("route.loadFailed")}
-                        reloadLabel={t("route.reload")}
-                      />
-                    }
-                  >
-                    <Suspense
-                      fallback={
-                        <RouteLoadingStatus label={t("route.loading")} />
-                      }
-                    >
+                  <LazyRoute route="knowledge">
                       <KnowledgeWorkspace
                         {...knowledgeWorkspaceActions}
                         externalInstances={externalInstances}
@@ -7468,8 +7519,7 @@ function App(): React.JSX.Element {
                         sources={knowledgeSnapshot.sources}
                         tasks={knowledgeSnapshot.tasks}
                       />
-                    </Suspense>
-                  </RouteErrorBoundary>
+                    </LazyRoute>
                 </PageShell>
               </KeepAliveRoute>
             )}
@@ -7481,20 +7531,7 @@ function App(): React.JSX.Element {
                 route="heartbeat"
               >
                 <PageShell variant="supervisor">
-                  <RouteErrorBoundary
-                    key="heartbeat"
-                    fallback={
-                      <RouteLoadError
-                        message={t("route.loadFailed")}
-                        reloadLabel={t("route.reload")}
-                      />
-                    }
-                  >
-                    <Suspense
-                      fallback={
-                        <RouteLoadingStatus label={t("route.loading")} />
-                      }
-                    >
+                  <LazyRoute route="heartbeat">
                       {isApplicationEnabled(applicationSettings, 'heartbeat') ? <HeartbeatCenter
                         onNotify={notify}
                         runtimeSettings={runtimeSettings}
@@ -7525,13 +7562,24 @@ function App(): React.JSX.Element {
                         projects={projects}
                         runs={heartbeatRuns}
                         tasks={heartbeatTasks}
-                      /> : <p role="status">{t('applications.disabledPage')}</p>}
-                    </Suspense>
-                  </RouteErrorBoundary>
+                      /> : <EmptyState level="page" icon={<HeartPulse size={28} />} title={t('applications.disabledPage')} description={t('applications.disabledPageDescription')} />}
+                    </LazyRoute>
                 </PageShell>
               </KeepAliveRoute>
             )}
-            {view === 'device-sharing' && isApplicationEnabled(applicationSettings, 'device-sharing') && <DeviceSharingPage notify={notify} />}
+            {isApplicationEnabled(applicationSettings, 'device-sharing') && (view === "device-sharing" ||
+              cachedWorkspaceViewKeys.has("device-sharing")) && (
+              <KeepAliveRoute
+                active={view === "device-sharing"}
+                route="device-sharing"
+              >
+                <PageShell variant="standard">
+                  <LazyRoute route="device-sharing">
+                    <DeviceSharingPage notify={notify} />
+                  </LazyRoute>
+                </PageShell>
+              </KeepAliveRoute>
+            )}
             {(view === "remote-hosts" ||
               cachedWorkspaceViewKeys.has("remote-hosts")) && (
               <KeepAliveRoute
@@ -7539,18 +7587,8 @@ function App(): React.JSX.Element {
                 onUnsavedChanges={workspaceUnsavedChangesReporters["remote-hosts"]}
                 route="remote-hosts"
               >
-                <RouteErrorBoundary
-                  key="remote-hosts"
-                  fallback={
-                    <RouteLoadError
-                      message={t("route.loadFailed")}
-                      reloadLabel={t("route.reload")}
-                    />
-                  }
-                >
-                  <Suspense
-                    fallback={<RouteLoadingStatus label={t("route.loading")} />}
-                  >
+                <PageShell variant="standard">
+                  <LazyRoute route="remote-hosts">
                     <RemoteHostsPage
                       active={view === "remote-hosts"}
                       settings={applicationSettings}
@@ -7560,8 +7598,8 @@ function App(): React.JSX.Element {
                       onNotify={notify}
                       onProjectsDeleted={remoteHostsActions.onProjectsDeleted}
                     />
-                  </Suspense>
-                </RouteErrorBoundary>
+                  </LazyRoute>
+                </PageShell>
               </KeepAliveRoute>
             )}
             {localInferenceOpen && (
@@ -7685,6 +7723,8 @@ function App(): React.JSX.Element {
                         setConversationHtmlRenderingEnabled
                       }
                       onAppearanceThemeChange={setAppearanceTheme}
+                      interfaceLayout={interfaceLayout}
+                      onInterfaceLayoutChange={setInterfaceLayout}
                       onNotify={notify}
                       onLeaveRequestReady={registerSettingsLeaveRequester}
                       onShortcutSettingsChanged={handleShortcutSettingsChanged}
@@ -7701,20 +7741,7 @@ function App(): React.JSX.Element {
                 route="activity"
               >
                 <PageShell variant="dashboard">
-                  <RouteErrorBoundary
-                    key="activity"
-                    fallback={
-                      <RouteLoadError
-                        message={t("route.loadFailed")}
-                        reloadLabel={t("route.reload")}
-                      />
-                    }
-                  >
-                    <Suspense
-                      fallback={
-                        <RouteLoadingStatus label={t("route.loading")} />
-                      }
-                    >
+                  <LazyRoute route="activity">
                       <ActivityPanel
                         onClear={clearActivity}
                         onOpenConversation={openActivityConversation}
@@ -7724,8 +7751,7 @@ function App(): React.JSX.Element {
                         records={activityPanel.page.records}
                         tokenUsage={tokenUsage}
                       />
-                    </Suspense>
-                  </RouteErrorBoundary>
+                    </LazyRoute>
                 </PageShell>
               </KeepAliveRoute>
             )}

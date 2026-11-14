@@ -1,8 +1,9 @@
+import { Network } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SharingCatalog, SharingPublicationDraft, SharingSettings } from '../../shared/device-sharing-contracts'
 import { sharingSettingsInputSchema } from '../../shared/device-sharing-contracts'
-import { EmptyState, PageHeader, PageShell, PageTabs, SegmentedControl } from './WorkspacePrimitives'
+import { EmptyState, PageHeader, PageTabs, SegmentedControl } from './WorkspacePrimitives'
 import type { AppNotificationInput } from './notifications'
 import './device-sharing.css'
 import { SharingModelConfigs } from './SharingModelConfigs'
@@ -85,11 +86,11 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
   const tabs = [
     { id: 'mine' as const, label: t('sharing.tabs.mine') },
     { id: 'shared' as const, label: t('sharing.tabs.shared') },
-    { id: 'personas' as const, label: '数字分身' }
+    { id: 'personas' as const, label: t('sharing.tabs.personas') }
   ]
 
-  return <PageShell variant="standard">
-    <PageHeader headingId="device-sharing-title" title={t('sharing.title')} scope={{ kind: 'global' }} description={t('sharing.boundary')}
+  return <>
+    <PageHeader headingId="device-sharing-title" icon={<Network size={20} />} title={t('sharing.title')} scope={{ kind: 'global' }} description={t('sharing.boundary')}
       actions={<button className="secondary-button" disabled={busy} onClick={() => {
         if (!settings) { setBusy(true); setReload(value => value + 1) }
         else void run(refresh)
@@ -97,9 +98,9 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
     <div className="device-sharing" aria-busy={busy}>
       {busy && <p role="status">{t('sharing.working')}</p>}
       {catalog?.registrationStatus && <p role="status">{t(`sharing.registrationStatus.${catalog.registrationStatus}`)}</p>}
-      {error && <div role="alert" className="settings-warning">{t('sharing.loadFailed')} {error}</div>}
+      {error && <div role="alert" className="device-sharing__alert">{t('sharing.loadFailed')} {error}</div>}
       <PageTabs ariaLabel={t('sharing.tabsLabel')} idPrefix="sharing" onChange={setActiveTab} tabs={tabs} value={activeTab} />
-      {activeTab === 'personas' && <div id="sharing-panel-personas" role="tabpanel" aria-labelledby="sharing-tab-personas">{settings && registered && !dirty ? <SharingPersonas key={settings.serverUrl} serverUrl={settings.serverUrl} deviceId={settings.deviceId} notify={notify} /> : <p>请先保存服务器地址并完成设备注册。</p>}</div>}
+      {activeTab === 'personas' && <div id="sharing-panel-personas" className="device-sharing__panel" role="tabpanel" aria-labelledby="sharing-tab-personas">{settings && registered && !dirty ? <SharingPersonas key={settings.serverUrl} serverUrl={settings.serverUrl} deviceId={settings.deviceId} notify={notify} /> : <p>{t('sharing.personasRequireRegistration')}</p>}</div>}
       {activeTab === 'mine' && <div id="sharing-panel-mine" className="device-sharing__panel" role="tabpanel" aria-labelledby="sharing-tab-mine">
       {settings && <section className="device-sharing__section" aria-labelledby="sharing-settings">
         <h2 id="sharing-settings">{t('sharing.thisDevice')}</h2>
@@ -205,5 +206,5 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
         </section>
       </div>}
     </div>
-  </PageShell>
+  </>
 }

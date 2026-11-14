@@ -128,7 +128,8 @@ describe('split stylesheet declarations and import order', () => {
       'styles-magic-notes.css',
       'styles-workbar.css',
       'styles-settings.css',
-      'styles-operations.css'
+      'styles-operations.css',
+      'styles-workbench.css'
     ])
     const first = entry.first
     expect(first?.type === 'atrule' && first.name === 'import').toBe(true)
@@ -157,6 +158,22 @@ describe('split stylesheet declarations and import order', () => {
     expect(ring.source?.input.file).toBe(resolve('src/renderer/src/styles.css'))
     expect(rules.indexOf(ring)).toBeGreaterThan(rules.indexOf(composer))
     expect(declarations('.composer__input textarea:focus-visible')).toEqual({ outline: '0' })
+  })
+
+  it('leaves remote host styles to the lazily loaded remote-hosts.css', () => {
+    const hostRules = rules.filter((rule) =>
+      rule.selectors.some((selector) => /\.(ssh-hosts?|bundled-agent-inventory|agent-packages)\b/.test(selector)))
+    expect(hostRules.map((rule) => rule.selector)).toEqual([])
+    const hosts = postcss.parse(readFileSync(join(process.cwd(), 'src/renderer/src/remote-hosts.css'), 'utf8'))
+    const hostKeyframes: string[] = []
+    hosts.walkAtRules('keyframes', (rule) => { hostKeyframes.push(rule.params) })
+    expect(hostKeyframes.sort()).toEqual(['bundled-agent-inventory-spin', 'ssh-host-dialog-spin'])
+    const bundleKeyframes = new Set<string>()
+    css.walkAtRules('keyframes', (rule) => { bundleKeyframes.add(rule.params) })
+    css.walkDecls('animation', (decl) => {
+      const name = decl.value.split(/\s+/)[0]
+      if (name && hostKeyframes.includes(name)) expect(bundleKeyframes.has(name), decl.toString()).toBe(true)
+    })
   })
 
   it('keeps the sidebar search ring on the container only', () => {

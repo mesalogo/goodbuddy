@@ -10210,7 +10210,7 @@ describe('registerIpcHandlers agent terminal state', () => {
     // Load the renderer at test runtime without pulling its JSX project into the Node typecheck.
     const rendererModule = '../renderer/src/McpSettingsSection'
     const { McpSettingsSection } = await import(rendererModule) as {
-      McpSettingsSection: import('react').ComponentType<{ onOpenImageModelSettings: () => void }>
+      McpSettingsSection: import('react').ComponentType<{ onOpenImageModelSettings: () => void; connectorServerIds?: readonly string[] }>
     }
     const { default: i18n } = await import('i18next')
     const root = await mkdtemp(join(tmpdir(), 'goodbuddy-ipc-obsidian-'))
@@ -10255,7 +10255,8 @@ describe('registerIpcHandlers agent terminal state', () => {
         updateObsidianSettings: (input: unknown) => invoke(ipcChannels.capabilitiesUpdateObsidianSettings, input),
         selectObsidianVault: () => invoke(ipcChannels.capabilitiesSelectObsidianVault)
       } })
-      const view = render(createElement(McpSettingsSection, { onOpenImageModelSettings: vi.fn() }))
+      // Obsidian is a connector: the application center renders it in connector mode, not in the MCP tabs.
+      const view = render(createElement(McpSettingsSection, { onOpenImageModelSettings: vi.fn(), connectorServerIds: ['obsidian'] }))
       const testButton = view.getByRole('button', { name: i18n.t('integrations:mcp.obsidian.test') })
       await waitFor(() => expect(testButton).toBeEnabled())
       fireEvent.change(view.getByRole('combobox', { name: i18n.t('integrations:mcp.obsidian.scope') }), { target: { value: 'folder' } })

@@ -25,7 +25,6 @@ import type {
 import {
   BrowserModelTools,
   BrowserTabClosedError,
-  browserToolNames,
   type BrowserToolService
 } from '../browser/browser-model-tools'
 import { BrowserStaleReferenceError } from '../browser/cdp-browser-driver'
@@ -59,7 +58,6 @@ import {
   PAGED_OUTPUT_MAX_PAGE_BYTES
 } from './paged-output-store'
 
-const MAX_MODEL_TOOLS = 100
 const MAX_TOOL_RESULT_BYTES = 256 * 1024
 const MCP_TIMEOUT_MS = 30_000
 const MCP_CALL_MAX_TOTAL_TIMEOUT_MS = 5 * 60_000
@@ -752,19 +750,6 @@ export class ModelToolProvider implements ModelToolProviderLike {
     return tools
   }
 
-  private getReservedToolCount(scopedToolCount = 0): number {
-    return (
-      this.getBuiltinTools().length +
-      (this.browserService ? browserToolNames.length : 0) +
-      (this.webSearchEnabled ? 2 : 0) +
-      (this.programming.processService ? 1 : 0) +
-      (this.programming.subagentService ? 1 : 0) +
-      (this.programming.ripgrepExecutablePath || this.programming.processService || this.programming.subagentService
-        ? 1 : 0) +
-      scopedToolCount
-    )
-  }
-
   private getWebSearchDefinitions(): ModelToolDefinition[] {
     return [
       {
@@ -1042,8 +1027,6 @@ export class ModelToolProvider implements ModelToolProviderLike {
         server.name,
         signal,
         {
-          maximumTools:
-            MAX_MODEL_TOOLS - this.getReservedToolCount(),
           pageTimeoutMs: MCP_TIMEOUT_MS,
           totalTimeoutMs: MCP_CALL_MAX_TOTAL_TIMEOUT_MS
         }
@@ -1074,12 +1057,6 @@ export class ModelToolProvider implements ModelToolProviderLike {
     server: ResolvedMcpServer,
     tools: Awaited<ReturnType<Client['listTools']>>['tools']
   ): McpToolBinding[] {
-    const reservedToolCount = this.getReservedToolCount()
-    if (tools.length > MAX_MODEL_TOOLS - reservedToolCount) {
-      throw new Error(
-        `MCP Server「${server.name}」提供的工具数量超过安全限制`
-      )
-    }
     const bindings = tools.map((tool): McpToolBinding => ({
       client,
       originalName: tool.name,
@@ -1111,7 +1088,6 @@ export class ModelToolProvider implements ModelToolProviderLike {
 
   private async getMcpBindings(
     signal: AbortSignal,
-    scopedToolCount: number,
     refreshDynamic = false
   ): Promise<Map<string, McpToolBinding>> {
     signal.throwIfAborted()
@@ -1151,8 +1127,6 @@ export class ModelToolProvider implements ModelToolProviderLike {
               connection.server.name,
               signal,
               {
-                maximumTools:
-                  MAX_MODEL_TOOLS - this.getReservedToolCount(),
                 pageTimeoutMs: MCP_TIMEOUT_MS,
                 totalTimeoutMs: MCP_CALL_MAX_TOTAL_TIMEOUT_MS
               }
@@ -1177,18 +1151,14 @@ export class ModelToolProvider implements ModelToolProviderLike {
     }
     signal.throwIfAborted()
     const bindings = new Map<string, McpToolBinding>()
-    const reservedToolCount = this.getReservedToolCount(scopedToolCount)
     for (const connection of connections) {
-      // Cached catalogs are shared; a request's grant must not shrink the cache.
-      if (connection.tools.length > MAX_MODEL_TOOLS - reservedToolCount) {
-        continue
-      }
       for (const binding of connection.tools) {
-        if (bindings.size + reservedToolCount >= MAX_MODEL_TOOLS) {
-          throw new Error('直连模型工具总数超过 100 个安全限制')
-        }
         if (bindings.has(binding.definition.name)) {
-          throw new Error('MCP 工具名称发生冲突')
+          // Isolate the conflict to this tool instead of failing the request.
+          console.warn(
+            `MCP tool name conflict skipped: ${connection.server.name} / ${binding.originalName}`
+          )
+          continue
         }
         bindings.set(binding.definition.name, binding)
       }
@@ -1273,7 +1243,7 @@ export class ModelToolProvider implements ModelToolProviderLike {
       : await this.getWorkspaceTools(signal)
     const browserTools = this.getBrowserTools(context)?.listTools() ?? []
     const processTools = this.programming.remoteTools ? [] : await this.getProcessTool(context, signal)
-    const bindings = await this.getMcpBindings(signal, scopedTools.length, true)
+    const bindings = await this.getMcpBindings(signal, true)
     return [
       ...workspaceTools,
       ...(imageTool ? [imageTool] : []),

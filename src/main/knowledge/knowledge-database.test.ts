@@ -656,6 +656,75 @@ describe('KnowledgeDatabase', () => {
     expect(listed.filter((task) => !task.canCancel)).toHaveLength(500)
   })
 
+  it('keeps unresolved document failures beyond the terminal history limit until superseded', async () => {
+    const { database } = await createDatabase()
+    const library = database.createKnowledgeBase({
+      name: 'Failure retention',
+      storageMode: 'reference'
+    })
+    const seeded = seedDocument(database, library.id, 'failed-target')
+    const resolvedSeed = seedDocument(database, library.id, 'resolved-target')
+    const unresolved = database.createKnowledgeTask({
+      libraryId: library.id,
+      documentId: seeded.documentId,
+      sourceId: seeded.sourceId,
+      documentName: 'still failing',
+      scope: 'document',
+      kind: 'document-rebuild',
+      status: 'failed',
+      error: { message: 'parse failed' }
+    })
+    const superseded = database.createKnowledgeTask({
+      libraryId: library.id,
+      documentId: resolvedSeed.documentId,
+      sourceId: resolvedSeed.sourceId,
+      documentName: 'fixed later',
+      scope: 'document',
+      kind: 'document-rebuild',
+      status: 'failed',
+      error: { message: 'old failure' }
+    })
+    database.createKnowledgeTask({
+      libraryId: library.id,
+      documentId: resolvedSeed.documentId,
+      sourceId: resolvedSeed.sourceId,
+      documentName: 'fixed later',
+      scope: 'document',
+      kind: 'document-rebuild',
+      status: 'succeeded',
+      progress: 100
+    })
+    const untargeted = database.createKnowledgeTask({
+      libraryId: library.id,
+      documentName: 'library failure',
+      scope: 'library',
+      kind: 'library-rebuild',
+      status: 'failed',
+      error: { message: 'library failed' }
+    })
+    // A margin beyond the 500 limit keeps same-millisecond ties out of the result.
+    for (let index = 0; index < 520; index += 1) {
+      database.createKnowledgeTask({
+        libraryId: library.id,
+        documentName: `filler-${index}`,
+        scope: 'document',
+        kind: 'parsing',
+        status: 'skipped'
+      })
+    }
+    database.pruneKnowledgeTasks(library.id)
+
+    expect(database.getKnowledgeTask(unresolved.id)).toMatchObject({
+      status: 'failed',
+      error: { message: 'parse failed' }
+    })
+    expect(database.getKnowledgeTask(superseded.id)).toBeUndefined()
+    expect(database.getKnowledgeTask(untargeted.id)).toBeUndefined()
+    const listed = database.listKnowledgeTasks(library.id)
+    expect(listed.map((task) => task.id)).toContain(unresolved.id)
+    expect(listed).toHaveLength(501)
+  })
+
   it('retains task ancestors and disables retry after targets are deleted', async () => {
     const { database } = await createDatabase()
     const library = database.createKnowledgeBase({

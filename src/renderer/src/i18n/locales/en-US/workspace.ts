@@ -268,7 +268,6 @@ export const workspace = {
       multiple: 'Multiple instances supported',
       single: 'Single-instance application',
       resolve: 'Resolve',
-      limit: 'You can open up to {{count}} instances.',
       emptyTitle: 'No workbar applications are open',
       emptyDescription: 'Open an application to switch to it here.',
       open: 'Open application'
@@ -360,6 +359,8 @@ export const workspace = {
       },
       empty: 'Explicitly created tasks will appear here.',
       noFilterResults: 'No tasks match this filter.',
+      loadOlder: 'Load older tasks',
+      loadingOlder: 'Loading older tasks…',
       conversationUnavailable: 'Conversation unavailable',
       projectScope: 'Project: {{project}}',
       unboundProject: 'Unbound project',
@@ -434,7 +435,6 @@ export const workspace = {
     browser: {
       title: 'Live browser',
       unbound: 'No conversation',
-      workbarFull: 'The workbar has {{count}} open tabs. The Agent page is retained; close a closable tab to view it.',
       interact: 'Interact',
       interacting: 'Interacting',
       close: 'Close browser',

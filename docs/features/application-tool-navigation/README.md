@@ -40,6 +40,7 @@
 | --- | --- |
 | [工作台内容 Demo](./workbench-demo/index.html) | 当前视觉评审入口；自然示例内容与既有真实快照结合的三个主页面 |
 | [工作台原型说明](./workbench-prototype.md) | 本轮视觉取舍、数据边界、目录职责、交互与复现方式 |
+| [页面级应用规范](./page-level-applications.md) | 笔记、知识库、监督者、主机管理、设备共享、运行记录的页面类型、外壳与容器约定、现状检查和迁移顺序 |
 | [PRD](./prd.md) | 用户问题、产品边界、功能要求与产品验收 |
 | [User Stories](./user-stories.md) | 用户场景及 Given/When/Then 验收 |
 | [功能逻辑设计](./logic-design.md) | 分类规则、入口状态、优先级与失败结果 |

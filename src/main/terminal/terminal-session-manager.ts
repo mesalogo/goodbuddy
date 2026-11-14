@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import {
-  TERMINAL_LIMITS,
   type TerminalCreateRequest,
   type TerminalErrorCode,
   type TerminalEvent,
@@ -120,13 +119,6 @@ export class TerminalSessionManager {
       throw new TerminalSessionManagerError(
         'internal-error',
         '终端会话管理器已关闭'
-      )
-    }
-    if (this.ownerSessionCount(ownerWebContentsId) >=
-      TERMINAL_LIMITS.maximumSessionsPerWindow) {
-      throw new TerminalSessionManagerError(
-        'session-limit-reached',
-        `每个窗口最多可同时打开 ${TERMINAL_LIMITS.maximumSessionsPerWindow} 个终端`
       )
     }
 
@@ -483,16 +475,6 @@ export class TerminalSessionManager {
       )
     }
     return record
-  }
-
-  private ownerSessionCount(ownerId: number): number {
-    let count = 0
-    for (const record of this.records.values()) {
-      if (record.ownerId === ownerId && !record.closing) {
-        count += 1
-      }
-    }
-    return count
   }
 
   private assertOwnerId(ownerId: number): void {

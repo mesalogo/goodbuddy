@@ -1,5 +1,65 @@
 # 应用导航实施进度
 
+## 2026-11-14：工作台页面级应用（`new-ui` 分支，未提交）
+
+按[页面级应用规范](./page-level-applications.md)调整生产界面：
+
+- 工作台布局下，会话列表只在对话页显示；进入其他页面时隐藏（保持挂载，展开偏好不变），对话顶栏也不显示。
+- 知识库改为“第二栏库列表 + 详情区”，标题和操作放在栏顶；页面宽度不足 780px 时收成单栏。经典布局结构不变。
+- 知识库详情区改为按自身宽度做响应式判断；新建表单可在详情区内滚动；长文档表格跟踪实际滚动的元素。
+- 所有 PageShell 变体改为命名容器 `page-shell`。此前 `standard` 不是容器，主机管理和设备共享的容器规则从未生效。
+- 修复窗口 900–1020px 时收起的会话栏仍占 278px 宽度的问题（两种布局都受影响）。
+
+验证记录：
+
+- `tsc --noEmit -p tsconfig.web.json` 与改动文件的 ESLint 通过。
+- Vitest：知识库相关 6 个文件 117 项、App 与侧栏布局 380 项（含新增的工作台会话栏用例）、主机管理 / 设备共享 / 监督者 / 运行记录 / 样式拆分 108 项通过。未运行完整 `npm test`。
+- 在隔离用户目录的开发实例中截图核对知识库：宽屏、宽屏加工作栏、暗色、820px 详情与列表、经典布局对照。
+
+### 同日：六个页面级应用并行迁移
+
+按规范迁移魔法笔记、监督者、主机管理、设备共享、运行记录，结果与遗留项见[现状](./page-level-applications.md#4-现状2026-11-14-迁移后)。
+
+验证记录：
+
+- `npm run typecheck`、`npm run lint` 通过。
+- `npm test`：607 个文件通过，5 个失败。其中 3 个（`ipc.test.ts` 的 Obsidian 连接测试、`overlay-layering` 的 MCP 编辑器、`workbar-settings-layout`）在基础提交 `f9184a77` 上同样失败，与本次改动无关。另 2 个（`inline-help`、`overlay-layering` 的嵌套预览）因运行记录、监督者的页面说明从帮助按钮改为常驻文字而失败；已恢复为帮助按钮，复跑后通过。
+- 在隔离用户目录的开发实例中截图核对：魔法笔记（总览、打开笔记、打开笔记加工作栏、待办、暗色、经典对照）、监督者、运行记录、主机管理（亮色、暗色）、设备共享（宽屏、820px）。
+
+### 同日：遗留项处理
+
+- 六个页面统一使用 `LazyRoute`；App.tsx 从 8003 行降到 7933 行。
+- 魔法笔记的抽屉与窄宽判断改为测量 `.magic-notes-page`，工作台双栏下不再回退到窗口宽度。
+- 主机管理的专属样式从 `styles-settings.css` 全部移到 `remote-hosts.css`；设备共享不再使用设置弹窗类名和内联样式。
+
+验证记录：
+
+- `npm run typecheck`、`npm run lint` 通过。
+- `npm test`：605 个文件通过，7 个失败。其中 3 个与基础提交相同（见上一节）。另外 4 个单独复跑均通过：`supervisor-layout`、`local-runtime-reuse`、`knowledge-mcp-gateway`、`model-tool-provider`，属于整套运行时的超时波动。
+- 魔法笔记单元测试 187 项与 `magic-notes-layout`、`magic-notes-navigation` 集成测试通过；主机管理与设备共享相关单元测试 65 项通过。`device-sharing` 集成测试需要 `GOODBUDDY_SHARING_SERVER_ROOT`，本机未配置，被跳过。
+- 截图核对：魔法笔记（1600 打开笔记、700 窄宽、经典）、主机管理、设备共享暗色、知识库加工作栏。
+
+剩余可选项见规范中的[后续](./page-level-applications.md#5-后续)。
+
+### 同日：修复三个长期失败的测试
+
+三个测试在基础提交 `f9184a77` 上已经失败，原因都是提交 `b8be2a22` 把 Skills 和 MCP 从设置移到应用中心、把 Obsidian 移到“连接器”页签后，测试没有同步。产品代码无需修改，只更新测试：
+
+- `src/main/ipc.test.ts` 的 Obsidian 连接测试：按应用中心的用法以连接器模式（`connectorServerIds: ['obsidian']`）渲染 `McpSettingsSection`。
+- `tests/support/mcp-overlay-main.ts`（`overlay-layering` 的 MCP 编辑器用例）：改为从“应用”菜单 →“管理应用”→ MCP 页签进入；背景焦点检查和关闭后的焦点恢复改为应用中心与“应用”按钮。
+- `tests/support/workbar-settings-layout-driver.mjs`：设置分类列表去掉 `capabilities`，分组数仍为 4。
+
+验证记录：`npm run test:electron` 31 个文件通过、5 个跳过（需外部服务），0 失败；`npm run test:fast` 582 个文件通过、16 个跳过，0 失败；`npm run typecheck`、`npm run lint` 通过。
+
+### 同日：本机推理监控不再常驻左侧菜单
+
+本机推理监控是弹窗，不属于页面级应用。新增 `isApplicationPinnable`（`src/shared/application-settings-contracts.ts`），对 `local-inference` 返回 `false`；`isApplicationPinned` 对它恒为 `false`。应用中心的卡片和详情不再渲染它的常驻开关。设置文件结构不变，已保存的 `pinned['local-inference']` 保留但不生效，无需迁移。规则见 [PRD FR-3、FR-12、FR-16](./prd.md) 与 [UI 设计第 3 节](./ui-design.md#3-主导航应用区)。
+
+验证记录：
+
+- `npm run typecheck`、`npm run lint` 通过。
+- App、ApplicationCenter、ApplicationMenu、LocalInferencePage、application-settings-store 共 473 项通过。原来用本机推理测试常驻开关的用例改用主机管理；新增“已保存常驻值时本机推理仍不进入主导航、详情不显示常驻开关”的用例；“从侧栏打开本机推理”用例删除，菜单和应用中心两个入口保留。
+
 ## 2026-11-13：工作台圆角与填充风格
 
 按 ChatGPT 客户端的圆润风格调整[工作台 Demo](./workbench-demo/index.html)，只修改了 `workbench-demo/style.css`。原样式中有 0、3、5、6、8、9、10、12、14px 等多种圆角，现统一为五级工作台局部令牌；减少描边，改用填充分组；页签改为胶囊分段控件；工作区改为独立圆角面板；发送按钮改为圆形。令牌规则见[原型说明](./workbench-prototype.md#视觉与交互)。页面结构、脚本和数据没有改动，生产样式未修改。

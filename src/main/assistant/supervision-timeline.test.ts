@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ASSISTANT_DATABASE_SCHEMA_VERSION, AssistantDatabase } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
 import { SupervisorService, type SupervisorSummarizerRequest } from './supervisor-service'
 import type { SupervisionRunRequest } from '../../shared/supervision-contracts'
 import type { ReviewConfiguration } from './supervision-review-store'
@@ -30,7 +31,7 @@ async function fixture(crossProject = false) {
     { id: randomUUID(), projectId: a.id, title: 'A', updatedAt: base, messages: [message('Choose SQLite for the timeline', 0), message('Measured: SQLite is fast enough', 90)] },
     { id: randomUUID(), projectId: b.id, title: 'B', updatedAt: base, messages: [message('B also needs storage', 30)] }
   ]
-  db.replaceConversations(conversations)
+  seedConversations(db, conversations)
   // One event per batch spanning all its evidence; one entity labelled by project.
   const summarize = vi.fn(async (input: SupervisorSummarizerRequest) => {
     if (input.evidence[0]?.sourceType === 'note') return { summary: 'Navigation', changeDigest: '', openItems: [], events: [], entities: [], entityChanges: [], relations: [] }

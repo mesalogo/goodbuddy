@@ -69,10 +69,12 @@ describe('Application Center', () => {
     fireEvent.click(enable)
     expect(handlers.onUpdate).toHaveBeenLastCalledWith({ localInferenceEnabled: true })
     expect(enable).not.toBeChecked()
-    const pin = within(inference).getByRole('switch', { name: '本机推理监控常驻左侧菜单' })
+    // Local inference is a dialog: it cannot be pinned to the left navigation.
+    expect(within(inference).queryByRole('switch', { name: '本机推理监控常驻左侧菜单' })).not.toBeInTheDocument()
+    const pin = within(card('主机管理')).getByRole('switch', { name: '主机管理常驻左侧菜单' })
     fireEvent.click(pin)
     expect(handlers.onUpdate).toHaveBeenLastCalledWith({
-      applicationNavigation: { ...defaultApplicationNavigation, pinned: { ...defaultApplicationNavigation.pinned, 'local-inference': true } },
+      applicationNavigation: { ...defaultApplicationNavigation, pinned: { ...defaultApplicationNavigation.pinned, 'remote-hosts': true } },
     })
     rerender(<ApplicationCenter {...handlers} pending />)
     for (const toggle of screen.getAllByRole('switch')) expect(toggle).toBeDisabled()

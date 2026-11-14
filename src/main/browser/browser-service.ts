@@ -23,8 +23,6 @@ import type { BrowserAction } from '../../shared/browser-interaction'
 
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_CLEANUP_TIMEOUT_MS = 5_000
-const DEFAULT_MAXIMUM_TABS_PER_CONVERSATION = 8
-const DEFAULT_MAXIMUM_TABS_PER_WINDOW = 16
 
 export class BrowserNavigationStoppedError extends Error {
   constructor() {
@@ -85,9 +83,6 @@ export type BrowserDriverLike = {
 export type BrowserServiceOptions = {
   downloadsDirectory?: string
   policy?: BrowserUrlPolicy
-  maximumSessions?: number
-  maximumTabsPerConversation?: number
-  maximumTabsPerWindow?: number
   idleTimeoutMs?: number
   cleanupTimeoutMs?: number
   parentWindow?: BrowserParentWindowHandle
@@ -240,9 +235,6 @@ function ownershipKey(conversationId: string, workbarInstanceId: string): string
 
 export class BrowserService {
   private readonly policy: BrowserUrlPolicy
-  private readonly maximumSessions: number
-  private readonly maximumTabsPerConversation: number
-  private readonly maximumTabsPerWindow: number
   private readonly idleTimeoutMs: number
   private readonly cleanupTimeoutMs: number
   private readonly createSession: NonNullable<BrowserServiceOptions['createSession']>
@@ -250,8 +242,6 @@ export class BrowserService {
   private readonly conversations = new Map<string, BrowserConversationSlot>()
   private readonly creations = new Map<string, ConversationCreation>()
   private readonly releaseRequests = new Set<string>()
-  private readonly pendingConversationTabs = new Map<string, number>()
-  private readonly pendingWindowTabs = new Map<number, number>()
   private readonly stateListeners = new Set<(state: BrowserLiveState) => void>()
   private readonly liveStates = new Map<string, BrowserLiveState>()
   private readonly ownedTabCreations = new Map<string, OwnedTabCreation>()
@@ -264,11 +254,6 @@ export class BrowserService {
 
   constructor(options: BrowserServiceOptions = {}) {
     this.policy = options.policy ?? new BrowserUrlPolicy()
-    this.maximumSessions = options.maximumSessions ?? 3
-    this.maximumTabsPerConversation =
-      options.maximumTabsPerConversation ?? DEFAULT_MAXIMUM_TABS_PER_CONVERSATION
-    this.maximumTabsPerWindow =
-      options.maximumTabsPerWindow ?? DEFAULT_MAXIMUM_TABS_PER_WINDOW
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
     this.cleanupTimeoutMs = options.cleanupTimeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS
     this.createSession =
@@ -276,9 +261,6 @@ export class BrowserService {
       ((policy, signal) => defaultCreateSession(policy, signal, options.downloadsDirectory, options.parentWindow))
     this.createDriver = options.createDriver ?? defaultCreateDriver
     for (const value of [
-      this.maximumSessions,
-      this.maximumTabsPerConversation,
-      this.maximumTabsPerWindow,
       this.idleTimeoutMs,
       this.cleanupTimeoutMs
     ]) {
@@ -425,69 +407,6 @@ export class BrowserService {
     }
   }
 
-  private countWindowTabs(ownerWindowId: number): number {
-    let count = 0
-    for (const conversation of this.conversations.values()) {
-      if (conversation.ownerWindowId === ownerWindowId) count += conversation.tabs.size
-    }
-    return count
-  }
-
-  private assertTabCapacity(
-    conversation: BrowserConversationSlot | undefined,
-    ownerWindowId?: number
-  ): void {
-    if (
-      conversation &&
-      conversation.tabs.size +
-        (this.pendingConversationTabs.get(conversation.conversationId) ?? 0) >=
-        this.maximumTabsPerConversation
-    ) {
-      throw new Error(`当前对话的浏览器标签页已达到 ${this.maximumTabsPerConversation} 个上限`)
-    }
-    if (
-      ownerWindowId !== undefined &&
-      this.countWindowTabs(ownerWindowId) +
-        (this.pendingWindowTabs.get(ownerWindowId) ?? 0) >=
-        this.maximumTabsPerWindow
-    ) {
-      throw new Error(`当前窗口的浏览器标签页已达到 ${this.maximumTabsPerWindow} 个上限`)
-    }
-  }
-
-  private reserveTab(conversationId: string, ownerWindowId?: number): () => void {
-    const conversation = this.conversations.get(conversationId)
-    this.assertTabCapacity(conversation, ownerWindowId)
-    this.pendingConversationTabs.set(
-      conversationId,
-      (this.pendingConversationTabs.get(conversationId) ?? 0) + 1
-    )
-    if (ownerWindowId !== undefined) {
-      this.pendingWindowTabs.set(
-        ownerWindowId,
-        (this.pendingWindowTabs.get(ownerWindowId) ?? 0) + 1
-      )
-    }
-    return () => {
-      const conversationPending =
-        (this.pendingConversationTabs.get(conversationId) ?? 1) - 1
-      if (conversationPending > 0) {
-        this.pendingConversationTabs.set(conversationId, conversationPending)
-      } else {
-        this.pendingConversationTabs.delete(conversationId)
-      }
-      if (ownerWindowId !== undefined) {
-        const windowPending =
-          (this.pendingWindowTabs.get(ownerWindowId) ?? 1) - 1
-        if (windowPending > 0) {
-          this.pendingWindowTabs.set(ownerWindowId, windowPending)
-        } else {
-          this.pendingWindowTabs.delete(ownerWindowId)
-        }
-      }
-    }
-  }
-
   private async createTabSlot(
     conversation: BrowserConversationSlot | undefined,
     conversationId: string,
@@ -520,29 +439,13 @@ export class BrowserService {
     }
     session.setPopupHandler?.((create) => {
       const context = this.conversations.get(conversationId)!
-      const releaseReservation = this.reserveTab(conversationId, context.ownerWindowId)
-      let popup: ReturnType<typeof create>
-      try {
-        popup = create()
-      } catch (error) {
-        releaseReservation()
-        throw error
-      }
-      const operation = this.adoptPopup(context, popup.session, popup.ready, tab.tabId).finally(releaseReservation)
+      const popup = create()
+      const operation = this.adoptPopup(context, popup.session, popup.ready, tab.tabId)
       tab.popupOperations?.push(operation)
       void operation.catch((error: unknown) => {
         if (this.hasTab(tab)) this.emitFailure(tab, '打开浏览器新标签页', error)
       })
-    }, () => {
-      if (!this.hasTab(tab) || this.clearing || this.disposed) return false
-      try {
-        this.assertTabCapacity(this.conversations.get(conversationId), this.getOwnerWindowId(conversationId))
-        return true
-      } catch (error) {
-        this.emitFailure(tab, '打开浏览器新标签页', error)
-        return false
-      }
-    })
+    }, () => this.hasTab(tab) && !this.clearing && !this.disposed)
     const closed = (): void => {
       const context = this.conversations.get(conversationId)
       if (context && this.hasTab(tab)) void this.releaseTab(context, tab).catch(() => undefined)
@@ -645,15 +548,10 @@ export class BrowserService {
       return existing
     }
     let creation = this.creations.get(conversationId)
-    const pendingCreations = [...this.creations.keys()].filter((id) => !this.conversations.has(id)).length
-    if (!creation && this.conversations.size + pendingCreations >= this.maximumSessions) {
-      throw new Error(`浏览器会话已达到 ${this.maximumSessions} 个上限`)
-    }
     if (creation && ownerWindowId !== undefined && creation.ownerWindowId !== undefined && creation.ownerWindowId !== ownerWindowId) {
       throw new Error('浏览器对话不属于当前窗口')
     }
     if (!creation) {
-      const releaseReservation = this.reserveTab(conversationId, ownerWindowId)
       const controller = new AbortController()
       const waiters = new Set<symbol>()
       const tabId = requestTabId ?? createTabId()
@@ -666,7 +564,6 @@ export class BrowserService {
         () => waiters.size > 0,
         instanceId
       )
-      void promise.finally(releaseReservation).catch(() => undefined)
       creation = { tabId, controller, promise, waiters, ownerWindowId }
       this.creations.set(conversationId, creation)
       this.emitState({ conversationId, tabId, workbarInstanceId: instanceId }, 'creating')
@@ -811,7 +708,6 @@ export class BrowserService {
       return this.summarizeTab(conversation.tabs.get(conversation.primaryTabId)!)
     }
     this.assertWindowOwner(conversation, ownerWindowId)
-    const releaseReservation = this.reserveTab(conversationId, ownerWindowId)
     let releaseGate!: () => void
     const gate = new Promise<void>((resolve) => { releaseGate = resolve })
     const predecessor = conversation.tabCreationTail.catch(() => undefined)
@@ -843,7 +739,6 @@ export class BrowserService {
       return this.summarizeTab(tab)
     } finally {
       releaseGate()
-      releaseReservation()
     }
   }
 

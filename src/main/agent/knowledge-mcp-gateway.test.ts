@@ -1459,7 +1459,7 @@ describe('KnowledgeMcpGateway', () => {
     expect(outputValidator).toHaveBeenCalledWith({ value: 'done' })
   })
 
-  it('omits servers with cyclic cursors or custom MCP tool counts over 100', async () => {
+  it('omits servers with cyclic cursors but exposes large custom MCP catalogs', async () => {
     const cyclicUpstream = await startToolUpstream(
       (cursor: string | undefined) => ({
         tools: [testTool(cursor ? 'second' : 'first')],
@@ -1467,7 +1467,7 @@ describe('KnowledgeMcpGateway', () => {
       })
     )
     const excessiveUpstream = await startToolUpstream(() => ({
-      tools: Array.from({ length: 101 }, (_, index) =>
+      tools: Array.from({ length: 250 }, (_, index) =>
         testTool(`tool-${index}`)
       )
     }))
@@ -1495,7 +1495,21 @@ describe('KnowledgeMcpGateway', () => {
     ).resolves.toEqual([])
     await expect(
       gateway.prepareCustomMcpTools(excessiveToken)
-    ).resolves.toEqual([])
+    ).resolves.toHaveLength(250)
+  })
+
+  it('accepts more than 16 custom MCP servers in one grant', async () => {
+    const gateway = new KnowledgeMcpGateway(createService().service)
+    gateways.push(gateway)
+    const servers = Array.from({ length: 20 }, (_, index) =>
+      customMcpServer(
+        'http://127.0.0.1:1/mcp',
+        `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`
+      )
+    )
+    expect(
+      gateway.grantCustomMcp('many-servers', servers, new AbortController().signal)
+    ).toEqual(expect.any(String))
   })
 
   it('keeps healthy tools available when another upstream fails discovery', async () => {

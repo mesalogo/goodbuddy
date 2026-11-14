@@ -1969,7 +1969,7 @@ describe('RightAssistantSidebar resizing', () => {
     expect(browserApi.createTab).not.toHaveBeenCalled()
   })
 
-  it('retains a request page at layout capacity and binds it after a slot is closed', async () => {
+  it('binds a retained request page immediately even with many open instances', async () => {
     const conversationId = 'full-workbar'
     const instances = [
       ...DEFAULT_WORKBAR_INSTANCES.filter((instance) => instance.appId === 'tasks' || instance.appId === 'workspace'),
@@ -1997,16 +1997,9 @@ describe('RightAssistantSidebar resizing', () => {
         }
       }
     })
-    expect(screen.getByRole('alert')).toHaveTextContent('请关闭一个可关闭页签')
-    expect(screen.getAllByRole('tab')).toHaveLength(32)
-    expect(browserApi.createTab).not.toHaveBeenCalled()
-    expect(workbarLayoutPreferencesSchema.safeParse(
-      JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!)
-    ).success).toBe(true)
-    fireEvent.click(screen.getByRole('button', { name: '关闭parked-0' }))
     await waitFor(() => expect(screen.getByRole('textbox', { name: '浏览器地址' })).toHaveValue('https://retained.example/'))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getAllByRole('tab')).toHaveLength(32)
+    expect(screen.getAllByRole('tab')).toHaveLength(33)
     expect(browserApi.createTab).not.toHaveBeenCalled()
     const restored = workbarLayoutPreferencesSchema.parse(
       JSON.parse(localStorage.getItem('goodbuddy.workbar-layout.v1')!)

@@ -1,4 +1,4 @@
-import { app, nativeImage, type NativeImage } from 'electron'
+import { app, nativeImage, nativeTheme, type NativeImage, type Tray } from 'electron'
 import { posix, win32 } from 'node:path'
 
 type TrayIconEnvironment = {
@@ -6,6 +6,7 @@ type TrayIconEnvironment = {
   isPackaged: boolean
   appPath: string
   resourcesPath: string
+  darkSystemTheme?: boolean
 }
 
 export function resolveTrayIconPath(
@@ -13,14 +14,25 @@ export function resolveTrayIconPath(
     platform: process.platform,
     isPackaged: app.isPackaged,
     appPath: app.getAppPath(),
-    resourcesPath: process.resourcesPath
+    resourcesPath: process.resourcesPath,
+    darkSystemTheme: nativeTheme.shouldUseDarkColorsForSystemIntegratedUI
   }
 ): string {
   const joinPath =
     environment.platform === 'win32' ? win32.join : posix.join
+  const suffix = environment.platform === 'win32' && environment.darkSystemTheme ? '-dark' : ''
   return environment.isPackaged
-    ? joinPath(environment.resourcesPath, 'tray-icon.png')
-    : joinPath(environment.appPath, 'build', 'icon-tray.png')
+    ? joinPath(environment.resourcesPath, `tray-icon${suffix}.png`)
+    : joinPath(environment.appPath, 'build', `icon-tray${suffix}.png`)
+}
+
+export function followTraySystemTheme(tray: Tray): () => void {
+  if (process.platform !== 'win32') return () => undefined
+  const updateIcon = () => {
+    if (!tray.isDestroyed()) tray.setImage(createTrayIcon())
+  }
+  nativeTheme.on('updated', updateIcon)
+  return () => nativeTheme.removeListener('updated', updateIcon)
 }
 
 export function createTrayIcon(): NativeImage {

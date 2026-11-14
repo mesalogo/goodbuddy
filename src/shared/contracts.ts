@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { maximumAttachmentsPerMessage, maximumContextBytes } from './attachment-limits'
+import { maximumContextBytes } from './attachment-limits'
 import {
   modelRequestBodySchema,
   modelRequestHeadersSchema,
@@ -34,6 +34,10 @@ import {
   legacyConversationSubagentActivitySchema,
   type AssistantProject,
   type AssistantArtifact,
+  type ArtifactListPage,
+  type ArtifactListPageRequest,
+  type TaskListPage,
+  type TaskListPageRequest,
   type AssistantMemory,
   type AssistantSchedule,
   type AssistantHeartbeatConfig,
@@ -259,7 +263,6 @@ export {
   runtimeConversationCompactInputSchema,
   runtimeConversationCompactResultSchema,
   runtimeCustomizationLimits,
-  runtimeNativeInventoryLimits,
   runtimeCustomizationSettingsSchema,
   runtimeNativeSnapshotInputSchema,
   runtimeNativeSnapshotSchema,
@@ -356,11 +359,10 @@ export const agentRequestSchema = z
     prompt: z.string().trim().min(1).max(100_000),
     knowledgeLibraryIds: z
       .array(z.string().uuid())
-      .max(20)
       .default([]),
     knowledgeRetrievalMode: knowledgeRetrievalModeSchema.default('auto'),
-    contextIds: z.array(z.string().uuid()).max(maximumAttachmentsPerMessage).optional(),
-    imageContextArtifactIds: z.array(assistantIdSchema).max(8).optional(),
+    contextIds: z.array(z.string().uuid()).optional(),
+    imageContextArtifactIds: z.array(assistantIdSchema).optional(),
     history: z
       .array(conversationHistoryMessageSchema)
       .optional(),
@@ -401,11 +403,10 @@ export const conversationQueueUserInputSchema = z
     smartRouting: z.boolean().optional(),
     includeMemoryContext: z.boolean().default(true),
     prompt: z.string().trim().min(1).max(100_000),
-    attachments: z.array(conversationAttachmentSchema).max(maximumAttachmentsPerMessage).default([]),
-    imageContextArtifactIds: z.array(assistantIdSchema).max(8).optional(),
+    attachments: z.array(conversationAttachmentSchema).default([]),
+    imageContextArtifactIds: z.array(assistantIdSchema).optional(),
     knowledgeLibraryIds: z
       .array(z.string().uuid())
-      .max(20)
       .default([]),
     knowledgeRetrievalMode: knowledgeRetrievalModeSchema.default('auto')
   })
@@ -754,7 +755,6 @@ export const runtimeSettingsInputSchema = z
     embeddingConnections: z
       .array(embeddingConnectionInputSchema)
       .min(1)
-      .max(20)
       .optional(),
     activeEmbeddingConnectionId:
       embeddingConnectionIdSchema.optional(),
@@ -772,7 +772,7 @@ export const runtimeSettingsInputSchema = z
       runtimeCustomizationSettingsSchema.optional(),
     workspacePath: z.string().trim().min(1).max(4_096),
     apiKey: modelApiKeyUpdateSchema,
-    modelProfiles: z.array(modelProfileInputSchema).min(1).max(20).optional(),
+    modelProfiles: z.array(modelProfileInputSchema).min(1).optional(),
     defaultModelProfileId: modelProfileIdSchema.optional(),
     defaultImageModelProfileId: modelProfileIdSchema.nullable().optional(),
     roleSelectionModelProfileId: modelProfileIdSchema.nullable().optional(),
@@ -1188,7 +1188,7 @@ export const clipboardTextSchema = z.string()
 
 export const contextImportFilesSchema = z.object({
   conversationId: z.string().uuid().optional(),
-  paths: z.array(z.string().min(1).max(32768)).min(1).max(8)
+  paths: z.array(z.string().min(1).max(32768)).min(1)
 }).strict()
 
 export const pastedImageInputSchema = z
@@ -2157,7 +2157,6 @@ export type DesktopApi = {
     listSummaries: (detailIds?: string[]) => Promise<import('./assistant-contracts').ConversationListSnapshot[]>
     get: (conversationId: string) => Promise<ConversationSnapshot>
     search: (query: string, conversationIds?: string[]) => Promise<string[]>
-    replace: (conversations: ConversationSnapshot[]) => Promise<void>
     saveLocal: (batch: LocalConversationSaveBatch) => Promise<void>
     setPinned: (input: ConversationSetPinnedInput) => Promise<void>
     setStoryGraph: (input: { conversationId: string; enabled: boolean }) => Promise<void>
@@ -2209,6 +2208,8 @@ export type DesktopApi = {
   }
   tasks: {
     list: () => Promise<AssistantTask[]>
+    /** Older visible task history, newest first; pass the previous page's cursor. */
+    listPage: (input?: TaskListPageRequest) => Promise<TaskListPage>
     getExecutionStats: (input: ExecutionStatsInput) => Promise<ExecutionStats>
     onExecutionStatsChanged: (listener: () => void) => () => void
     setStatus: (
@@ -2246,6 +2247,8 @@ export type DesktopApi = {
   }
   artifacts: {
     list: (projectId?: string) => Promise<AssistantArtifact[]>
+    /** Older artifacts, newest first; pass the previous page's cursor. */
+    listPage: (input?: ArtifactListPageRequest) => Promise<ArtifactListPage>
     get: (artifactId: string) => Promise<AssistantArtifact>
     importFiles: (projectId?: string) => Promise<AssistantArtifact[]>
   }

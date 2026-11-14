@@ -70,8 +70,6 @@ const DELTA_BATCH_CHARACTERS = 4 * 1024
 const DELTA_BATCH_INTERVAL_MS = 100
 const MAX_SUMMARY_CHARACTERS = 4_000
 const MAX_MCP_PROXY_RESULT_BYTES = 256 * 1024
-const MAX_NATIVE_SKILLS = 200
-const MAX_NATIVE_TOOLS = 200
 const NATIVE_SNAPSHOT_TIMEOUT_MS = 2_000
 const GOODBUDDY_EXECUTION_GUIDANCE = [
   'GoodBuddy execution guidance:',
@@ -922,7 +920,6 @@ export class GoodBuddyHarnessControlPlane {
       try {
         tools = this.ctx.tools
           .schemas()
-          .slice(0, MAX_NATIVE_TOOLS)
           .flatMap((tool) => {
             const name = tool.name.trim().slice(0, 128)
             if (!name) {
@@ -943,7 +940,7 @@ export class GoodBuddyHarnessControlPlane {
       return {
         tools,
         toolsSupported,
-        skills: skills.slice(0, MAX_NATIVE_SKILLS).map((skill) => ({
+        skills: skills.map((skill) => ({
           id: skill.name.slice(0, 128),
           name: skill.name.slice(0, 200),
           description: skill.description.slice(0, 2_000),

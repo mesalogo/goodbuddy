@@ -6,6 +6,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { build } from 'esbuild'
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest'
 import { AssistantDatabase } from './assistant-database'
+import { seedConversations } from './conversation-seed-fixture'
 import { ReadonlyQueryReader } from '../readonly-query-reader'
 import { supervisionReviewSettingsSchema } from '../../shared/supervision-review-contracts'
 import type { ReviewManifestReader, ReviewManifestRow, ReviewState } from './supervision-review-store'
@@ -31,7 +32,7 @@ async function fixture() {
   const sql = (database as unknown as { database: DatabaseSync }).database
   const project = database.listProjects()[0]!
   const conversationId = randomUUID()
-  database.replaceConversations([{ id: conversationId, projectId: project.id, title: 'Sources', updatedAt: Date.now(),
+  seedConversations(database, [{ id: conversationId, projectId: project.id, title: 'Sources', updatedAt: Date.now(),
     messages: Array.from({ length: 450 }, (_, i) => ({ id: randomUUID(), role: 'user', state: 'complete',
       content: `Evidence ${i}`, createdAt: Date.parse('2026-10-01T12:00:00Z') })) }])
   const state: ReviewState = {

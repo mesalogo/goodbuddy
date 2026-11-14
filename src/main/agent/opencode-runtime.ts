@@ -31,7 +31,6 @@ import type {
 } from "../../shared/contracts";
 import {
   boundedRuntimeIdentifierSchema,
-  runtimeNativeInventoryLimits,
   type RuntimeConversationCompactInput,
   type RuntimeCustomizationSettings,
   type RuntimeNativeSnapshot,
@@ -86,14 +85,6 @@ const MAX_PERMISSION_PATTERN_LENGTH = 1_024;
 const MAX_PERMISSION_PATTERNS_BYTES = 8 * 1_024;
 const MAX_PERMISSION_METADATA_BYTES = 8 * 1_024;
 const MAX_EXECUTION_OUTPUT_BYTES = 1024 * 1024;
-const MAX_NATIVE_AGENTS = runtimeNativeInventoryLimits.agents;
-const MAX_NATIVE_TOOLS = runtimeNativeInventoryLimits.tools;
-const MAX_NATIVE_COMMANDS = runtimeNativeInventoryLimits.commands;
-const MAX_NATIVE_LSP = runtimeNativeInventoryLimits.lsp;
-const MAX_NATIVE_FORMATTERS = runtimeNativeInventoryLimits.formatters;
-const MAX_NATIVE_MCP_SERVERS = runtimeNativeInventoryLimits.mcpServers;
-const MAX_NATIVE_SKILLS = runtimeNativeInventoryLimits.skills;
-const MAX_NATIVE_RESOURCES = runtimeNativeInventoryLimits.resources;
 const COMPACTION_USAGE_EVENT_GRACE_MS = 1_000;
 const EMBEDDED_SERVER_USERNAME = "goodbuddy";
 const OPENCODE_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
@@ -570,9 +561,6 @@ function mapOpenCodeNativeTools(
   const seen = new Set<string>();
   const tools: RuntimeNativeTool[] = [];
   for (const value of values) {
-    if (tools.length >= MAX_NATIVE_TOOLS) {
-      break;
-    }
     const id = boundedNativeIdentifier(value);
     if (
       !id ||
@@ -1622,8 +1610,7 @@ export class OpenCodeRuntime implements AgentRuntime {
             hidden: agent.hidden === true,
           },
         ];
-      })
-      .slice(0, MAX_NATIVE_AGENTS);
+      });
   }
 
   private async resolveSelectedAgent(
@@ -1812,8 +1799,7 @@ export class OpenCodeRuntime implements AgentRuntime {
           !isTemporaryMcpInventoryItem(name) &&
           !assignedSkillIds.has(name)
         );
-      })
-      .slice(0, MAX_NATIVE_COMMANDS);
+      });
     const commands = nativeCommandData.flatMap((command) => {
       const id = boundedNativeIdentifier(command.name);
       if (!id) {
@@ -1872,8 +1858,7 @@ export class OpenCodeRuntime implements AgentRuntime {
             status: server.status,
           },
         ];
-      })
-      .slice(0, MAX_NATIVE_LSP);
+      });
 
     const formatterData =
       formattersResult.status === "fulfilled" &&
@@ -1900,8 +1885,7 @@ export class OpenCodeRuntime implements AgentRuntime {
               .slice(0, 100),
           },
         ];
-      })
-      .slice(0, MAX_NATIVE_FORMATTERS);
+      });
 
     const mcpData =
       mcpResult.status === "fulfilled" &&
@@ -1928,8 +1912,7 @@ export class OpenCodeRuntime implements AgentRuntime {
             status,
           },
         ];
-      })
-      .slice(0, MAX_NATIVE_MCP_SERVERS);
+      });
 
     const skillData =
       skillsResult.status === "fulfilled" &&
@@ -1952,8 +1935,7 @@ export class OpenCodeRuntime implements AgentRuntime {
             source: "unknown" as const,
           },
         ];
-      })
-      .slice(0, MAX_NATIVE_SKILLS);
+      });
 
     const resourceData =
       resourcesResult.status === "fulfilled" &&
@@ -1989,8 +1971,7 @@ export class OpenCodeRuntime implements AgentRuntime {
             ...(server ? { server } : {}),
           },
         ];
-      })
-      .slice(0, MAX_NATIVE_RESOURCES);
+      });
 
     return {
       provider: "opencode",

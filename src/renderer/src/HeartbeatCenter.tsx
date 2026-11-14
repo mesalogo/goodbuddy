@@ -113,7 +113,8 @@ function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element
         headingId="supervisor-title"
         title={t('center.title')}
         help={t('center.description')}
-        icon={<HeartPulse size={22} />}
+        icon={<HeartPulse size={20} />}
+        scope={{ kind: 'all-projects' }}
       />
       <PageTabs
         ariaLabel={t('supervisor.navigation')}
@@ -391,7 +392,7 @@ function HeartbeatSections({
   return (
     <section
       aria-label={t('center.tabs.overview')}
-      className="heartbeat-center supervisor-center__sections"
+      className="heartbeat-sections"
     >
       <div className="heartbeat-center__section-heading">
         <ScopeBadge scope={heartbeatScope} />

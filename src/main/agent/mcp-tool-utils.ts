@@ -2,30 +2,27 @@ import { createHash } from 'node:crypto'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 
 const MAXIMUM_MCP_TOOL_SCHEMA_BYTES = 32 * 1024
-const DEFAULT_MAXIMUM_MCP_TOOL_PAGES = 100
 
 type ListedMcpTool =
   Awaited<ReturnType<Client['listTools']>>['tools'][number]
 
+// Tool count is not capped: the total timeout and cursor-loop detection
+// already bound a misbehaving server.
 export async function listAllMcpTools(
   client: Pick<Client, 'listTools'>,
   serverName: string,
   signal: AbortSignal,
   options: {
-    maximumTools: number
     pageTimeoutMs: number
     totalTimeoutMs: number
-    maximumPages?: number
   }
 ): Promise<ListedMcpTool[]> {
   const tools: ListedMcpTool[] = []
   const toolNames = new Set<string>()
   const cursors = new Set<string>()
   const deadline = Date.now() + options.totalTimeoutMs
-  const maximumPages =
-    options.maximumPages ?? DEFAULT_MAXIMUM_MCP_TOOL_PAGES
   let cursor: string | undefined
-  for (let page = 0; page < maximumPages; page += 1) {
+  for (;;) {
     signal.throwIfAborted()
     const remainingMs = deadline - Date.now()
     if (remainingMs <= 0) {
@@ -51,11 +48,6 @@ export async function listAllMcpTools(
       }
       toolNames.add(tool.name)
       tools.push(tool)
-      if (tools.length > options.maximumTools) {
-        throw new Error(
-          `MCP Server「${serverName}」提供的工具数量超过安全限制`
-        )
-      }
     }
     if (result.nextCursor === undefined) {
       return tools
@@ -68,9 +60,6 @@ export async function listAllMcpTools(
     cursors.add(result.nextCursor)
     cursor = result.nextCursor
   }
-  throw new Error(
-    `MCP Server「${serverName}」的工具分页超过安全限制`
-  )
 }
 
 export function isValidMcpToolName(value: unknown): value is string {

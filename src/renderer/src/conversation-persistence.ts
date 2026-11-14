@@ -117,6 +117,39 @@ export function createLocalConversationSaveBatch(
   return { batch, acknowledgements };
 }
 
+export type LocalConversationSaveFailure = { conversation: Conversation; error: unknown };
+
+/**
+ * Saves one batch; when Main rejects it, saves each conversation on its own so
+ * a single invalid conversation cannot block the others. Acknowledges every
+ * saved conversation in `acknowledged` and returns the ones that failed.
+ */
+export async function saveLocalConversationBatchIsolatingFailures(
+  { batch, acknowledgements }: ReturnType<typeof createLocalConversationSaveBatch>,
+  acknowledged: Map<string, Conversation>,
+  saveLocal: (batch: LocalConversationSaveBatch) => Promise<unknown>,
+): Promise<LocalConversationSaveFailure[]> {
+  if (batch.length === 0) return [];
+  try {
+    await saveLocal(batch);
+    for (const conversation of acknowledgements) acknowledged.set(conversation.id, conversation);
+    return [];
+  } catch (error) {
+    if (batch.length === 1) return [{ conversation: acknowledgements[0]!, error }];
+  }
+  const failures: LocalConversationSaveFailure[] = [];
+  for (const [index, save] of batch.entries()) {
+    const conversation = acknowledgements[index]!;
+    try {
+      await saveLocal([save]);
+      acknowledged.set(conversation.id, conversation);
+    } catch (error) {
+      failures.push({ conversation, error });
+    }
+  }
+  return failures;
+}
+
 /**
  * The persisted store is the authority for a message's terminal state.
  * A locally streaming message (or a locally interrupted one that the
@@ -319,26 +352,31 @@ export function createConversationPersistence(options: ConversationPersistenceOp
     });
   };
 
-  /** Queues a save of every changed local conversation, then releases idle history. */
-  const persist = (): Promise<void> => {
+  /**
+   * Queues a save of every changed local conversation, then releases idle
+   * history. A conversation Main rejects stays unacknowledged (retried on the
+   * next save and reported) without blocking the others in its batch.
+   */
+  const persist = (failedIds?: Set<string>): Promise<void> => {
     const operation = queue.then(async () => {
       if (paused) {
         return;
       }
-      const { batch, acknowledgements } = createLocalConversationSaveBatch(
+      const prepared = createLocalConversationSaveBatch(
         store.getState(),
         acknowledged,
-        deleting,
+        failedIds?.size ? new Set([...deleting, ...failedIds]) : deleting,
       );
-      if (batch.length === 0) {
+      if (prepared.batch.length === 0) {
         releaseUnretainedHistories();
         return;
       }
-      await api.saveLocal(batch);
-      for (const conversation of acknowledgements) {
-        acknowledged.set(conversation.id, conversation);
-      }
+      const failures = await saveLocalConversationBatchIsolatingFailures(
+        prepared, acknowledged, api.saveLocal,
+      );
+      for (const failure of failures) failedIds?.add(failure.conversation.id);
       releaseUnretainedHistories();
+      if (failures.length) throw failures[0]!.error;
     });
     queue = operation.catch(() => undefined);
     void operation.catch(() => host.onSaveFailed());
@@ -405,7 +443,7 @@ export function createConversationPersistence(options: ConversationPersistenceOp
     requestFlushAfterCommit(): void {
       flushRequested = true;
     },
-    persist,
+    persist: (): Promise<void> => persist(),
     ensureHistory,
     releaseUnretainedHistories,
     /**
@@ -415,7 +453,7 @@ export function createConversationPersistence(options: ConversationPersistenceOp
     start(): () => void {
       started = true;
       persist();
-      const interval = setInterval(persist, options.intervalMs);
+      const interval = setInterval(() => void persist(), options.intervalMs);
       return () => {
         clearInterval(interval);
         started = false;
@@ -433,11 +471,25 @@ export function createConversationPersistence(options: ConversationPersistenceOp
       if (!started) return;
       flushRequested = false;
       await queue;
+      // Rejected conversations are skipped for the rest of this flush so the
+      // others still drain; the first failure is reported afterwards.
+      const failedIds = new Set<string>();
+      let failure: { error: unknown } | undefined;
       while (!paused) {
-        const { batch } = createLocalConversationSaveBatch(store.getState(), acknowledged, deleting);
+        const { batch } = createLocalConversationSaveBatch(
+          store.getState(), acknowledged, new Set([...deleting, ...failedIds]),
+        );
         if (!batch.length) break;
-        await persist();
+        try {
+          await persist(failedIds);
+        } catch (error) {
+          failure ??= { error };
+          // A failure that did not come from a rejected conversation (e.g.
+          // the save transport) cannot make progress; stop here.
+          if (!failedIds.size) break;
+        }
       }
+      if (failure) throw failure.error;
     },
   };
 }

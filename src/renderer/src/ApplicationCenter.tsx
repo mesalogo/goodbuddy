@@ -26,6 +26,7 @@ import { InlineHelp } from './InlineHelp'
 import {
   applicationDisplayOrder,
   defaultApplicationNavigation,
+  isApplicationPinnable,
   isApplicationPinned,
   type ApplicationSettings,
   type ApplicationSettingsUpdate,
@@ -182,27 +183,29 @@ export function ApplicationSettingsView({
           />
           <span>{t(id === 'remote-hosts' ? 'applications.remoteHostsEnable' : 'applications.enable')}</span>
         </label>
-        <div className="inline-help-label">
-          <label className="toggle-row">
-            <input
-              role="switch"
-              type="checkbox"
-              checked={isApplicationPinned(navigation, id)}
-              aria-describedby="application-pin-help"
-              disabled={pending}
-              onChange={(event) =>
-                void onUpdate({
-                  applicationNavigation: {
-                    ...navigation,
-                    pinned: { ...navigation.pinned, [id]: event.target.checked },
-                  },
-                })
-              }
-            />
-            <span>{t('applications.pin')}</span>
-          </label>
-          <InlineHelp label={t('applications.pin')} id="application-pin-help">{t('applications.pinHelp')}</InlineHelp>
-        </div>
+        {isApplicationPinnable(id) && (
+          <div className="inline-help-label">
+            <label className="toggle-row">
+              <input
+                role="switch"
+                type="checkbox"
+                checked={isApplicationPinned(navigation, id)}
+                aria-describedby="application-pin-help"
+                disabled={pending}
+                onChange={(event) =>
+                  void onUpdate({
+                    applicationNavigation: {
+                      ...navigation,
+                      pinned: { ...navigation.pinned, [id]: event.target.checked },
+                    },
+                  })
+                }
+              />
+              <span>{t('applications.pin')}</span>
+            </label>
+            <InlineHelp label={t('applications.pin')} id="application-pin-help">{t('applications.pinHelp')}</InlineHelp>
+          </div>
+        )}
         <p className="settings-notice">{t(id === 'device-sharing' ? 'applications.deviceSharingHelp' : id === 'remote-hosts' ? 'applications.remoteHostsHelp' : 'applications.disableHelp')}</p>
         {id === 'magic-notes' && (
           <label className="toggle-row">
@@ -679,17 +682,19 @@ export function ApplicationCenter({
                           <span>{t('applications.enableShort')}</span>
                         </label>
                       )}
-                      <label className="toggle-row application-card__switch" title={t('applications.pinHelp')}>
-                        <input
-                          role="switch"
-                          type="checkbox"
-                          checked={isApplicationPinned(navigation, id)}
-                          disabled={editingDisabled}
-                          aria-label={t('applications.pinNamed', { name: title })}
-                          onChange={(event) => setPinned(id, event.target.checked)}
-                        />
-                        <span>{t('applications.pinShort')}</span>
-                      </label>
+                      {isApplicationPinnable(id) && (
+                        <label className="toggle-row application-card__switch" title={t('applications.pinHelp')}>
+                          <input
+                            role="switch"
+                            type="checkbox"
+                            checked={isApplicationPinned(navigation, id)}
+                            disabled={editingDisabled}
+                            aria-label={t('applications.pinNamed', { name: title })}
+                            onChange={(event) => setPinned(id, event.target.checked)}
+                          />
+                          <span>{t('applications.pinShort')}</span>
+                        </label>
+                      )}
                       <span className="application-card__spacer" />
                       <button
                         className="secondary-button application-card__open"

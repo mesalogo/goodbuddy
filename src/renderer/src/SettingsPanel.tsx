@@ -2,6 +2,7 @@ import { useWorkspaceUnsavedChanges } from './workspace-unsaved-changes'
 import {
   Copy,
   KeyRound,
+  LayoutPanelLeft,
   LockKeyhole,
   Plus,
   Save,
@@ -72,6 +73,7 @@ import {
   type SettingsCategoryId
 } from './settings-categories'
 import type { AppearanceTheme } from './theme'
+import type { InterfaceLayout } from './interface-layout'
 import type { AppNotificationInput } from './notifications'
 import type {
   EmbeddingDiagnosticResult,
@@ -236,6 +238,8 @@ type SettingsPanelProps = {
   onChatMinimapEnabledChange?: (enabled: boolean) => Promise<boolean>
   onRetryApplicationSettings?: () => void
   onAppearanceThemeChange?: (theme: AppearanceTheme) => void
+  interfaceLayout?: InterfaceLayout
+  onInterfaceLayoutChange?: (layout: InterfaceLayout) => void
   brandingPreferences?: BrandingPreferences
   brandingFallbackLogo?: string
   onBrandingPreferencesChange?: (
@@ -648,6 +652,8 @@ function SettingsPanelView({
   onChatMinimapEnabledChange,
   onRetryApplicationSettings,
   onAppearanceThemeChange = () => {},
+  interfaceLayout = 'classic',
+  onInterfaceLayoutChange = () => {},
   brandingPreferences = defaultBrandingPreferences,
   brandingFallbackLogo,
   onBrandingPreferencesChange = () => false,
@@ -1848,7 +1854,6 @@ function SettingsPanelView({
   }
 
   const addModelProfile = (): void => {
-    if (modelProfiles.length >= 20) return
     const id = crypto.randomUUID()
     setModelProfiles((profiles) => [
       ...profiles,
@@ -1881,7 +1886,6 @@ function SettingsPanelView({
   }
 
   const copyModelProfile = (source: ModelProfileDraft): void => {
-    if (modelProfiles.length >= 20) return
     const id = crypto.randomUUID()
     let name = ''
     let index = 1
@@ -2366,6 +2370,43 @@ function SettingsPanelView({
                       </label>
                     )
                   )}
+                </div>
+              </div>
+              <div className="settings-section appearance-settings">
+                <div className="settings-section__title">
+                  <LayoutPanelLeft size={17} />
+                  <span className="inline-help-label">
+                    <strong>{t('appearance.layout.title')}</strong>
+                    <InlineHelp label={t('appearance.layout.title')}>{t('appearance.layout.description')}</InlineHelp>
+                  </span>
+                </div>
+                <div
+                  aria-label={t('appearance.layout.ariaLabel')}
+                  className="appearance-options appearance-options--layout"
+                  role="radiogroup"
+                >
+                  {(['classic', 'workbench'] as const).map((value) => (
+                    <label key={value}>
+                      <input
+                        checked={interfaceLayout === value}
+                        name="interface-layout"
+                        onChange={() => onInterfaceLayoutChange(value)}
+                        type="radio"
+                        value={value}
+                      />
+                      <span
+                        aria-hidden="true"
+                        className={`appearance-options__preview layout-preview layout-preview--${value}`}
+                      >
+                        {value === 'workbench' && <i />}
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                      <strong>{t(`appearance.layout.options.${value}.label`)}</strong>
+                      <small>{t(`appearance.layout.options.${value}.description`)}</small>
+                    </label>
+                  ))}
                 </div>
               </div>
               <div className="settings-section">
@@ -3052,7 +3093,6 @@ function SettingsPanelView({
               </div>
               <button
                 className="secondary-button model-connection-add"
-                disabled={modelProfiles.length >= 20}
                 onClick={addModelProfile}
                 type="button"
               >
@@ -3174,7 +3214,6 @@ function SettingsPanelView({
                         name: modelProfileDisplayName(profile)
                       })}
                       className="secondary-button"
-                      disabled={modelProfiles.length >= 20}
                       onClick={() => copyModelProfile(profile)}
                       title={t('model.profile.copyDescription')}
                       type="button"
