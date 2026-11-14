@@ -18,6 +18,7 @@ parser.add_argument('--file-entry', action='store_true', help='Open a file refer
 parser.add_argument('--legacy', action='store_true', help='Convert a real DOC and verify saving preserves the original')
 parser.add_argument('--native-save', action='store_true', help='Use ONLYOFFICE toolbar Save and verify automatic source writeback')
 parser.add_argument('--registered-device', action='store_true', help='Register an isolated test device and authenticate every Office request')
+parser.add_argument('--timing', action='store_true', help='Measure click-to-ready for a first open and a reopen, then exit')
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[1]
 (repo / 'temp').mkdir(exist_ok=True)
@@ -77,6 +78,38 @@ with (root / 'electron.log').open('w') as log:
                 raise RuntimeError('Desktop panel did not open')
             panel.wait_for_url('**/index.html')
             assert panel.get_by_role('textbox', name='ShareServer 地址').count() == 0
+            if args.timing:
+                def timed_open(label):
+                    started = time.monotonic()
+                    last_error = ''
+                    panel.get_by_role('button', name='编辑文件引用', exact=True).click()
+                    while time.monotonic() - started < 120:
+                        page = next((p for c in browser.contexts for p in c.pages if '/office/editor?' in p.url), None)
+                        try:
+                            if page and page.evaluate('document.documentElement.dataset.officeReady === "true"'):
+                                elapsed = time.monotonic() - started
+                                metrics = page.evaluate('''() => { const r = performance.getEntriesByType('resource'); const sum = (f) => r.reduce((n, e) => n + f(e), 0);
+                                  return { pageMs: Math.round(performance.now()), resources: r.length, transferred: sum(e => e.transferSize), cached: r.filter(e => e.transferSize === 0 && e.decodedBodySize > 0).length } }''')
+                                frames = [f for f in page.frames if f != page.main_frame]
+                                inner = frames[0].evaluate('''() => { const r = performance.getEntriesByType('resource'); return { resources: r.length, transferred: r.reduce((n, e) => n + e.transferSize, 0), cached: r.filter(e => e.transferSize === 0 && e.decodedBodySize > 0).length } }''') if frames else {}
+                                print(f'TIMING {label}: {elapsed:.2f}s click-to-ready; editor page {metrics}; docs frame {inner}', flush=True)
+                                if os.environ.get('GB_OFFICE_PROBE_RESOURCES'): print('URL', page.url, page.evaluate("performance.getEntriesByType('resource').map(e => [e.name, e.transferSize, e.decodedBodySize])"), flush=True)
+                                return page
+                        except Exception as error:
+                            last_error = str(error)
+                        panel.wait_for_timeout(50)
+                    raise RuntimeError(f'{label} not ready: ' + panel.inner_text('body') + str([p.url for c in browser.contexts for p in c.pages]) + last_error + ' | editor: ' + (page.inner_text('body')[:500] if page else ''))
+                for label in ['first-open', 'reopen', 'third-open']:
+                    timed_open(label)
+                    panel.get_by_role('button', name='关闭文档', exact=True).click()
+                    for _ in range(100):
+                        if not any('/office/editor?' in p.url for p in browser.contexts[0].pages): break
+                        time.sleep(.1)
+                    time.sleep(1)
+                panel.evaluate('window.goodbuddy.quitProbe()')
+                browser.close()
+                child.wait(timeout=15)
+                sys.exit(0)
             panel.get_by_role('button', name='编辑文件引用' if args.file_entry else '选择 Office 文件并编辑', exact=True).click()
             editor = None
             observed = set()

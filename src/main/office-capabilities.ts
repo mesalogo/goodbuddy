@@ -1,7 +1,24 @@
 import { officeCapabilitiesSchema, officeOriginSchema, type OfficeCapabilities } from '../shared/office-contracts'
 
-export async function readOfficeCapabilities(serverUrl: string): Promise<OfficeCapabilities> {
+// One open touches capabilities from the renderer, Main and device authentication.
+// Share a short-lived successful result per origin so an open costs one request,
+// while connection checks and later opens still observe server changes quickly.
+const CACHE_MS = 30_000
+const cache = new Map<string, { at: number; value: Promise<OfficeCapabilities> }>()
+
+export function clearOfficeCapabilitiesCache(): void { cache.clear() }
+
+export function readOfficeCapabilities(serverUrl: string, options: { fresh?: boolean } = {}): Promise<OfficeCapabilities> {
   const origin = new URL(officeOriginSchema.parse(serverUrl)).origin
+  const cached = cache.get(origin)
+  if (!options.fresh && cached && Date.now() - cached.at < CACHE_MS) return cached.value
+  const value = fetchOfficeCapabilities(origin)
+  cache.set(origin, { at: Date.now(), value })
+  value.catch(() => { if (cache.get(origin)?.value === value) cache.delete(origin) })
+  return value
+}
+
+async function fetchOfficeCapabilities(origin: string): Promise<OfficeCapabilities> {
   let response: Response
   try {
     response = await fetch(`${origin}/api/v1/office/config`, { signal: AbortSignal.timeout(15_000), redirect: 'error' })

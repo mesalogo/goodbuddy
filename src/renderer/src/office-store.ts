@@ -24,7 +24,7 @@ export const officeStore = {
   async open(instanceId: string, serverUrl?: string): Promise<OfficeSession | null> {
     if (officeStore.get(instanceId).busy) return null
     if (officeStore.get(instanceId).session) return officeStore.get(instanceId).session!
-    update(instanceId, { busy: true, error: undefined, message: '正在检查 Office 能力并上传文件…' })
+    update(instanceId, { busy: true, error: undefined, message: undefined })
     try {
       if (!window.goodbuddy.office) throw new Error('请更新 GoodBuddy 后重试')
       serverUrl ??= await shareServerConnection.resolve()

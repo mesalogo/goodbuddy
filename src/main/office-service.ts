@@ -1,4 +1,4 @@
-import { dialog, ipcMain, WebContentsView, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { dialog, ipcMain, session as electronSession, WebContentsView, type BrowserWindow, type IpcMainInvokeEvent, type Session as ElectronSession } from 'electron'
 import { Worker } from 'node:worker_threads'
 import { resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -12,6 +12,10 @@ import { assertTrustedSender } from './trusted-ipc-sender'
 import type { OfficeFileSource } from './office-workspace-source'
 import type { ConversationSnapshot } from '../shared/assistant-contracts'
 import { readOfficeCapabilities, requireOfficeEditing } from './office-capabilities'
+
+// One persistent partition for every Office tab: versioned editor assets (Docs SDK,
+// fonts, editor shell) stay in the HTTP cache across documents and app restarts.
+export const OFFICE_PARTITION = 'persist:goodbuddy-office'
 
 type Session = {
   headers?: Record<string, string>
@@ -47,6 +51,9 @@ export class OfficeService {
   private sessions = new Map<string, Session>()
   private opening = new Set<string>()
   private contexts = new Map<string, string | undefined>()
+  // Device credentials per ShareServer origin; attached only to that origin's Office API.
+  private originHeaders = new Map<string, Record<string, string>>()
+  private partition?: ElectronSession
   constructor(private window: BrowserWindow, private workerPath: string,
     private resolveSource?: (source: OfficeSource) => Promise<OfficeFileSource>,
     private readConversation?: (id: string) => Promise<ConversationSnapshot>,
@@ -144,7 +151,8 @@ export class OfficeService {
     this.opening.add(input.instanceId)
     let source: OfficeFileSource | undefined
     try {
-      requireOfficeEditing(await readOfficeCapabilities(input.serverUrl), input.source?.kind === 'workspace' ? input.source.path : undefined)
+      const capabilities = await readOfficeCapabilities(input.serverUrl)
+      requireOfficeEditing(capabilities, input.source?.kind === 'workspace' ? input.source.path : undefined)
       if (input.source) {
         if (!this.resolveSource) throw new Error('文档来源服务未就绪')
         source = await this.resolveSource(input.source)
@@ -160,26 +168,18 @@ export class OfficeService {
       const alreadyOpen = [...this.sessions.values()].find(session => session.path === path)
       if (alreadyOpen) { await source.dispose?.(); source = undefined; return this.summary(alreadyOpen) }
       const headers = await this.authentication?.(serverUrl)
-      const result = await fileJob(this.workerPath, { action: 'upload', path, serverUrl, headers })
+      const result = await fileJob(this.workerPath, { action: 'upload', path, serverUrl, headers, capabilities })
+      if (headers) this.originHeaders.set(serverUrl, headers)
+      else this.originHeaders.delete(serverUrl)
       const view = new WebContentsView({ webPreferences: {
         sandbox: true, contextIsolation: true, nodeIntegration: false,
         preload: this.editorPreload,
-        partition: `goodbuddy-office-${result.document.id}`
+        session: this.editorSession()
       } })
       view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
       view.webContents.on('will-navigate', (event, url) => {
         if (new URL(url).origin !== serverUrl) event.preventDefault()
       })
-      view.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-      if (headers) view.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
-        const url = new URL(details.url)
-        const isOfficeApi = url.origin === serverUrl && url.pathname.startsWith('/api/v1/office/')
-        callback({ requestHeaders: isOfficeApi ? { ...details.requestHeaders, ...headers } : details.requestHeaders })
-      })
-      const downloadSession = view.webContents.session
-      const preventDownload = (event: { preventDefault(): void }): void => event.preventDefault()
-      downloadSession.on('will-download', preventDownload)
-      view.webContents.once('destroyed', () => downloadSession.removeListener('will-download', preventDownload))
       this.window.contentView.addChildView(view)
       view.setVisible(false)
       const session: Session = { ...result, headers, instanceId: input.instanceId, serverUrl, path, view,
@@ -204,6 +204,21 @@ export class OfficeService {
     } finally {
       this.opening.delete(input.instanceId)
     }
+  }
+
+  private editorSession(): ElectronSession {
+    if (this.partition) return this.partition
+    const partition = electronSession.fromPartition(OFFICE_PARTITION)
+    partition.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+    partition.on('will-download', event => event.preventDefault())
+    partition.webRequest.onBeforeSendHeaders((details, callback) => {
+      let url: URL
+      try { url = new URL(details.url) } catch { callback({ requestHeaders: details.requestHeaders }); return }
+      const headers = url.pathname.startsWith('/api/v1/office/') ? this.originHeaders.get(url.origin) : undefined
+      callback({ requestHeaders: headers ? { ...details.requestHeaders, ...headers } : details.requestHeaders })
+    })
+    this.partition = partition
+    return partition
   }
 
   viewport(input: z.infer<typeof officeViewportSchema>): void {
@@ -335,7 +350,10 @@ export class OfficeService {
 export function registerOfficeIpc(window: BrowserWindow, service: OfficeService): () => void {
   const handlers: Record<string, (input: unknown) => unknown> = {
     [officeChannels.context]: input => service.context(officeContextSchema.parse(input)),
-    [officeChannels.capabilities]: input => readOfficeCapabilities(z.object({ serverUrl: z.string() }).strict().parse(input).serverUrl),
+    [officeChannels.capabilities]: input => {
+      const value = z.object({ serverUrl: z.string(), fresh: z.boolean().optional() }).strict().parse(input)
+      return readOfficeCapabilities(value.serverUrl, { fresh: value.fresh })
+    },
     [officeChannels.open]: input => service.open(officeOpenSchema.parse(input)),
     [officeChannels.save]: input => {
       const value = officeInstanceSchema.extend({ saveAs: z.boolean().optional() }).strict().parse(input)

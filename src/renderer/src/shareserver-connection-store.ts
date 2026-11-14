@@ -35,7 +35,8 @@ export const shareServerConnection = {
     update({ checking: true, error: undefined, capabilities: undefined })
     try {
       const serverUrl = new URL(officeOriginSchema.parse(value.trim())).origin
-      const capabilities = await window.goodbuddy.office!.capabilities({ serverUrl })
+      // An explicit connection check must observe the server's current state.
+      const capabilities = await window.goodbuddy.office!.capabilities({ serverUrl, fresh: true })
       const sharing = window.goodbuddy.sharing
       if (!sharing) throw new Error('请更新 GoodBuddy 后配置 ShareServer 连接')
       const settings = await sharing.getSettings()

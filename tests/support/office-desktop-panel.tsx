@@ -5,6 +5,7 @@ import { officeStore } from '../../src/renderer/src/office-store'
 function Probe(): React.JSX.Element {
   const request = useSyncExternalStore(officeStore.subscribe, officeStore.getOpenRequest)
   return <>
+    <button onClick={() => { if (request) void officeStore.close(request.instanceId) }}>关闭文档</button>
     <button onClick={() => officeStore.requestOpen({ kind: 'workspace', projectId: '10000000-0000-4000-8000-000000000001', path: 'source.docx' }, 'source.docx')}>编辑文件引用</button>
     <OfficePanel instanceId={request?.instanceId ?? '10000000-0000-4000-8000-000000000099'} conversationId="10000000-0000-4000-8000-000000000010" />
   </>
