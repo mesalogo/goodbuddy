@@ -374,10 +374,9 @@ function KnowledgeWorkspaceView({
           </button>
           </>
         }
-        description={t('page.description')}
+        help={t('page.description')}
         headingId="knowledge-workspace-title"
         icon={<Database size={20} />}
-        scope={{ kind: 'global' }}
         title={t('page.title')}
       />
       <section

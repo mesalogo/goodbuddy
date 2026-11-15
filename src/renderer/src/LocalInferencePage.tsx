@@ -121,7 +121,7 @@ export default function LocalInferencePage({ onClose, enabled = true, restoreFoc
     }
   }}>
     <div className="custom-task-dialog__header">
-    <PageHeader headingId="local-inference-title" title="本机推理监控" scope={{ kind: 'global' }}
+    <PageHeader headingId="local-inference-title" title="本机推理监控"
       help={enabled ? '每 5 秒刷新 · CPU 100% = 一个逻辑核心' : undefined}
       actions={<button ref={close} type="button" className="icon-button" aria-label="关闭本机推理监控" title="关闭本机推理监控" disabled={busy || Boolean(control)} onClick={() => { if (!operation.current && !control) onClose() }}><X size={20} aria-hidden="true" /></button>} />
     </div>

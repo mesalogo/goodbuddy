@@ -1830,7 +1830,7 @@ describe('KnowledgeWorkspace', () => {
     })
     expect(detailRegion).toHaveClass('knowledge-workspace__main')
     expect(detailRegion).not.toHaveAttribute('style')
-    expect(screen.getByText('全局')).toHaveClass('scope-badge')
+    expect(document.querySelector('.scope-badge')).toBeNull()
     const mobileBack = screen.getByRole('button', {
       name: '返回知识库列表'
     })

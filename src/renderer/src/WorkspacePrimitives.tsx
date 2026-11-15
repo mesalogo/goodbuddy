@@ -1,7 +1,6 @@
 import {
   FolderKanban,
   Globe2,
-  Layers3,
   TriangleAlert
 } from 'lucide-react'
 import {
@@ -14,12 +13,10 @@ import {
 import { useTranslation } from 'react-i18next'
 import { InlineHelp } from './InlineHelp'
 
+/** Shown only where the scope is real data (the chat project, an activity group), never as a page label. */
 export type WorkspaceScope =
   | { kind: 'global' }
-  | { kind: 'all-projects' }
   | { kind: 'project'; projectName: string }
-  | { kind: 'projects'; projectCount: number }
-  | { kind: 'mixed'; projectName?: string }
   | { kind: 'unavailable'; explanation: string }
 
 export type PageTab<T extends string> = {
@@ -84,38 +81,17 @@ export function ScopeBadge({
           icon: <Globe2 size={12} />,
           label: t('primitives.scope.global')
         }
-      : scope.kind === 'all-projects'
+      : scope.kind === 'project'
         ? {
-            icon: <Layers3 size={12} />,
-            label: t('primitives.scope.allProjects')
+            icon: <FolderKanban size={12} />,
+            label: t('primitives.scope.project', {
+              projectName: scope.projectName
+            })
           }
-        : scope.kind === 'project'
-          ? {
-              icon: <FolderKanban size={12} />,
-              label: t('primitives.scope.project', {
-                projectName: scope.projectName
-              })
-            }
-          : scope.kind === 'projects'
-            ? {
-                icon: <Layers3 size={12} />,
-                label: t('primitives.scope.projects', {
-                  count: scope.projectCount
-                })
-              }
-            : scope.kind === 'mixed'
-            ? {
-                icon: <Layers3 size={12} />,
-                label: scope.projectName
-                  ? t('primitives.scope.mixedProject', {
-                      projectName: scope.projectName
-                    })
-                  : t('primitives.scope.mixedCurrent')
-              }
-            : {
-                icon: <TriangleAlert size={12} />,
-                label: t('primitives.scope.unavailable')
-              }
+        : {
+            icon: <TriangleAlert size={12} />,
+            label: t('primitives.scope.unavailable')
+          }
 
   return (
     <span
@@ -145,7 +121,6 @@ export function PageHeader({
   headingId,
   help,
   icon,
-  scope,
   title
 }: {
   actions?: ReactNode
@@ -155,7 +130,6 @@ export function PageHeader({
   headingId: string
   help?: ReactNode
   icon?: ReactNode
-  scope?: WorkspaceScope
   title: string
 }): React.JSX.Element {
   return (
@@ -173,7 +147,6 @@ export function PageHeader({
             </span>
           )}
           <h1 id={headingId}>{help != null ? <span className="inline-help-label">{title}<InlineHelp label={title}>{help}</InlineHelp></span> : title}</h1>
-          {scope && <ScopeBadge scope={scope} />}
         </div>
         {description && (
           <p className="page-header__description">{description}</p>

@@ -2384,7 +2384,6 @@ function MagicNotesWorkspaceView({
         help={t('page.description')}
         headingId="magic-notes-title"
         icon={<Sparkles size={20} />}
-        scope={{ kind: 'global' }}
         title={t('page.title')}
       />
 

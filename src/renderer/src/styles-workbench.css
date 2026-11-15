@@ -34,6 +34,10 @@
   --wb-titlebar-height: 40px;
   /* Second column of non-chat pages (library list, note list); matches the default conversation column. */
   --wb-object-list-width: 260px;
+  /* One inset for every page in this layout: the page head, the list column and single-column pages
+     start at the same distance from the content card edge. */
+  --wb-inset: var(--space-5);
+  --wb-page-title: 18px;
   --wb-soft-shadow: 0 2px 12px #27374a0d, 0 0 0 1px #27374a0a;
   --wb-raised-shadow: 0 1px 3px #27374a14;
 }
@@ -469,6 +473,61 @@
   box-shadow: var(--wb-raised-shadow);
 }
 
+/* Page heads: every page level application uses the same title size, top inset and left inset, so
+   switching pages does not move the title. */
+:root[data-layout='workbench'] .page-shell .page-header h1 {
+  font-size: var(--wb-page-title);
+  font-weight: 600;
+}
+
+/* The title row is as tall as a header action, so a head with or without buttons has one height and
+   the tabs below it start at the same place on every page. */
+:root[data-layout='workbench'] .page-shell .page-header__title-row {
+  min-height: var(--control-height);
+}
+
+:root[data-layout='workbench'] .page-shell .page-header {
+  align-items: center;
+}
+
+/* Single-column pages (supervisor, activity, remote hosts, device sharing): content starts at the same
+   inset as the list column of list + detail pages, left aligned; the max width stays as a right margin. */
+:root[data-layout='workbench'] .page-shell--standard {
+  padding: var(--wb-inset) max(var(--wb-inset), calc(100% - var(--content-standard) - var(--wb-inset))) var(--wb-inset) var(--wb-inset);
+}
+
+:root[data-layout='workbench'] .page-shell--dashboard {
+  padding: var(--wb-inset) max(var(--wb-inset), calc(100% - var(--content-dashboard) - var(--wb-inset))) var(--wb-inset) var(--wb-inset);
+}
+
+:root[data-layout='workbench'] .page-shell--supervisor {
+  padding: var(--wb-inset) max(var(--wb-inset), calc(100% - var(--content-supervisor) - var(--wb-inset))) var(--wb-inset) var(--wb-inset);
+}
+
+/* List + detail column head (knowledge, magic notes): title row, then one action row where the
+   "new" action fills the row like "new conversation" and the rest are icon buttons. */
+@container page-shell (width > 780px) {
+  :root[data-layout='workbench'] :is(.knowledge-page, .magic-notes-page) > .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    padding: var(--wb-inset) var(--wb-inset) var(--space-3);
+    border-bottom: 0;
+    gap: var(--space-3);
+  }
+
+  :root[data-layout='workbench'] :is(.knowledge-page, .magic-notes-page) > .page-header .page-header__actions {
+    width: 100%;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+  }
+
+  :root[data-layout='workbench'] :is(.knowledge-page, .magic-notes-page) > .page-header .page-header__actions > .primary-button {
+    min-width: 0;
+    flex: 1;
+    order: -1;
+  }
+}
+
 /* Knowledge page as a workbench page: the library list is the second column, like the conversation
    column on the chat page. Page title and actions head that column; details fill the rest, flush with
    the content card. CSS-only regrouping: .knowledge-workspace becomes a transparent box (its dialogs
@@ -496,39 +555,11 @@
   background: var(--surface-subtle);
 }
 
-/* Column head: title row, short description, actions on their own row. */
 :root[data-layout='workbench'] .knowledge-page > .page-header {
   grid-row: 1;
-  flex-direction: column;
-  padding: var(--space-4) var(--space-4) var(--space-3);
-  border-bottom: 0;
-  gap: var(--space-3);
 }
 
-:root[data-layout='workbench'] .knowledge-page > .page-header h1 {
-  font-size: var(--font-section-title);
-  font-weight: 650;
-}
-
-/* The column head is a navigation header, like the conversation column: the long page description
-   belongs to the empty state and the details pane, not above the list. */
-:root[data-layout='workbench'] .knowledge-page > .page-header .page-header__description {
-  display: none;
-}
-
-/* One action row: "new library" fills the row like "new conversation", external instances is an icon. */
-:root[data-layout='workbench'] .knowledge-page > .page-header .page-header__actions {
-  width: 100%;
-  flex-wrap: nowrap;
-  justify-content: flex-start;
-}
-
-:root[data-layout='workbench'] .knowledge-page > .page-header .page-header__actions > .primary-button {
-  min-width: 0;
-  flex: 1;
-  order: -1;
-}
-
+/* External instances is an icon button beside "new library" (column head rules are shared below). */
 :root[data-layout='workbench'] .knowledge-page__manage-external {
   width: var(--control-height);
   flex: 0 0 auto;
@@ -584,7 +615,7 @@
 :root[data-layout='workbench'] .knowledge-workspace__sidebar {
   grid-row: 2;
   min-height: 0;
-  padding-top: 0;
+  padding: 0 var(--wb-inset) var(--wb-inset);
 }
 
 :root[data-layout='workbench'] .knowledge-workspace__main {
@@ -617,22 +648,13 @@
   }
 
   :root[data-layout='workbench'] .knowledge-workspace__sidebar {
-    padding-top: var(--space-3);
+    padding: var(--space-3) var(--wb-inset) var(--wb-inset);
   }
 
-  /* One row again: title on the left, actions on the right. */
+  /* One row again, like a single-column page head: title on the left, actions on the right. */
   :root[data-layout='workbench'] .knowledge-page > .page-header {
-    flex-direction: row;
     align-items: center;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  :root[data-layout='workbench'] .knowledge-page > .page-header .page-header__actions {
-    width: auto;
-  }
-
-  :root[data-layout='workbench'] .knowledge-page > .page-header .page-header__actions > .primary-button {
-    flex: 0 1 auto;
+    padding: var(--wb-inset);
   }
 }
 
@@ -827,7 +849,7 @@
 /* The shell is the container and cannot query itself: narrow pages restore the gutter on the page. */
 @container page-shell (max-width: 780px) {
   :root[data-layout='workbench'] .magic-notes-page {
-    padding: var(--page-gutter);
+    padding: var(--wb-inset);
   }
 }
 
@@ -858,34 +880,13 @@
     display: none;
   }
 
-  /* Column head: title row, actions on one row (new note fills it, the rest are icon buttons). */
   :root[data-layout='workbench'] .magic-notes-page > .page-header {
     grid-column: 1;
     grid-row: 1;
     min-width: 0;
-    flex-direction: column;
-    padding: var(--space-4) var(--space-4) var(--space-3);
-    border-bottom: 0;
-    gap: var(--space-3);
   }
 
-  :root[data-layout='workbench'] .magic-notes-page > .page-header h1 {
-    font-size: var(--font-section-title);
-    font-weight: 650;
-  }
-
-  :root[data-layout='workbench'] .magic-notes-page > .page-header .page-header__actions {
-    width: 100%;
-    flex-wrap: nowrap;
-    justify-content: flex-start;
-  }
-
-  :root[data-layout='workbench'] .magic-notes-page > .page-header .page-header__actions > .primary-button {
-    min-width: 0;
-    flex: 1;
-    order: -1;
-  }
-
+  /* Other actions are icon buttons beside "new note" (column head rules are shared above). */
   :root[data-layout='workbench'] .magic-notes-page > .page-header .page-header__actions > :is(.secondary-button, #magic-library-switch) {
     width: var(--control-height);
     flex: 0 0 auto;
@@ -944,7 +945,7 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    padding: 0 var(--space-3) var(--space-3);
+    padding: 0 var(--wb-inset) var(--wb-inset);
   }
 
   :root[data-layout='workbench'] .magic-notes-page .magic-notes-detail-container {
@@ -965,7 +966,7 @@
   :root[data-layout='workbench'] .magic-notes-workspace--overview .magic-notes-library-panel > :not(.magic-notes-card-grid) {
     grid-column: 1;
     min-width: 0;
-    margin: 0 var(--space-3) var(--space-2);
+    margin: 0 var(--wb-inset) var(--space-2);
   }
 
   :root[data-layout='workbench'] .magic-notes-workspace--overview .magic-notes-library-panel > .magic-notes-pane-heading { grid-row: 2; }
@@ -1010,14 +1011,14 @@
 
   :root[data-layout='workbench'] .magic-notes-overview--todos > .magic-notes-library-panel > .magic-notes-pane-heading {
     grid-row: 2;
-    padding-inline: var(--space-4);
+    padding-inline: var(--wb-inset);
   }
 
   :root[data-layout='workbench'] .magic-notes-overview--todos > .magic-notes-library-panel > .magic-todo-toolbar {
     grid-row: 3;
     flex-direction: column;
     align-items: stretch;
-    padding: 0 var(--space-3) var(--space-3);
+    padding: 0 var(--wb-inset) var(--wb-inset);
     gap: var(--space-2);
   }
 
@@ -1027,7 +1028,7 @@
 
   :root[data-layout='workbench'] .magic-notes-overview--todos .magic-todo-workspace > .magic-notes-list {
     grid-row: 4;
-    padding: 0 var(--space-3) var(--space-3);
+    padding: 0 var(--wb-inset) var(--wb-inset);
   }
 
   :root[data-layout='workbench'] .magic-notes-overview--todos .magic-notes-todo-resize-handle {
@@ -1058,7 +1059,7 @@
   :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace > .magic-notes-overview[hidden]) > .page-header {
     flex-direction: row;
     align-items: center;
-    padding: var(--space-3) var(--space-4);
+    padding: var(--wb-inset) var(--wb-inset) var(--space-3);
     border-bottom: 1px solid var(--border-subtle);
   }
 

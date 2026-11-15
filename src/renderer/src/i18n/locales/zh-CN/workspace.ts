@@ -557,11 +557,7 @@ export const workspace = {
   primitives: {
     scope: {
       global: '全局',
-      allProjects: '全部项目',
       project: '项目：{{projectName}}',
-      projects: '{{count}} 个项目',
-      mixedProject: '项目：{{projectName}} + 全局',
-      mixedCurrent: '项目 + 全局',
       unavailable: '范围不可用'
     },
     destructive: {

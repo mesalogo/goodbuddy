@@ -16,7 +16,7 @@ import {
   type ExternalKnowledgeInstanceSummary,
   type ExternalKnowledgeTestResult
 } from '../../shared/external-knowledge-contracts'
-import { EmptyState, PageTabs, ScopeBadge, SegmentedControl } from './WorkspacePrimitives'
+import { EmptyState, PageTabs, SegmentedControl } from './WorkspacePrimitives'
 import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import type { AppNotificationInput } from './notifications'
 import './external-knowledge.css'
@@ -299,7 +299,7 @@ export function ExternalBindingForm({ provider, instances, libraries, library, o
     {operationError && <p id={errorId} role="alert">{operationError}</p>}
     {verifiedResult ? <TestResults result={verifiedResult} /> : <p role="status">{t('external.untested')}</p>}
     {rebinding && <label><input type="checkbox" checked={rebindConfirmed} onChange={event => setRebindConfirmed(event.currentTarget.checked)} />{t('external.rebindConfirm')}</label>}
-    <footer className="external-knowledge__actions external-knowledge__footer"><ScopeBadge scope={{ kind: 'global' }} />
+    <footer className="external-knowledge__actions external-knowledge__footer">
       <button type="button" className="secondary-button" onClick={() => { invalidate(); onCancel() }}>{t('actions.cancel')}</button>
       <button type="button" className="secondary-button" disabled={busy || !valid} onClick={() => void run(false)}>{t(busy && !saving ? 'external.testing' : 'external.test')}</button>
       <button type="submit" className="primary-button" disabled={busy || !verifiedResult || !valid || !name.trim() || (!!rebinding && !rebindConfirmed)}>{t(busy && saving ? 'actions.saving' : library ? 'external.saveConfig' : 'external.add')}</button>
@@ -337,7 +337,7 @@ export function ExternalInstanceManager({ instances, libraries, onClose, onChang
   const change = (value: Partial<ExternalKnowledgeInstanceSaveInput>): void => { if (draft) setDraft({ ...draft, ...value }); setClearConfirmed(false) }
   return createPortal(<div className="external-knowledge-modal" role="dialog" aria-modal="true" aria-labelledby="external-instance-title" ref={dialogRef} onKeyDown={event => { if (event.key === 'Escape' && !busy) { event.preventDefault(); onClose() }; trapTabFocus(event, dialogRef.current) }}>
     <section className="external-knowledge-modal__surface">
-      <header><div><h2 id="external-instance-title">{deleting ? t('external.deleteInstanceTitle', { name: deleting.name }) : t(draft ? draft.id ? 'external.editInstance' : 'external.addInstance' : 'external.instances')}</h2><ScopeBadge scope={{ kind: 'global' }} /></div><button type="button" className="icon-button" ref={closeRef} disabled={busy} aria-label={t('external.close')} title={t('external.close')} onClick={onClose}><X size={16} /></button></header>
+      <header><div><h2 id="external-instance-title">{deleting ? t('external.deleteInstanceTitle', { name: deleting.name }) : t(draft ? draft.id ? 'external.editInstance' : 'external.addInstance' : 'external.instances')}</h2></div><button type="button" className="icon-button" ref={closeRef} disabled={busy} aria-label={t('external.close')} title={t('external.close')} onClick={onClose}><X size={16} /></button></header>
       <div className="external-knowledge-modal__body">
         {draft ? <form className="external-knowledge__fields" onSubmit={event => { event.preventDefault(); if (busy || (draft.credential.action === 'clear' && !clearConfirmed)) return; void run(async () => { await window.goodbuddy.knowledge.externalInstancesSave(draft); setDraft(undefined) }, t('external.saved')) }}>
           <fieldset disabled={busy} className="external-knowledge__fieldset">
@@ -366,13 +366,13 @@ export function ExternalInstanceManager({ instances, libraries, onClose, onChang
             <p className="external-knowledge__help">{t('external.enabledHelp')}</p>
           </div>
           <details className="external-knowledge__help"><summary>{t('external.connectionHelp')}</summary><p>{t('external.saveThenTest')}</p></details>
-          <footer className="external-knowledge__actions external-knowledge__footer"><ScopeBadge scope={{ kind: 'global' }} /><button type="button" className="secondary-button" disabled={busy} onClick={() => setDraft(undefined)}>{t('actions.cancel')}</button><button type="submit" className="primary-button" disabled={busy || (draft.credential.action === 'clear' && !clearConfirmed) || !URL.canParse(draft.baseUrl) || !externalKnowledgeInstanceSaveInputSchema.safeParse(draft).success}>{t(busy ? 'actions.saving' : 'external.saveInstance')}</button></footer>
+          <footer className="external-knowledge__actions external-knowledge__footer"><button type="button" className="secondary-button" disabled={busy} onClick={() => setDraft(undefined)}>{t('actions.cancel')}</button><button type="submit" className="primary-button" disabled={busy || (draft.credential.action === 'clear' && !clearConfirmed) || !URL.canParse(draft.baseUrl) || !externalKnowledgeInstanceSaveInputSchema.safeParse(draft).success}>{t(busy ? 'actions.saving' : 'external.saveInstance')}</button></footer>
           </fieldset>
         </form> : deleting ? <section className="external-knowledge__fields" aria-labelledby="external-instance-title">
           <p>{t('external.deleteInstanceConfirm', { count: libraries.filter(item => item.external?.instanceId === deleting.id).length })}</p>
           <ul>{libraries.filter(item => item.external?.instanceId === deleting.id).map(item => <li key={item.id}>{item.name}</li>)}</ul>
           {deleteError && <p role="alert" id="external-delete-error">{deleteError}</p>}
-          <footer className="external-knowledge__actions external-knowledge__footer"><ScopeBadge scope={{ kind: 'global' }} /><button type="button" className="secondary-button" autoFocus disabled={busy} onClick={() => setDeleting(undefined)}>{t('actions.cancel')}</button><button type="button" className="danger-button" disabled={busy} aria-describedby={deleteError ? 'external-delete-error' : undefined} onClick={() => {
+          <footer className="external-knowledge__actions external-knowledge__footer"><button type="button" className="secondary-button" autoFocus disabled={busy} onClick={() => setDeleting(undefined)}>{t('actions.cancel')}</button><button type="button" className="danger-button" disabled={busy} aria-describedby={deleteError ? 'external-delete-error' : undefined} onClick={() => {
             setBusy(true); setDeleteError(undefined)
             void (async () => {
               try {
@@ -447,7 +447,7 @@ export function ExternalLibraryDetail({ library, instances, libraries, onChanged
   const binding = library.external!
   const instance = instances.find(item => item.id === binding.instanceId)
   return <div className="external-knowledge">
-    <header><h2>{library.name}</h2><p>{externalProviderNames[binding.provider]} · {instance?.name} · {binding.remoteName}</p><ScopeBadge scope={{ kind: 'global' }} /></header>
+    <header><h2>{library.name}</h2><p>{externalProviderNames[binding.provider]} · {instance?.name} · {binding.remoteName}</p></header>
     <PageTabs idPrefix={`external-${library.id}`} ariaLabel={library.name} value={tab} onChange={selectTab} tabs={[{ id: 'overview', label: t('external.overview') }, { id: 'config', label: t('external.config') }, { id: 'test', label: t('external.test') }]} />
     {tab !== 'config' && <div role="tabpanel" id={`external-${library.id}-panel-${tab}`} aria-labelledby={`external-${library.id}-tab-${tab}`}>
       {tab === 'overview' ? <section className="external-knowledge__fields">

@@ -90,16 +90,16 @@ export function DeviceSharingPage({ notify }: { notify: (input: AppNotificationI
   ]
 
   return <>
-    <PageHeader headingId="device-sharing-title" icon={<Network size={20} />} title={t('sharing.title')} scope={{ kind: 'global' }} description={t('sharing.boundary')}
+    <PageHeader headingId="device-sharing-title" icon={<Network size={20} />} title={t('sharing.title')} help={t('sharing.boundary')}
       actions={<button className="secondary-button" disabled={busy} onClick={() => {
         if (!settings) { setBusy(true); setReload(value => value + 1) }
         else void run(refresh)
       }}>{t('sharing.refresh')}</button>} />
     <div className="device-sharing" aria-busy={busy}>
+      <PageTabs ariaLabel={t('sharing.tabsLabel')} idPrefix="sharing" onChange={setActiveTab} tabs={tabs} value={activeTab} />
       {busy && <p role="status">{t('sharing.working')}</p>}
       {catalog?.registrationStatus && <p role="status">{t(`sharing.registrationStatus.${catalog.registrationStatus}`)}</p>}
       {error && <div role="alert" className="device-sharing__alert">{t('sharing.loadFailed')} {error}</div>}
-      <PageTabs ariaLabel={t('sharing.tabsLabel')} idPrefix="sharing" onChange={setActiveTab} tabs={tabs} value={activeTab} />
       {activeTab === 'personas' && <div id="sharing-panel-personas" className="device-sharing__panel" role="tabpanel" aria-labelledby="sharing-tab-personas">{settings && registered && !dirty ? <SharingPersonas key={settings.serverUrl} serverUrl={settings.serverUrl} deviceId={settings.deviceId} notify={notify} /> : <p>{t('sharing.personasRequireRegistration')}</p>}</div>}
       {activeTab === 'mine' && <div id="sharing-panel-mine" className="device-sharing__panel" role="tabpanel" aria-labelledby="sharing-tab-mine">
       {settings && <section className="device-sharing__section" aria-labelledby="sharing-settings">

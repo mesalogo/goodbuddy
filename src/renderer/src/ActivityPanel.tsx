@@ -864,7 +864,6 @@ export const ActivityPanel = memo(function ActivityPanel({
         help={t('header.description')}
         headingId="activity-panel-title"
         icon={<Activity size={20} />}
-        scope={{ kind: 'all-projects' }}
         title={t('header.title')}
       />
       <PageTabs

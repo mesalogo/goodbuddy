@@ -232,7 +232,6 @@ describe('HeartbeatCenter', () => {
       }
       if (key === 'supervisor.settings') {
         expect(within(panel).queryByRole('button', { name: t('center.actions.refreshAriaLabel') })).not.toBeInTheDocument()
-        expect(panel.querySelector('.scope-badge')).not.toBeInTheDocument()
         expect(within(panel).queryByRole('heading', { name: t('center.history.timelineTitle') })).not.toBeInTheDocument()
       } else if (key !== 'supervisor.automatic') {
         expect(within(panel).getByRole('button', { name: t('center.actions.refresh') })).toBeVisible()
@@ -269,7 +268,6 @@ describe('HeartbeatCenter', () => {
       if (key === 'activity.title') {
         await screen.findByText(t('activity.empty'))
         expect(within(panel).queryByText(t('activity.description'))).not.toBeInTheDocument()
-        expect(panel.querySelector('.scope-badge')).toBeVisible()
       }
     }
     expect(screen.queryByLabelText(t('settings.nameLabel'))).not.toBeInTheDocument()
@@ -501,7 +499,6 @@ describe('HeartbeatCenter', () => {
     expect(screen.queryByText('SMART HEARTBEAT')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Run now' })).not.toBeInTheDocument()
     expect(screen.getByText(entry.summary)).toBeVisible()
-    expect(screen.getByText('Project: Default project')).toHaveClass('scope-badge')
     expect(screen.getByText(/Supervisor suggestions|Suggest/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: i18n.t('settings.createTitle', { ns: 'heartbeat' }) }))
     expect(screen.getByRole('button', { name: 'Update memory only' })).toBeVisible()
@@ -512,67 +509,14 @@ describe('HeartbeatCenter', () => {
   it('shows plan status and keeps earlier reports readable without statistics', () => {
     render(<HeartbeatCenter {...createProps()} />)
     expect(screen.getByRole('heading', { level: 1, name: '监督者' })).toBeInTheDocument()
-    expect(screen.getByText('项目：默认项目')).toHaveClass('scope-badge')
     expect(screen.getByText('1 个计划运行中')).toBeInTheDocument()
     expect(screen.queryByText('50%')).not.toBeInTheDocument()
     expect(screen.getByText(entry.summary)).toBeVisible()
     expect(screen.getByRole('region', { name: '心跳计划' })).toBeInTheDocument()
   })
-  it('distinguishes multi-project-only scope from global and project scope', async () => {
-    const secondProject = {
-      ...createProps().projects[0]!,
-      id: '00000000-0000-4000-8000-000000000102',
-      name: '第二项目',
-      rootPath: 'C:\\Second'
-    }
-    const projectConfig: AssistantHeartbeatConfig = {
-      ...config,
-      scope: {
-        kind: 'projects',
-        projectIds: [createProps().projects[0]!.id, secondProject.id]
-      }
-    }
-    const { rerender } = render(
-      <HeartbeatCenter
-        {...createProps({
-          configs: [projectConfig],
-          projects: [...createProps().projects, secondProject]
-        })}
-      />
-    )
-
-    expect(screen.getByLabelText('2 个项目')).toHaveTextContent(
-      '2 个项目'
-    )
-    expect(within(screen.getByRole('region', { name: '运行概览' })).queryByText(/全局/u)).not.toBeInTheDocument()
-
-    rerender(
-      <HeartbeatCenter
-        {...createProps({
-          configs: [
-            projectConfig,
-            {
-              ...config,
-              id: 'heartbeat-global',
-              scope: { kind: 'global' }
-            }
-          ],
-          projects: [...createProps().projects, secondProject]
-        })}
-      />
-    )
-    expect(within(screen.getByRole('region', { name: '运行概览' })).getByLabelText('项目 + 全局')).toBeInTheDocument()
-
-    await i18n.changeLanguage('en-US')
-    rerender(
-      <HeartbeatCenter
-        {...createProps({
-          configs: [projectConfig],
-          projects: [...createProps().projects, secondProject]
-        })}
-      />
-    )
-    expect(screen.getByLabelText('2 projects')).toBeInTheDocument()
+  it('shows no page-level scope badge: each plan row names its own scope', () => {
+    render(<HeartbeatCenter {...createProps()} />)
+    expect(document.querySelector('.scope-badge')).toBeNull()
   })
 
   it('uses level-two headings for direct tab panel sections', () => {
@@ -1063,7 +1007,6 @@ describe('HeartbeatCenter', () => {
     }
     expect(panel.querySelector('.heartbeat-center__metrics')).toBeNull()
     expect(within(panel).queryByRole('heading', { name: '历史心跳报告' }) !== null).toBe(!empty)
-    expect(panel.querySelector('.scope-badge')).toBeVisible()
     expect(within(panel).getAllByRole('button', { name: '创建心跳计划' })).toHaveLength(1)
     expect(panel.querySelectorAll('#heartbeat-panel-overview .empty-state')).toHaveLength(0)
     expect(within(panel).queryByText(i18n.t('settings.empty', { ns: 'heartbeat' })) !== null).toBe(empty)

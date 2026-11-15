@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import type { AssistantHeartbeatConfig, AssistantProject } from '../../shared/assistant-contracts'
 import type { SupervisionActivity } from '../../shared/supervision-contracts'
 import type { SupervisionReviewExecution } from '../../shared/supervision-review-contracts'
-import { EmptyState, ScopeBadge } from './WorkspacePrimitives'
+import { EmptyState } from './WorkspacePrimitives'
 import { SupervisionBatchDetails } from './SupervisionBatchDetails'
 import { SupervisionReviewStages } from './SupervisionReviewStages'
 
@@ -136,12 +136,8 @@ export function SupervisorActivity({ active, projects, onOpenResult, configId, c
       setRefresh(value => value + 1)
     }
   }
-  const planScope = configs.find(config => config.id === configId)?.scope
   return <section className="supervisor-activity" aria-label={t('activity.title')} aria-busy={loading}>
     <div className="supervisor-workspace__action-bar">
-      <ScopeBadge scope={planScope?.kind === 'global' ? { kind: 'global' }
-        : planScope?.kind === 'projects' ? { kind: 'projects', projectCount: planScope.projectIds.length }
-          : { kind: 'mixed' }} />
       {onPlanChange && <label className="heartbeat-settings__field">
         <select aria-label={t('activity.planFilter')} ref={filterRef} value={configId ?? ''} onChange={(event) => onPlanChange(event.target.value)}>
           <option value="">{t('activity.allPlans')}</option>

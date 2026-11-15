@@ -26,7 +26,7 @@ describe('magic notes workbench layout', () => {
   it('drops the page shell gutter and scroll for the page', () => {
     expect(css).toMatch(/:root\[data-layout='workbench'\] \.page-shell--master-detail:has\(> \.magic-notes-page\)\s*\{\s*padding:\s*0;\s*overflow:\s*hidden;/)
     // Narrow pages keep the classic single column with the gutter back on the page.
-    expect(containerBlock('page-shell', '(max-width: 780px)')).toContain(`${wb} .magic-notes-page {\n    padding: var(--page-gutter);`)
+    expect(containerBlock('page-shell', '(max-width: 780px)')).toContain(`${wb} .magic-notes-page {\n    padding: var(--wb-inset);`)
   })
 
   it('makes the library the second column only while the page is wide', () => {
@@ -39,8 +39,11 @@ describe('magic notes workbench layout', () => {
   })
 
   it('heads the column with the page header and one action row', () => {
-    expect(twoColumns).toMatch(/\.magic-notes-page > \.page-header\s*\{\s*grid-column:\s*1;\s*grid-row:\s*1;[^}]*flex-direction:\s*column;/)
-    expect(twoColumns).toMatch(/\.page-header__actions > \.primary-button\s*\{[^}]*flex:\s*1;/)
+    expect(twoColumns).toMatch(/\.magic-notes-page > \.page-header\s*\{\s*grid-column:\s*1;\s*grid-row:\s*1;/)
+    // Knowledge and magic notes share one column head rule, so both titles sit at the same place.
+    const sharedHead = containerBlock('page-shell', '(width > 780px)')
+    expect(sharedHead).toMatch(/:is\(\.knowledge-page, \.magic-notes-page\) > \.page-header\s*\{[^}]*flex-direction:\s*column;[^}]*padding:\s*var\(--wb-inset\) var\(--wb-inset\) var\(--space-3\);/)
+    expect(sharedHead).toMatch(/:is\(\.knowledge-page, \.magic-notes-page\) > \.page-header \.page-header__actions > \.primary-button\s*\{[^}]*flex:\s*1;/)
     // The library switch has an id rule in the classic stylesheet; the compact rule must outrank it.
     expect(twoColumns).toContain('.page-header__actions > :is(.secondary-button, #magic-library-switch) {')
   })

@@ -570,11 +570,7 @@ export const workspace = {
   primitives: {
     scope: {
       global: 'Global',
-      allProjects: 'All projects',
       project: 'Project: {{projectName}}',
-      projects: '{{count}} projects',
-      mixedProject: 'Project: {{projectName}} + Global',
-      mixedCurrent: 'Projects + Global',
       unavailable: 'Scope unavailable'
     },
     destructive: {

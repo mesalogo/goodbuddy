@@ -25,14 +25,11 @@ import { SupervisorWorkspace, type SupervisionGraphNavigation } from './Supervis
 import { SupervisorActivity } from './SupervisorActivity'
 import type { AppNotificationInput } from './notifications'
 import './supervisor-workspace.css'
-import { getProjectDisplayText } from './project-display'
 import { useWorkspaceUnsavedChanges } from './workspace-unsaved-changes'
 import {
   EmptyState,
   PageHeader,
-  PageTabs,
-  ScopeBadge,
-  type WorkspaceScope
+  PageTabs
 } from './WorkspacePrimitives'
 
 export type HeartbeatCenterProps = {
@@ -114,7 +111,6 @@ function UnifiedSupervisorCenter(props: HeartbeatCenterProps): React.JSX.Element
         title={t('center.title')}
         help={t('center.description')}
         icon={<HeartPulse size={20} />}
-        scope={{ kind: 'all-projects' }}
       />
       <PageTabs
         ariaLabel={t('supervisor.navigation')}
@@ -277,7 +273,6 @@ function HeartbeatSections({
   onOpenResult: (resultId: string, focus?: SupervisionGraphNavigation['focus']) => void
 }): React.JSX.Element | null {
   const { t, i18n } = useTranslation('heartbeat')
-  const { t: tWorkspace } = useTranslation('workspace')
   const [pendingAction, setPendingAction] = useState<string>()
   const [error, setError] = useState<string>()
   const [expandedEntryId, setExpandedEntryId] = useState<string>()
@@ -318,50 +313,6 @@ function HeartbeatSections({
   const activeConfigs = configs.filter((config) => config.enabled)
   const hasHeartbeatData =
     configs.length > 0 || runs.length > 0 || entries.length > 0
-  const heartbeatScope = useMemo<WorkspaceScope>(() => {
-    if (
-      configs.length === 0 ||
-      configs.every((config) => config.scope.kind === 'global')
-    ) {
-      return { kind: 'global' }
-    }
-    const includesGlobal = configs.some(
-      (config) => config.scope.kind === 'global'
-    )
-    const projectIds = [
-      ...new Set(
-        configs.flatMap((config) =>
-          config.scope.kind === 'projects'
-            ? config.scope.projectIds
-            : []
-        )
-      )
-    ]
-    if (!includesGlobal && projectIds.length === 1) {
-      const project = projects.find(
-        (candidate) => candidate.id === projectIds[0]
-      )
-      return project
-        ? {
-            kind: 'project',
-            projectName: getProjectDisplayText(
-              project,
-              tWorkspace
-            ).name
-          }
-        : {
-            kind: 'unavailable',
-            explanation: t('settings.scope.unavailableProject')
-          }
-    }
-    if (!includesGlobal && projectIds.length > 1) {
-      return {
-        kind: 'projects',
-        projectCount: projectIds.length
-      }
-    }
-    return { kind: 'mixed' }
-  }, [configs, projects, t, tWorkspace])
   const initialLoadBlocked =
     !hasHeartbeatData && (loading || loadError !== undefined)
 
@@ -395,7 +346,6 @@ function HeartbeatSections({
       className="heartbeat-sections"
     >
       <div className="heartbeat-center__section-heading">
-        <ScopeBadge scope={heartbeatScope} />
         {!initialLoadBlocked && (
           <div className="supervisor-workspace__actions">
               <button

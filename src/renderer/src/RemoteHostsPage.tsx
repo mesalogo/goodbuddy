@@ -64,8 +64,7 @@ export function RemoteHostsPage({
         headingId="remote-hosts-title"
         icon={<Server size={20} />}
         title={t('remoteHosts.title')}
-        description={t('remoteHosts.description')}
-        scope={{ kind: 'global' }}
+        help={t('remoteHosts.description')}
       />
       <div className="remote-hosts-tabs">
         <PageTabs

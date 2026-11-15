@@ -12,7 +12,6 @@ import { getLocaleFormatters, resolvedLocale, formatPercent, formatNumber } from
 import { useTranslation } from 'react-i18next'
 import { useRef, useState, useMemo } from 'react'
 import { toErrorMessage, clampProgress, taskStageLabelKeys } from './helpers'
-import { ScopeBadge } from '../WorkspacePrimitives'
 import { DocumentResultPreview } from '../DocumentResultPreview'
 import {
   FilePlus2,
@@ -303,7 +302,7 @@ export function DocumentsView({
               if (previewOriginRef.current?.scroll) previewOriginRef.current.scroll.scrollTop = previewOriginRef.current.top
             })
           }}>{t('documents.backToList')}</button>
-          <div className="knowledge-document-preview__title"><h3>{viewedDocument.name}</h3><span>{library.name}</span><ScopeBadge scope={{ kind: 'global' }} />
+          <div className="knowledge-document-preview__title"><h3>{viewedDocument.name}</h3><span>{library.name}</span>
             {viewedDocument.path && <div className="knowledge-document-path">{formatDocumentLocation(viewedDocument.path, t)}</div>}
           </div>
           <KnowledgeActionsMenu label={t('documents.moreActionsFor', { name: viewedDocument.name })} actions={documentActions(viewedDocument, viewedSource, viewedTaskSourceId)} />

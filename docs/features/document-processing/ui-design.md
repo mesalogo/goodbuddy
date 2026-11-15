@@ -18,7 +18,7 @@
 | 页签与选择 | `WorkspacePrimitives.tsx` 的 `PageTabs variant="segmented"` 承载正文、图片、详情；OCR 来源用原生 Radio 配合 `fieldset/legend`，与页签导航区分 |
 | 浮层 | Modal 沿用 body Portal、`activateModalFocus` 与 `trapTabFocus`；测试及附件菜单复用 `AnchoredMenu`，由共享 `FloatingPortal` 挂入所属 Modal 并在 top layer 绘制。通知遵循根 UI 规范 |
 | 图文内容 | 复用 `MarkdownRenderer.tsx` 的排版、表格滚动和静态 HTML 处理边界；补齐受管图片与 OCR HTML 表格适配，现有 Markdown 渲染器并未直接支持这些资源 |
-| 状态与反馈 | `ScopeBadge`、`EmptyState`、共享按钮、`toggle-row` Switch、应用 `onNotify`；图片多选用 Checkbox，失败重试就地显示 |
+| 状态与反馈 | `EmptyState`、共享按钮、`toggle-row` Switch、应用 `onNotify`；图片多选用 Checkbox，失败重试就地显示 |
 
 全部颜色、间距、字体、边框、圆角和动效使用根设计令牌。连续正文使用阅读字号，图片格不
 加装饰阴影。长文件名截断并提供完整名称，不能挤走状态、关闭和发送。图片和解析结果不是
@@ -155,7 +155,7 @@ Radio，复用设置中的来源选择卡片；本地模型选择、卡片、标
 ### 3.1 框架与正文
 
 头部显示文件名、来源范围、结果状态、“打开原文件”和关闭或返回。设置测试标为“测试结果”，
-聊天标明会话，知识库显示库名与 `ScopeBadge`。下一行固定正文、图片、详情三个 PageTabs，
+聊天标明会话，知识库显示库名。下一行固定正文、图片、详情三个 PageTabs，
 页签及直接包装层 `flex: 0 0 auto`，仅当前面板滚动。查看已存结果不发 OCR 请求。
 
 知识库将原件与维护操作收进详情头部的共享菜单，并将添加图片工具限制在图片页；聊天与

@@ -297,25 +297,6 @@ describe('WorkspacePrimitives', () => {
     ).toHaveAccessibleDescription('项目已归档，请选择其他项目。')
   })
 
-  it('labels multi-project scope distinctly from mixed global scope', () => {
-    const { rerender } = render(
-      <ScopeBadge
-        scope={{
-          kind: 'projects',
-          projectCount: 2
-        }}
-      />
-    )
-
-    expect(screen.getByLabelText('2 个项目')).toHaveTextContent(
-      '2 个项目'
-    )
-    expect(screen.queryByText(/全局/u)).not.toBeInTheDocument()
-
-    rerender(<ScopeBadge scope={{ kind: 'mixed' }} />)
-    expect(screen.getByLabelText('项目 + 全局')).toBeInTheDocument()
-  })
-
   it('keeps forced-color and docked split contracts authoritative', () => {
     const forcedColors = [...stylesheet.matchAll(
       /@media \(forced-colors: active\)\s*\{(?:[^{}]|\{[^{}]*\})*\}/gu
@@ -649,26 +630,21 @@ describe('WorkspacePrimitives', () => {
     )
   })
 
-  it('renders a consistent page shell and scoped header', () => {
+  it('renders a consistent page shell and header', () => {
     render(
       <PageShell variant="dashboard">
         <PageHeader
           description="跨项目记录"
           eyebrow="AUDIT"
           headingId="page-title"
-          scope={{ kind: 'all-projects' }}
           title="任务与活动"
         />
       </PageShell>
     )
 
-    expect(
-      screen.getByRole('heading', { level: 1, name: '任务与活动' })
-    ).toBeInTheDocument()
-    expect(screen.getByText('全部项目')).toHaveClass('scope-badge')
-    expect(screen.getByText('全部项目').closest('.page-shell')).toHaveClass(
-      'page-shell--dashboard'
-    )
+    const heading = screen.getByRole('heading', { level: 1, name: '任务与活动' })
+    expect(heading.closest('.page-shell')).toHaveClass('page-shell--dashboard')
+    expect(document.querySelector('.scope-badge')).toBeNull()
   })
 
   it('gives Supervisor a separate wide shell without widening dashboards', () => {

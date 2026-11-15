@@ -16,7 +16,6 @@
 .external-knowledge__instance-select > .runtime-picker__menu { position: static; width: 100%; }
 .external-knowledge__instance-select > .runtime-picker__menu > button > small { white-space: normal; overflow-wrap: anywhere; }
 .external-knowledge__footer { position: sticky; bottom: calc(-1 * var(--space-4)); padding: var(--space-3) 0; background: var(--surface-raised); border-top: 1px solid var(--border-subtle); justify-content: flex-end; }
-.external-knowledge__footer > .scope-badge { margin-right: auto; }
 .external-knowledge__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .external-knowledge__catalog { display: flex; flex-direction: column; gap: var(--space-2); }
 .external-knowledge__target { display: flex; text-align: left; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-control); background: var(--surface-raised); color: var(--text-primary); }

@@ -647,7 +647,7 @@ describe('ActivityPanel', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('uses shared page tabs and explicit global scope', () => {
+  it('uses shared page tabs without a page-level scope badge', () => {
     render(
       <ActivityPanel
         onClear={vi.fn()}
@@ -660,7 +660,7 @@ describe('ActivityPanel', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: '运行记录' })
     ).toBeInTheDocument()
-    expect(screen.getByText('全部项目')).toHaveClass('scope-badge')
+    expect(document.querySelector('.page-header .scope-badge')).toBeNull()
     expect(screen.getByLabelText('运行记录视图')).toHaveClass(
       'page-tabs'
     )

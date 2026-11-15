@@ -14989,7 +14989,7 @@ describe("App", () => {
           { timeout: 3000 },
         ),
       ).toBeInTheDocument();
-      expect(screen.getByLabelText("全局")).toBeInTheDocument();
+      expect(screen.queryByLabelText("全局")).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "新建笔记" }),
       ).toBeInTheDocument();
