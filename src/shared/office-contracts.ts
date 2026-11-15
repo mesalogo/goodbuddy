@@ -47,7 +47,7 @@ export const officeViewportSchema = officeInstanceSchema.extend({
 export type OfficeSession = { instanceId: string; document: OfficeDocument; savedToSource: boolean; readOnlySource?: boolean }
 export interface OfficeApi {
   context(input: z.infer<typeof officeContextSchema>): Promise<void>
-  capabilities(input: { serverUrl: string }): Promise<OfficeCapabilities>
+  capabilities(input: { serverUrl: string; fresh?: boolean }): Promise<OfficeCapabilities>
   open(input: z.infer<typeof officeOpenSchema>): Promise<OfficeSession | null>
   save(input: { instanceId: string; saveAs?: boolean }): Promise<OfficeSession | null>
   close(input: { instanceId: string }): Promise<boolean>

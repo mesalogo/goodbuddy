@@ -176,3 +176,21 @@ DOCX 简单文本成功不能推导 XLSX／PPTX 编辑、Automation API 或 Elec
 - 真实 Linux Electron + 主机 IP 的 Community 10.0：点击可见的内置保存按钮后，本地 DOCX 自动回写；外部修改冲突被拒绝，另存为成功；DOC 转换后自动首次另存为，原 DOC 字节不变。使用 `scripts/verify-office-desktop.py --native-save --file-entry` 和 `--native-save --legacy` 复现。系统文件对话框由测试返回隔离路径。
 - 本轮未进行 Windows/macOS 验证，未发布安装包。
 - 验证：GB 16 项定向测试（包含当前源码的真实 Host 子进程协议回写与旧摘要拒绝）、三套类型检查及修改文件 lint 通过；ShareServer 193 项测试、类型检查及 lint 通过。远程 Host 协议验证与 Electron 本地文件验证分别执行，未将其描述为完整远程桌面 UI 验收。
+
+## 2026-11-14 打开速度优化
+
+- 所有 Office 页签共用持久分区 `persist:goodbuddy-office`，带版本号的 Docs SDK、字体和编辑页资源跨文档、跨重启复用 HTTP 缓存；设备凭据仍只附加到对应 ShareServer origin 的 `/api/v1/office/` 请求，权限请求和下载继续拒绝。
+- 能力检查按 origin 缓存 30 秒并合并并发请求，一次打开只请求一次 `/office/config`；Main 将已检查的能力传给上传 Worker（服务端仍会校验）。设置页“连接并检查能力”强制刷新。
+- 打开过程中不再显示“正在检查 Office 能力并上传文件…”文字，改为顶部 2px 进度条。
+- 真实 Linux Electron + `http://10.7.0.23:8088`（注册设备，122 KB DOCX），`scripts/verify-office-desktop.py --registered-device --file-entry --timing`：
+
+  | | 优化前 | 优化后 |
+  |---|---|---|
+  | 编辑页传输（每次） | 1.45 MB | 首次 82 KB，之后约 3 KB |
+  | Docs iframe 传输（再次打开） | 10.4 MB | 1.3 KB（245/249 项命中缓存） |
+  | 点击到编辑器就绪 | 1.38 / 1.01 / 1.09 s | 1.04 / 0.98 / 0.85 s |
+  | `/office/config` 请求（每次打开） | 3 | 1 |
+
+  本机到服务器延迟很低，所以时间差距不大；传输量的减少在带宽较低的 VPN 或远程网络下效果会更明显。上传、文档转换和编辑器初始化仍是每次都要做的步骤。
+- `--native-save` 回归通过：内置保存自动回写、冲突保护、另存为及关闭。
+- 未做：未修改的文件按 SHA-256 复用服务器文档、远程 Agent 文件分块读取优化、Windows/macOS 测量。

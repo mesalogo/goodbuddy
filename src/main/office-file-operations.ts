@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile, writeFile, rename, unlink, stat, chmod } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import { officeDocumentSchema, type OfficeDocument } from '../shared/office-contracts'
+import { officeDocumentSchema, type OfficeCapabilities, type OfficeDocument } from '../shared/office-contracts'
 import { readOfficeCapabilities, requireOfficeEditing } from './office-capabilities'
 
 export type OfficeFileJob = (
-  | { action: 'upload'; path: string; serverUrl: string }
+  | { action: 'upload'; path: string; serverUrl: string; capabilities?: OfficeCapabilities }
   | { action: 'download'; path: string; serverUrl: string; document: OfficeDocument; expectedDigest?: string }
 ) & { headers?: Record<string, string> }
 
@@ -19,7 +19,8 @@ async function checkedFetch(url: string, init?: RequestInit): Promise<Response> 
 export async function runOfficeFileJob(job: OfficeFileJob): Promise<{ document: OfficeDocument; digest: string }> {
   const base = `${job.serverUrl}/api/v1/office`
   if (job.action === 'upload') {
-    const config = await readOfficeCapabilities(job.serverUrl)
+    // Main passes the capabilities it already checked; the server validates again on upload.
+    const config = job.capabilities ?? await readOfficeCapabilities(job.serverUrl)
     requireOfficeEditing(config, basename(job.path))
     const info = await stat(job.path)
     if (!info.isFile() || info.size > config.maxBytes) throw new Error('文件类型或大小不符合服务器要求')

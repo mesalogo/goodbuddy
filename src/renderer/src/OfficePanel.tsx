@@ -47,10 +47,11 @@ export function OfficePanel({ instanceId, onOpened, conversationId }: { instance
       if (!state.busy) void officeStore.save(instanceId, event.shiftKey)
     }
   }}>
-    {!state.session && <div className="office-panel__empty">
+    {!state.session && state.busy && <div className="office-panel__progress" role="progressbar" aria-label={state.name ? `正在打开 ${state.name}` : '正在打开文档'} />}
+    {!state.session && !state.busy && <div className="office-panel__empty">
       <p>{state.name ?? '选择 Office 文件，使用已配置的 ShareServer 编辑。'}</p>
       <p>Ctrl/Cmd+S 保存回文件，Ctrl/Cmd+Shift+S 另存为。旧格式转换和附件首次保存将选择新文件。</p>
-      <button type="button" className="primary-button" disabled={state.busy} onClick={() => {
+      <button type="button" className="primary-button" onClick={() => {
         void officeStore.open(instanceId).then(session => { if (session) onOpened?.(session) })
       }}>{state.source ? '重试打开' : '选择 Office 文件并编辑'}</button>
     </div>}
