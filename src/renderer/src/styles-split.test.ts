@@ -68,11 +68,8 @@ describe('split stylesheet declarations and import order', () => {
     }
     expect(declarations('.knowledge-settings__toggle--pending')).toEqual({ cursor: 'wait' })
     expect(declarations('.knowledge-settings__toggle')).toEqual({
-      display: 'grid', 'align-items': 'flex-start', 'justify-content': 'initial',
-      padding: 'var(--space-3)', gap: 'var(--space-3)',
-      'grid-template-columns': 'auto minmax(0, 1fr)',
-      border: '1px solid var(--border-default)', 'border-radius': 'var(--radius-control)',
-      background: 'var(--surface-raised)', cursor: 'pointer'
+      display: 'flex', 'align-items': 'center', 'justify-content': 'space-between',
+      gap: 'var(--space-3)', cursor: 'pointer'
     })
   })
 

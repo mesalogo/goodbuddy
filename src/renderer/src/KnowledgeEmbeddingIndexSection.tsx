@@ -30,12 +30,9 @@ export function KnowledgeEmbeddingIndexSection({
       <div className="knowledge-embedding-index__heading">
         <div>
           <Database aria-hidden="true" size={16} />
-          <div>
-            <h3 id="knowledge-vector-index-title">
-              {t('settings.vectorIndex.title')}
-            </h3>
-            <p>{t('settings.vectorIndex.description')}</p>
-          </div>
+          <h3 id="knowledge-vector-index-title">
+            {t('settings.vectorIndex.title')}
+          </h3>
         </div>
         <button
           className="secondary-button"

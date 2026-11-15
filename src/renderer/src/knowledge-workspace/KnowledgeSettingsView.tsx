@@ -263,23 +263,21 @@ export function KnowledgeSettingsView({
       className={`knowledge-settings knowledge-settings--${mode}`}
     >
       {mode === 'index' && (
-        <section className="knowledge-settings__section">
+        <section className="knowledge-settings__section knowledge-settings__section--row">
           <div className="inline-help-label">
             <h3>{t('settings.retrieval.title')}</h3>
             <InlineHelp label={t('settings.retrieval.title')}>
               {t('settings.retrieval.description')}
             </InlineHelp>
           </div>
-          <div className="knowledge-settings__actions">
-            <button
-              className="primary-button"
-              onClick={onOpenRetrieval}
-              type="button"
-            >
-              <Search aria-hidden="true" size={15} />
-              {t('settings.retrieval.action')}
-            </button>
-          </div>
+          <button
+            className="secondary-button"
+            onClick={onOpenRetrieval}
+            type="button"
+          >
+            <Search aria-hidden="true" size={15} />
+            {t('settings.retrieval.action')}
+          </button>
         </section>
       )}
       {mode === 'index' && (

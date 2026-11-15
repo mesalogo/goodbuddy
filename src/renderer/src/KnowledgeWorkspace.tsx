@@ -540,7 +540,6 @@ function KnowledgeWorkspaceView({
               <div>
                 <span className="knowledge-workspace__scope">
                   <Database aria-hidden="true" size={13} />
-                  {t('workspace.scopeGlobal')} ·{' '}
                   {t(storageModeLabelKeys[selectedLibrary.storageMode])}
                   {selectedLibrary.graphEnabled &&
                     ` · ${t(

@@ -684,7 +684,6 @@ export const knowledge = {
     },
     vectorIndex: {
       title: '向量索引',
-      description: '范围：当前知识库。',
       rebuild: '重建向量索引',
       rebuilding: '正在重建…',
       cancel: '取消重建',
@@ -784,7 +783,6 @@ export const knowledge = {
     libraryMeta: '{{ready}} 篇可用 · {{failed}} 篇需处理',
     detailsAriaLabel: '知识库详情',
     tabsAriaLabel: '知识库视图',
-    scopeGlobal: '全局',
     librarySummary:
       '{{ready}} 篇可检索 · {{processing}} 篇处理中 · {{failed}} 篇需处理 · 共 {{documentCount}} 篇',
     readyForQuestions: '资料已可检索，可以加入当前对话开始提问。',

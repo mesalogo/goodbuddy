@@ -728,7 +728,6 @@ export const knowledge = {
     },
     vectorIndex: {
       title: 'Embedding index',
-      description: 'Scope: current library.',
       rebuild: 'Rebuild embedding index',
       rebuilding: 'Rebuilding…',
       cancel: 'Cancel rebuild',
@@ -832,7 +831,6 @@ export const knowledge = {
     libraryMeta: '{{ready}} ready · {{failed}} need attention',
     detailsAriaLabel: 'Library details',
     tabsAriaLabel: 'Knowledge base views',
-    scopeGlobal: 'Global',
     librarySummary:
       '{{ready}} searchable · {{processing}} processing · {{failed}} need attention · {{documentCount}} total',
     readyForQuestions:

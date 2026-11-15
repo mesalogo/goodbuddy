@@ -57,7 +57,7 @@
 .knowledge-embedding-index__heading,
 .knowledge-embedding-index__heading > div {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-2);
 }
 
@@ -806,10 +806,10 @@
 .knowledge-workspace__scope {
   display: flex;
   align-items: center;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 750;
-  gap: 7px;
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+  font-weight: 500;
+  gap: 6px;
 }
 
 .knowledge-workspace__description {
@@ -858,14 +858,14 @@
   gap: var(--space-6);
 }
 
-.knowledge-settings--index, .knowledge-settings--graph { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.knowledge-settings--graph { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
+/* One column of sections, read top to bottom like a settings page: sections differ a lot in height,
+   so two columns left holes beside the short ones. */
 .knowledge-settings--index {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
-
-.knowledge-settings--index > section:last-of-type { grid-column: 1 / -1; }
 
 .knowledge-settings--graph { grid-template-columns: minmax(0, 1fr); }
 
@@ -882,7 +882,15 @@
   gap: var(--space-4);
 }
 
-.knowledge-settings__section { padding: var(--space-4); border: 1px solid var(--border-default); border-radius: var(--radius-control); background: var(--surface-raised); }
+.knowledge-settings__section { padding: var(--space-4); border: 1px solid var(--border-default); border-radius: var(--radius-card); background: var(--surface-raised); }
+
+/* A section that is only a title and one action: both on one row. */
+.knowledge-settings > .knowledge-settings__section--row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+
+/* Switch rows inside a section: title over description, switch on the right. */
+.knowledge-settings__section .toggle-row > span { display: grid; min-width: 0; gap: 2px; }
+
+.knowledge-settings__section .toggle-row > span > :is(small, .knowledge-muted) { color: var(--text-muted); font-size: var(--font-caption); line-height: 1.5; }
 
 .knowledge-settings__section h3 { margin: 0; }
 
@@ -896,15 +904,10 @@
 }
 
 .knowledge-settings__toggle {
-  display: grid;
-  align-items: flex-start;
-  justify-content: initial;
-  padding: var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
-  grid-template-columns: auto minmax(0, 1fr);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-control);
-  background: var(--surface-raised);
   cursor: pointer;
 }
 
@@ -1519,14 +1522,9 @@
 }
 
 @container knowledge-main (max-width: 880px) {
-  .knowledge-settings--index,
   .knowledge-settings--graph,
   .knowledge-graph {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .knowledge-settings--index > section:last-of-type {
-    grid-column: auto;
   }
 
   .knowledge-graph__detail {

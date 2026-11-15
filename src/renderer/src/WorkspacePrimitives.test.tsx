@@ -617,7 +617,7 @@ describe('WorkspacePrimitives', () => {
       /\.knowledge-settings\s*\{[^}]*display:\s*grid;[^}]*width:\s*min\(920px,\s*100%\);[^}]*gap:\s*var\(--space-6\);/u
     )
     expect(stylesheet).toMatch(
-      /\.knowledge-settings--index\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/u
+      /\.knowledge-settings--index\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/u
     )
     expect(stylesheet).toMatch(
       /\.knowledge-settings--graph\s*\{[^}]*grid-template-columns:\s*minmax\(280px,\s*0\.7fr\)\s*minmax\(0,\s*1\.3fr\);/u
@@ -626,7 +626,7 @@ describe('WorkspacePrimitives', () => {
       /\.knowledge-settings\s*>\s*section\s*\{[^}]*display:\s*grid;[^}]*gap:\s*var\(--space-4\);/u
     )
     expect(stylesheet).toMatch(
-      /\.knowledge-settings__toggle\s*\{[^}]*display:\s*grid;[^}]*align-items:\s*flex-start;[^}]*justify-content:\s*initial;[^}]*grid-template-columns:\s*auto minmax\(0,\s*1fr\);/u
+      /\.knowledge-settings__toggle\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*space-between;/u
     )
   })
 
