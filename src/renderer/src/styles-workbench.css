@@ -728,7 +728,9 @@
   color: var(--text-primary);
 }
 
-:root[data-layout='workbench'] .scope-badge {
+/* Badge fill for badges in content (activity groups). The chat title bar shows the project as plain
+   caption text, as in the classic layout, so it is excluded. */
+:root[data-layout='workbench'] .scope-badge:not(.conversation-title-group__scope .scope-badge) {
   border-color: transparent;
   background: var(--surface-muted);
   color: var(--text-secondary);

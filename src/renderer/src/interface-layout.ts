@@ -1,17 +1,22 @@
 /**
  * Interface layout preference: `classic` keeps application entries inside the conversation sidebar;
  * `workbench` moves them to a fixed application rail and applies the rounded workbench visual layer.
- * Stored per device like the appearance theme; existing users keep `classic`.
+ * Stored per device like the appearance theme. Workbench is the default: new installs and upgrades
+ * without a saved choice open in it; a user who picked a layout in Settings keeps that choice.
  */
 export type InterfaceLayout = 'classic' | 'workbench'
+
+// Component tests were written against the classic sidebar and opt into the workbench explicitly.
+export const defaultInterfaceLayout: InterfaceLayout = import.meta.env.MODE === 'test' ? 'classic' : 'workbench'
 
 const storageKey = 'goodbuddy.interface-layout'
 
 export function loadInterfaceLayout(): InterfaceLayout {
   try {
-    return localStorage.getItem(storageKey) === 'workbench' ? 'workbench' : 'classic'
+    const saved = localStorage.getItem(storageKey)
+    return saved === 'classic' || saved === 'workbench' ? saved : defaultInterfaceLayout
   } catch {
-    return 'classic'
+    return defaultInterfaceLayout
   }
 }
 
