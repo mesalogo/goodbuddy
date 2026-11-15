@@ -32,6 +32,10 @@
   --wb-radius-pill: 999px;
   --wb-rail-width: 56px;
   --wb-titlebar-height: 40px;
+  --wb-brand-mark: 28px;
+  /* Horizontal inset of the conversation sidebar; the product name lines up with it. */
+  --wb-sidebar-inset: var(--space-2);
+  --wb-sidebar-top: var(--space-3);
   /* Second column of non-chat pages (library list, note list); matches the default conversation column. */
   --wb-object-list-width: 260px;
   /* One inset for every page in this layout: the page head, the list column and single-column pages
@@ -90,19 +94,30 @@
   user-select: none;
 }
 
+/* The mark is centred over the rail column at the visual size of a rail entry; the product name starts
+   where the content card starts (the rail's right edge plus the sidebar inset), so the title bar and
+   the card below share one vertical line. */
 :root[data-layout='workbench'] .app-titlebar__brand {
   display: flex;
   min-width: 0;
   align-items: center;
-  padding-left: calc((var(--wb-rail-width) - 22px) / 2);
-  gap: var(--space-2);
+  gap: 0;
 }
 
 :root[data-layout='workbench'] .app-titlebar__brand .brand__mark {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
-  border-radius: 6px;
+  width: var(--wb-brand-mark);
+  height: var(--wb-brand-mark);
+  flex: 0 0 var(--wb-brand-mark);
+  margin-inline: calc((var(--wb-rail-width) - var(--wb-brand-mark)) / 2);
+  border-radius: 8px;
+}
+
+:root[data-layout='workbench'] .app-titlebar__brand .brand__mark img {
+  border-radius: 7px;
+}
+
+:root[data-layout='workbench'] .app-titlebar__name {
+  padding-left: calc(1px + var(--wb-sidebar-inset));
 }
 
 :root[data-layout='workbench'] .app-titlebar__name strong {
@@ -142,7 +157,9 @@
   min-height: 0;
   flex-direction: column;
   align-items: center;
-  padding: var(--space-2) 0 var(--space-3);
+  /* The first entry starts on the same line as the sidebar's first control: the sidebar's top
+     padding plus its 1px card border. */
+  padding: calc(var(--wb-sidebar-top) + 1px) 0 var(--space-3);
   gap: var(--space-2);
 }
 
@@ -237,7 +254,7 @@
 
 /* Project and conversation sidebar: left part of the content card, flush with the bottom edge. */
 :root[data-layout='workbench'] .sidebar {
-  padding: var(--space-3) var(--space-2) var(--space-2);
+  padding: var(--wb-sidebar-top) var(--wb-sidebar-inset) var(--space-2);
   border: 1px solid var(--border-subtle);
   border-right-color: var(--border-subtle);
   border-bottom: 0;
@@ -953,6 +970,22 @@
     grid-row: 1 / -1;
   }
 
+  /* The classic body cancels the page gutter with a negative margin so notes line up with the page
+     header. Here the page has no gutter, so the stream keeps its own inset (the page inset) and the
+     title, tags, composer and entries start where the toolbar icons start. */
+  :root[data-layout='workbench'] .magic-notes-page .magic-notes-stream-pane {
+    --magic-note-stream-gutter: var(--wb-inset);
+  }
+
+  :root[data-layout='workbench'] .magic-notes-page .magic-notes-detail-body {
+    margin-inline: 0;
+  }
+
+  /* The entry index also leaned on the classic page gutter. */
+  :root[data-layout='workbench'] .magic-notes-page .magic-notes-index-pane {
+    padding: var(--space-3) 0 0 var(--wb-inset);
+  }
+
   /* Overview (no note open): heading, search, tags and the create form head the list column; the
      note cards fill the content area. */
   :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace--overview) {
@@ -1067,9 +1100,12 @@
     width: auto;
   }
 
-  :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace > .magic-notes-overview[hidden]) > .page-header .page-header__actions > :is(.primary-button, .secondary-button) {
+  /* #magic-notes-back gives this rule id specificity, so it outranks the icon-button rule above
+     (which carries an id through its :is()); the order goes back to the source order: back, new. */
+  :root[data-layout='workbench'] .magic-notes-page:has(> .magic-notes-workspace > .magic-notes-overview[hidden]) > .page-header .page-header__actions > :is(.primary-button, .secondary-button, #magic-notes-back) {
     width: auto;
     flex: 0 1 auto;
+    order: 0;
     padding-inline: var(--space-4);
   }
 

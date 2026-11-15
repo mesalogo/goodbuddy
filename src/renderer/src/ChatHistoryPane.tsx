@@ -1,4 +1,4 @@
-import { ArrowDown, FileText, Sparkles } from "lucide-react";
+import { ArrowDown, CornerUpLeft, FileText, Sparkles } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -1095,9 +1095,13 @@ export const ChatHistoryPane = memo(function ChatHistoryPane({
         ref={handleScrollRef}
       >
         <div className="chat-content" ref={listRef}>
-          {conversation.branch && (onOpenSourceConversation
-            ? <button className="secondary-button" type="button" onClick={() => onOpenSourceConversation(conversation.branch!.sourceConversationId)}>{t('messageEdit.openSource', { title: conversation.branch.sourceTitle })}</button>
-            : <p>{t('messageEdit.sourceMissing', { title: conversation.branch.sourceTitle })}</p>)}
+          {conversation.branch && (
+            <div className="chat-branch-source">
+              {onOpenSourceConversation
+                ? <button className="chat-branch-source__link" type="button" onClick={() => onOpenSourceConversation(conversation.branch!.sourceConversationId)}><CornerUpLeft aria-hidden="true" size={14} />{t('messageEdit.openSource', { title: conversation.branch.sourceTitle })}</button>
+                : <p>{t('messageEdit.sourceMissing', { title: conversation.branch.sourceTitle })}</p>}
+            </div>
+          )}
           {isUnusedConversation(conversation) && (
             <div className="welcome">
               <div className="welcome__badge">

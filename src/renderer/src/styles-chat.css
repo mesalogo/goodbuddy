@@ -1130,10 +1130,59 @@
 }
 
 .chat-content > .welcome,
+.chat-content > .chat-branch-source,
 .message-list {
   /* Keep the scrollbar inside the outer gutter without adding trailing scroll padding. */
   width: calc(100cqw - 2 * var(--chat-inline-padding));
   margin-left: var(--chat-inline-padding);
+}
+
+/* Branch conversations name their source above the first message, in the message column. */
+.chat-branch-source {
+  display: flex;
+  min-width: 0;
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-caption);
+}
+
+.chat-branch-source > p {
+  margin: 0;
+}
+
+.chat-branch-source__link {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  margin-left: calc(-1 * var(--space-2));
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  gap: var(--space-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-branch-source__link > svg {
+  flex: 0 0 auto;
+}
+
+.chat-branch-source__link:hover {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+.chat-branch-source__link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .message-list {
