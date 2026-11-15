@@ -418,8 +418,8 @@
 
 /* Chat: rounded composer, circular send button and soft user bubbles. */
 :root[data-layout='workbench'] .composer {
+  --composer-radius: var(--wb-radius-xl);
   border-color: var(--border-subtle);
-  border-radius: var(--wb-radius-xl);
   box-shadow: var(--wb-soft-shadow);
 }
 
