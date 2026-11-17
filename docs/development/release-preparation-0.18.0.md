@@ -109,3 +109,32 @@ Agent native branch builds, then separate final SHA/tag authorization.
 Native signed release workflows, public assets/catalogs, OSS indexes and live
 website links are checked only after authorized publication. Existing feature
 Preview and installed-acceptance limitations remain.
+
+## Publication outcome and recovery
+
+The approved source was `219a2182a402e927154415a4620c9671553f6bd3`.
+[Desktop main CI](https://github.com/mesalogo/goodbuddy/actions/runs/44091584793)
+passed 7,097 tests (78 skipped), typecheck, lint and production bundle.
+[Agent branch CI](https://github.com/mesalogo/goodbuddy/actions/runs/44091584803)
+passed source validation and three native builds; macOS runner capacity required
+one retry without source changes. Both annotated tags were approved and pushed
+only to GitHub; their peeled source is the approved commit.
+
+[Desktop tag CI](https://github.com/mesalogo/goodbuddy/actions/runs/44111385240)
+failed on attempts 1 and 2, each with 7,096 passed, 78 skipped and one failed
+`workspace-files-layout.electron.test.ts` test. Both completed seven scenarios
+before timing out waiting for rows on the non-Git dark 640×420 page, with no
+renderer errors recorded. Device-sharing regression passed. Packaging and
+publication never ran; the public release API returned 404 for `v0.18.0`.
+Do not move or reuse that tag. The user approved
+[Desktop 0.18.1 recovery](./release-preparation-0.18.1.md).
+
+[Agent tag CI](https://github.com/mesalogo/goodbuddy/actions/runs/44111385255)
+passed on attempt 2 after a macOS runner capacity failure. Agent `0.15.15`
+became public at `2026-11-17T15:42:06Z`, non-draft, non-prerelease and non-Latest.
+All three package sizes/digests match the signed catalog and GitHub metadata;
+the workflow verified public OSS package bytes and identical GitHub/OSS catalog
+and signature bytes. The OSS latest pointer returns HTTP 200 for `0.15.15`;
+the exact approved bilingual body is preserved. Minimum Desktop is `0.18.0`.
+No new Agent release, installer download or installed-app acceptance is needed
+for this test-only Desktop recovery.

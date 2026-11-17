@@ -31,7 +31,15 @@ app.whenReady().then(async () => {
   const js = code => { pending = code; return win.webContents.executeJavaScript(code) }
   const wait = async code => {
     for (let i = 0; i < 240; i++) { if (await js(code)) return; await setTimeout(25) }
-    throw new Error(`Timeout: ${code}\n${errors.join('\n')}`)
+    const state = await win.webContents.executeJavaScript(`({
+      scenario: location.search, readyState: document.readyState,
+      visibility: document.visibilityState, focused: document.hasFocus(),
+      width: innerWidth, height: innerHeight,
+      rootChildren: document.querySelector('#root')?.childElementCount,
+      rows: document.querySelectorAll('.workspace-files__row').length,
+      text: document.querySelector('#root')?.textContent?.slice(0, 1000)
+    })`)
+    throw new Error(`Timeout: ${code}; ${JSON.stringify(state)}\n${errors.join('\n')}`)
   }
   const settle = () => js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
   const point = selector => js(`(() => {
@@ -83,6 +91,10 @@ app.whenReady().then(async () => {
         const name = `${git ? 'git' : 'non-git'}-${theme}-${width}x${height}`
         win.setContentSize(width, height)
         await win.loadURL(`${process.env.GB_LAYOUT_URL}?git=${git}&theme=${theme}&sidebar=${sidebar}`)
+        // Navigation and native resizing can lose focus before React paints.
+        // Establish the new page's state before waiting for its file rows.
+        win.show(); win.focus(); win.webContents.focus()
+        await wait(`document.hasFocus() && innerWidth === ${width} && innerHeight === ${height}`)
         // The tree is windowed (P5): only rows near the viewport are mounted.
         await wait(`document.querySelectorAll('.workspace-files__row').length>0 && !!${viewport}`)
         await settle()
