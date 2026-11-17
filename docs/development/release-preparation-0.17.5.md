@@ -162,3 +162,27 @@ Approved release-note date: 2026-11-11.
 - Production tag workflows and public artifact/catalog/index verification remain
   separate gates. No local tests, lint, typecheck, production build, package
   launch, installer download or new model/ASR call is part of this preparation.
+
+## Publication result
+
+The earlier origin synchronization gate was explicitly superseded by the
+user's instruction to use GitHub only. Both annotated tags point to
+`85fdeac7d5f19e63c67770a4ec24a1068cfb2323`; origin was not updated.
+
+- Desktop [43354307118](https://github.com/mesalogo/goodbuddy/actions/runs/43354307118)
+  succeeded on attempt 1, including all six native packages, both macOS
+  codesign/spctl/stapler checks and GitHub/Beijing OSS publication.
+  [v0.17.5](https://github.com/mesalogo/goodbuddy/releases/tag/v0.17.5)
+  became public Latest on 2026-11-13 at 03:47:14 UTC.
+- Agent [43354307725](https://github.com/mesalogo/goodbuddy/actions/runs/43354307725)
+  succeeded on attempt 1 with three production-signed native packages,
+  cumulative catalog, immutable/public-byte checks and latest-pointer update.
+  [agent-v0.15.14](https://github.com/mesalogo/goodbuddy/releases/tag/agent-v0.15.14)
+  became public non-Latest at 02:55:35 UTC on the same date.
+- Both bodies matched their approved notes. Desktop had exactly 20 assets;
+  its latest and immutable OSS indexes matched. The live website loaded the
+  new index and all 12 standard download selections matched it. Agent package
+  sizes/digests matched the signed catalog, requiring Desktop `0.17.5`.
+- Final GitHub main and peeled tags matched the approved SHA; worktree clean.
+  No installer download/launch or local installation acceptance was performed.
+  Owned watch logs and website-verification sessions were cleaned.

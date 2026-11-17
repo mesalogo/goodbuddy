@@ -15360,7 +15360,12 @@ describe("App", () => {
     render(<App />)
     await screen.findByRole('button', { name: '监督者' })
     fireEvent.click(screen.getByRole('button', { name: '应用' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '设备共享（技术预览）' }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('menuitem', { name: '设备共享（技术预览）' }))
+      // This scenario tests settings events, not lazy-module compilation time.
+      // Await the real route import so Suspense and its initial reads settle.
+      await import('./DeviceSharingPage')
+    })
     await screen.findByRole('button', { name: '注册本机' })
     await act(async () => changed(await updates.updateSettings({ deviceSharingEnabled: false })))
     expect(screen.queryByRole('heading', { name: '设备共享（技术预览）' })).not.toBeInTheDocument()

@@ -2,6 +2,52 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.18.0",
+      "releasedAt": "2026-11-17",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**默认工作台布局**：新增独立应用导航栏、分栏内容区和贯穿高度的工作栏，进入知识库、魔法笔记等页面时不再占用会话列表空间。新安装和未保存布局选择的升级用户默认使用工作台，已明确选择的布局保持不变。可在“设置 → 外观 → 界面布局”切回经典布局。",
+            "**重新整理应用中心**：应用中心分为应用、连接器、Skills 和 MCP 四个页签，Skills 与 MCP 从设置迁入，Obsidian 归入连接器。在同一次打开期间切换 Skills/MCP 页签会保留编辑状态；本机推理监控继续从应用菜单或应用中心打开，不再常驻左侧导航。",
+            "**更完整地访问历史与配置**：任务中心支持继续加载较早任务，魔法笔记和待办列表不再因原有固定条数而遗漏后续记录。模型连接、Skills/MCP 配置、Runtime 能力目录以及浏览器、终端和工作栏实例也移除了多处固定数量限制；文件大小、传输边界、模型上下文及上游服务限制仍然适用。",
+            "**延长监督报告保留时间**：监督计划的报告保留时间可设置超过一年，最高为 36,500 天，并可读取保留范围内的历史报告。现有保留天数不自动改变，已经清理的报告不会恢复。"
+          ],
+          "fixes": [
+            "**改善页面布局与图标显示**：统一知识库、魔法笔记、监督者、主机管理、设备共享和运行记录的标题、间距及窄栏布局，修复收起会话栏后仍占用空间、输入框内层圆角溢出和分支来源链接位置不协调的问题。更新应用标识，Windows 托盘和窗口图标随系统亮暗主题调整。",
+            "**减少会话保存与恢复时的信息丢失**：批量保存中单个会话失败不再阻塞其他会话，读取上下文时保留仍然有效的字段。应用重启后处理重复排队输入时保留完整附件信息，并移除多处会截断已保存来源和图片引用的数量限制。",
+            "**保留知识处理失败的重试入口**：知识处理历史达到常规保留数量后，仍保留现存文档或来源尚未解决的最新失败记录。对应错误与重试入口不会仅因产生了更多历史任务而消失。",
+            "**复用 Office 编辑器资源**：连续打开文档时复用编辑器资源缓存，并合并短时间内重复的服务器能力检查，减少重复下载和请求。设置页的连接检查仍会强制刷新；文档上传、转换和编辑器初始化仍需执行。",
+            "**避免损坏的远端恢复记录阻止启动**：无法解析的桌面远端恢复记录会先隔离保留，再创建新的连接状态，不再持续阻止启动。原有恢复身份不会因此重建，已有远端任务不保证能继续接管。"
+          ],
+          "notices": [
+            "升级前备份完整用户数据目录、相邻笔记目录及设置。数据库将升级至 schema 66；旧版本不能直接打开升级后的数据库，降级需恢复升级前备份。",
+            "远端相关更新配套 Agent `0.15.15`。OpenCode `1.19.3`、Continue `1.5.47` 和 DeepSeek Harness `0.2.2-rc.1` 保持不变；未提交的 Pi Runtime 探索不包含在本次发布中。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Workbench layout by default**: A dedicated application rail, split content area, and full-height workbar keep conversation lists out of the way when opening Knowledge, Magic Notes, and other pages. New installations and upgrades without a saved layout choice use the workbench; explicit saved choices remain unchanged. Switch back to Classic under Settings → Appearance → Interface layout.",
+            "**Reorganized Application Center**: Applications, Connectors, Skills, and MCP now have separate tabs, with Skills and MCP moved out of Settings and Obsidian listed under Connectors. Switching between visited Skills/MCP tabs preserves editing state while the center remains open; Local Inference Monitor remains accessible through the application menu and center but can no longer be pinned to the left navigation.",
+            "**More complete access to history and configuration**: Task Center can load older tasks, while Magic Notes and todo lists no longer omit later records because of their previous fixed item limits. Several fixed count limits have also been removed from model connections, Skills/MCP configuration, Runtime inventories, and browser, terminal, and workbar instances; file sizes, transport boundaries, model context, and upstream service limits still apply.",
+            "**Longer Supervisor report retention**: Supervisor plans can retain reports for more than one year, up to 36,500 days, with access to reports within the retained history. Existing retention settings do not change automatically, and previously deleted reports cannot be recovered."
+          ],
+          "fixes": [
+            "**Improve page layouts and icons**: Align headings, spacing, and narrow-pane layouts across Knowledge, Magic Notes, Supervisor, Hosts, Device Sharing, and Activity, fixing collapsed conversation columns that still occupied space, overflowing composer corners, and misplaced branch-source links. Refresh application branding and adapt Windows tray and window icons to the system’s light or dark theme.",
+            "**Reduce information loss during conversation saves and recovery**: A failed conversation no longer blocks other conversations in a save batch, and context loading preserves fields that remain valid. Startup recovery of duplicate queued inputs retains complete attachment information, while several limits that truncated saved source and image references have been removed.",
+            "**Keep retry actions for failed knowledge processing**: The latest unresolved failure for an existing document or source remains available beyond the normal history window. Its error and retry action no longer disappear merely because more tasks have been recorded.",
+            "**Reuse Office editor resources**: Reuse cached editor assets across document opens and combine repeated server capability checks within a short interval, reducing duplicate downloads and requests. Explicit connection checks in Settings still refresh capabilities; document upload, conversion, and editor initialization remain necessary.",
+            "**Avoid startup blockage from corrupt remote recovery records**: Unreadable desktop-side remote recovery records are isolated and retained before fresh connection state is created, rather than repeatedly blocking startup. This does not restore the previous recovery identity or guarantee reattachment to existing remote tasks."
+          ],
+          "notices": [
+            "Back up the complete user-data directory, adjacent notes directory, and settings before upgrading. The database advances to schema 66; older clients cannot directly open the upgraded database, and downgrading requires restoring the pre-upgrade backup.",
+            "Remote updates are paired with Agent `0.15.15`. OpenCode `1.19.3`, Continue `1.5.47`, and DeepSeek Harness `0.2.2-rc.1` remain unchanged. Uncommitted Pi Runtime exploration is not included."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.17.5",
       "releasedAt": "2026-11-11",
       "notes": {

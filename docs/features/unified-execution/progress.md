@@ -1,5 +1,44 @@
 # 进度与证据
 
+## 2026-11-17 Release count limits Host validation
+
+The user authorized a bounded current-source probe on the shared Linux x64
+Host through VPN only. `scripts/release-counts-host-probe.ts` exercised the
+production shared Continue adapter with pinned Continue `1.5.47` and Node
+`24.19.0`, using 201 configured rules and 201 prompts. Static configuration
+inspection accepted 101 MCP entries; this does not mean 101 live connections
+were opened. The static native prompt inventory still returns its existing
+200-row display window.
+
+The actual `AgentImageToolMcp` HTTP endpoint accepted nine source-image IDs
+and reached its controlled downstream responder, which deliberately stopped
+before image generation. A real text model then selected `save_image` through
+Continue and saved one 68-byte fixture PNG on the Host. The probe compared
+the saved bytes with the fixture and received the expected final answer.
+Exactly **two provider requests returned HTTP 200**, with **one image-save
+call and zero image-provider requests**. Provider credentials stayed in the
+desktop relay; only synthetic requests/responses crossed SSH.
+
+Setup initially used string rules that the static inventory does not display;
+the fixture was corrected to the native named-rule shape. An obsolete
+Electron-bootstrap launch recipe then failed before inference with an unknown
+`--port` option. The final probe uses the same Node entry/arguments and detached
+process-group behavior as `continue-acp-helper`. All setup failures made zero
+provider calls. No installed Agent, Runtime package, user workspace or network
+configuration was replaced.
+
+The reusable probe takes Host, Node executable, remote bundle, Continue entry
+and local provider-env path as explicit arguments. Bundle its current source
+with Node-targeted esbuild (Zod CJS aliases, `electron` and `*.node` external),
+copy only the bundle into a dedicated Host `/root/tmp` directory, and run the
+desktop relay with `TMPDIR` set to that owned remote directory. It has a
+four-request ceiling and no automatic paid retry. Do not log credentials or
+provider bodies. Final cleanup verified zero owned probe processes and removed
+the owned Host directory.
+
+This is source/Runtime/HTTP-MCP validation, not full Agent daemon task recovery,
+installed Desktop UI, actual image generation, or non-Linux acceptance.
+
 ## 2026-11-11 Provider failures retain their cause and bounded pre-connect retries
 
 Read-only inspection of the shared Linux Host found a task started at 15:57:11

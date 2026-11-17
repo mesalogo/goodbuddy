@@ -145,6 +145,9 @@ records are listed separately and do not introduce another feature status.
   independent instances. Task Center can show the current project or all projects,
   and retains the selected scope with the layout. Tasks without a project appear
   under all projects with an “Unbound project” label.
+  Task Center can load older visible task history; later refreshes retain loaded
+  pages. Browser, terminal and workbar instances no longer use the former fixed
+  instance counts, while output, cleanup and ownership rules remain.
   Users can open multiple independent terminals for the current local or
   managed SSH project with bounded output, resizing, termination, and explicit
   reconnection. Closing a terminal tab ends its Shell; restarting the app
@@ -155,37 +158,27 @@ records are listed separately and do not introduce another feature status.
 - [ ] **Project Agent Space** (planned): Unifies roles, knowledge, Skills/MCP,
   models, capability assignments, budgets, and timeouts in a Project, with reusable
   templates.
-- [x] **Application center and navigation**:
-  The footer shows equal-height Apps and Settings buttons with visible labels and a subtle vertical divider.
-  Clicking Apps, marked with an upward chevron, opens a lightweight upward anchored popup with enabled apps,
-  regardless of pinning or opening history, and no modal backdrop. Clicking an app row closes
-  the popup; Local Inference Monitor opens a separate modal preserving the workspace, while other apps
-  open their main content pages. Manage Apps uses a LayoutGrid icon and opens Application Center with searchable cards and settings details;
-  layout and interaction rules are defined in the [UI design](./docs/features/application-tool-navigation/ui-design.md).
-  All five application rows support arrow and drag reordering regardless of enablement or pinning.
-  Cards, the launcher, and the filtered sidebar share one persisted order. Knowledge
-  is always enabled and pinned, with Open and reorder controls. Supervisor, Notes,
-  and Local Inference Monitor have enablement and pinning settings. Device Sharing
-  is optional and off by default during testing, with an enable switch but no pinning.
-  Supervisor uses
-  the existing Heartbeat identity and defaults to off when no preference is saved;
-  explicit saved choices are preserved. Disabling it retains plans and history,
-  blocks new reviews, and hides sidebar feedback; in-flight work may finish.
-  Enabling the app does not create automatic plans. Older application orders retain
-  their relative order when missing defaults are added.
-  Durable settings saves, including configuration-tool writes, synchronize through change events;
-  reopening the center locks edits until refresh completes, and newer snapshots supersede stale reads.
-  The `local-inference` modal shows a single service list without task history or external
-  connections. Embedding shows its independent process CPU and working-set memory;
-  ASR/OCR explain shared-process attribution limits. ASR readiness is unknown rather
-  than inferred from active requests. Supported service controls retain impact confirmation;
-  failed operations refresh the list and require a new confirmation. TTS remains unavailable.
-  Cancelling inference remains active in service-stop impact until worker
-  acknowledgement or exit. Implementation is connected to production App;
-  acceptance records distinguish full-App checks, component fixtures, real
-  local-engine checks, and remaining platform/package coverage. Historical
-  failures are not the current full-suite result. See the
-  [validation progress](./docs/features/application-tool-navigation/progress.md).
+- [x] **Workbench and classic layouts**: Workbench is the default for new
+  installations and upgrades without a saved choice. Its application rail,
+  page-specific second column and full-height workbar keep conversation lists
+  on the chat page only. Settings > Appearance > Interface layout preserves an
+  explicit choice, including Classic. Page insets, narrow layouts, composer
+  corners and branch-source links follow the shared page standard.
+- [x] **Application center and navigation**: Applications, Connectors, Skills
+  and MCP have separate tabs; Obsidian belongs to Connectors. Skills and MCP
+  moved out of Settings and preserve drafts when switching visited tabs within
+  the same dialog. Application order is fixed, not user-reorderable. Knowledge
+  is always enabled but can be unpinned; other page apps have their supported
+  enable/pin controls. Local Inference Monitor is a dialog opened from Apps or
+  Application Center, never a pinned navigation page; its historical saved pin
+  remains stored but has no effect. Device Sharing remains opt-in.
+  Supervisor keeps explicit enablement choices, retains plans/history when
+  disabled and does not create automatic plans when enabled.
+  Settings changes synchronize across entry points; stale reads do not replace
+  newer state. Local Inference Monitor exposes service controls and measured
+  resource information, not task history; TTS remains unavailable.
+  See the [UI rules](./docs/features/application-tool-navigation/ui-design.md)
+  and [development evidence](./docs/features/application-tool-navigation/progress.md).
 - [x] **Local device-sharing metadata** (implemented in source): Enable Device Sharing
   in Application Center first; it is off by default during testing. Saved explicit
   enablement is preserved. Disabling leaves the page without clearing catalog records
@@ -413,7 +406,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.14`, paired with the current Desktop release candidate `0.17.5`; formal
+  `0.15.15`, paired with the current Desktop release candidate `0.18.0`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -682,8 +675,8 @@ records are listed separately and do not introduce another feature status.
 
 - [x] **On-demand Skills**: Assignable to direct models, OpenCode, Continue,
   and DeepSeek Harness with bounded resources and controlled Runtime boundaries.
-- [x] **Local tool-execution environment source path**: Under Capabilities and
-  Tools / Tool Environment, users can select GoodBuddy-managed Node.js,
+- [x] **Local tool-execution environment source path**: Under Settings /
+  Tool Environment, users can select GoodBuddy-managed Node.js,
   on-demand managed Python, or a genuinely validated custom interpreter for
   local Skills and stdio MCP. The page provides an independent Native/OSS
   source choice, diagnostics, installation progress, cancellation, and
@@ -1130,10 +1123,27 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.17.5`, paired with Agent candidate `0.15.14`, with
+- The current Desktop candidate is `0.18.0`, paired with Agent candidate `0.15.15`, with
   source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
   `0.2.2-rc.1` (upstream RC). Publication status follows the independent
   Desktop and Agent release channels.
+- Desktop `0.18.0` defaults to the workbench, reorganizes Application Center and
+  exposes older task history. It removes several fixed configuration/list
+  counts, preserves valid conversation fields and healthy saves, retains
+  unresolved knowledge-processing failures, and caches Office editor assets.
+  Supervisor retention can reach 36,500 days without changing existing values.
+  Schema advances from 65 to 66; back up user data, adjacent notes and settings,
+  and restore the pre-upgrade backup to downgrade. Agent `0.15.15` carries shared
+  Continue configuration-count and image-source validation changes; Runtime
+  pins and protocol versions do not change. Native Continue still displays at
+  most 200 prompts in its static inventory; this is not a claim of unlimited
+  lists, transport, context or hardware capacity.
+  Current-source Linux x64 validation used two real text-provider requests and
+  one fixture image save, not real image generation or installed UI acceptance.
+  Exact-candidate CI, production packaging and public verification remain
+  pending. GitHub only, six Desktop and three Agent targets, no LoongArch;
+  uncommitted Pi exploration is excluded. See
+  [release preparation](./docs/development/release-preparation-0.18.0.md).
 - Desktop `0.17.5` adds continuous canvas views, sharper PDF display, remote
   transcription, explicit ShareServer model imports and preview DingTalk QR
   setup. It improves note editing/media saves, authenticates Office through the
@@ -1145,8 +1155,11 @@ records are listed separately and do not introduce another feature status.
   evidence does not replace exact-candidate CI or close the phone authorization,
   physical microphone and installed-package gaps. Six Desktop targets only,
   no LoongArch; Agent has three separate native targets and remains non-Latest.
-  The user approved GitHub-first candidate CI while origin SSH is unavailable;
-  dual-remote synchronization and final SHA/tag approval remain required. See
+  Both production workflows succeeded on their first attempt and the releases
+  became public on 2026-11-13, Desktop Latest and Agent non-Latest. The user
+  explicitly selected GitHub-only publication; origin was not synchronized.
+  Public metadata, indexes, macOS signatures and website links were verified,
+  without installer downloads or installed-app acceptance. See
   [release preparation](./docs/development/release-preparation-0.17.5.md).
 - Desktop `0.17.4` and Agent `0.15.13` repair remote task progress synchronization
   without reopening the old execution channel or replaying the task. Hosts need
