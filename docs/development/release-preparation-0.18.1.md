@@ -49,3 +49,14 @@ existing timeout limits remain unchanged.
 - Require exact-candidate validators and production bundle before final tag
   approval, then six native packages, macOS signing checks, publication steps,
   20 GitHub assets, OSS metadata and live website link verification.
+
+## Outcome
+
+[Main CI](https://github.com/mesalogo/goodbuddy/actions/runs/44124972507)
+passed all 16 file-layout scenarios, the full test suite (7,097 passed, 78
+skipped), typecheck, lint and the production build at `75be3dd852159b848faa718153e57abd01ad7fc4`.
+The user then approved the immutable `v0.18.1` tag at that commit.
+[Tag validation](https://github.com/mesalogo/goodbuddy/actions/runs/44130984423/job/134207655757)
+still timed out on the non-Git, dark, 640×420 scenario: the window had the
+requested dimensions and focus, but `#root` had no children. Packaging and
+publication were skipped. The tag is unchanged; see [0.18.2 recovery](./release-preparation-0.18.2.md).

@@ -18,6 +18,8 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: true, width: 1280, height: 800, useContentSize: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } })
   const observations = [], errors = []
+  let documentLoads = 0
+  win.webContents.on('did-finish-load', () => { documentLoads++ })
   let pending = 'startup'
   const environment = { platform: process.platform, arch: process.arch, electron: process.versions.electron, locale: 'en-US' }
   const report = async result => {
@@ -32,7 +34,7 @@ app.whenReady().then(async () => {
   const wait = async code => {
     for (let i = 0; i < 240; i++) { if (await js(code)) return; await setTimeout(25) }
     const state = await win.webContents.executeJavaScript(`({
-      scenario: location.search, readyState: document.readyState,
+      scenario: document.querySelector('[data-files-scenario]')?.dataset.filesScenario, readyState: document.readyState,
       visibility: document.visibilityState, focused: document.hasFocus(),
       width: innerWidth, height: innerHeight,
       rootChildren: document.querySelector('#root')?.childElementCount,
@@ -86,17 +88,17 @@ app.whenReady().then(async () => {
   }
   try {
     if (artifacts) await mkdir(artifacts, { recursive: true })
+    await win.loadURL(process.env.GB_LAYOUT_URL)
+    await wait(`typeof window.showFilesLayout === 'function'`)
     for (const git of [false, true]) for (const theme of ['light', 'dark']) {
       for (const [width, height, sidebar] of [[1280, 800, 560], [960, 720, 420], [720, 640, 320], [640, 420, 300]]) {
         const name = `${git ? 'git' : 'non-git'}-${theme}-${width}x${height}`
         win.setContentSize(width, height)
-        await win.loadURL(`${process.env.GB_LAYOUT_URL}?git=${git}&theme=${theme}&sidebar=${sidebar}`)
-        // Navigation and native resizing can lose focus before React paints.
-        // Establish the new page's state before waiting for its file rows.
         win.show(); win.focus(); win.webContents.focus()
         await wait(`document.hasFocus() && innerWidth === ${width} && innerHeight === ${height}`)
-        // The tree is windowed (P5): only rows near the viewport are mounted.
-        await wait(`document.querySelectorAll('.workspace-files__row').length>0 && !!${viewport}`)
+        await js(`window.showFilesLayout(${JSON.stringify({ name, git, theme, sidebar })})`)
+        // Wait for rows in the new panel, not rows left over from the preceding scenario.
+        await wait(`!!document.querySelector('[data-files-scenario="${name}"] .workspace-files__files-view .workspace-files__row')`)
         await settle()
         assert(await js(`document.querySelectorAll('.workspace-files__row').length<121`), 'Long files tree must be windowed')
         await wait(`Array.from(document.querySelectorAll('.workspace-files__row .workspace-file-icon img')).every(img => img.complete && img.naturalWidth > 0)`)
@@ -173,6 +175,7 @@ app.whenReady().then(async () => {
         observations.push({ name, git, theme, sidebar, root, before, after, previewRetention: true, gitRetention: git, createDialogs: 2 })
       }
     }
+    assert.equal(documentLoads, 1, 'Layout changes must not reload the test page')
     assert.deepEqual(errors, [])
     await report({ passed: true })
     app.exit(0)

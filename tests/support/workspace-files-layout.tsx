@@ -9,7 +9,8 @@ import type { DesktopApi } from '../../src/shared/contracts'
 import type { WorkspaceDirectoryListing } from '../../src/shared/assistant-contracts'
 import '../../src/renderer/src/styles.css'
 
-const query = new URLSearchParams(location.search)
+type LayoutScenario = { name: string; git: boolean; theme: 'light' | 'dark'; sidebar: number }
+
 const listDirectory = async (path: string): Promise<WorkspaceDirectoryListing> => ({
   path, truncated: false, entries: [
     ...(!path ? [{ name: 'documents', path: 'documents', type: 'directory' as const }] : []),
@@ -26,15 +27,15 @@ Object.defineProperty(window, 'goodbuddy', { value: {
   } }
 } as unknown as DesktopApi })
 
-function Fixture(): React.JSX.Element {
+function Fixture({ name, git, sidebar }: LayoutScenario): React.JSX.Element {
   const [preview, setPreview] = useState<string>()
   return <UiLocaleProvider initialPreference="en-US">
-    <aside className="assistant-sidebar assistant-sidebar--open"
-      style={{ width: Number(query.get('sidebar')), flexBasis: Number(query.get('sidebar')), height: '100vh' }}>
+    <aside className="assistant-sidebar assistant-sidebar--open" data-files-scenario={name}
+      style={{ width: sidebar, flexBasis: sidebar, height: '100vh' }}>
       <div className="assistant-sidebar__body">
         <section className="assistant-sidebar__section workspace-files__navigation" hidden={Boolean(preview)}>
           <WorkspaceFilesPanel projectId="files-layout" rootPath="/fixture/workspace"
-            isRepository={query.get('git') === 'true'} changedFiles={[]}
+            isRepository={git} changedFiles={[]}
             onListDirectory={listDirectory} onOpenFile={setPreview}
             onLoadDiff={async () => { throw new Error('Unused diff fixture') }} />
         </section>
@@ -48,5 +49,12 @@ function Fixture(): React.JSX.Element {
 }
 
 installBundledUiFonts()
-applyAppearanceTheme(query.get('theme') === 'dark' ? 'dark' : 'light')
-void changeUiLocale('en-US').then(() => createRoot(document.getElementById('root')!).render(<Fixture />))
+void changeUiLocale('en-US').then(() => {
+  const root = createRoot(document.getElementById('root')!)
+  Object.assign(window, {
+    showFilesLayout(scenario: LayoutScenario) {
+      applyAppearanceTheme(scenario.theme)
+      root.render(<Fixture key={scenario.name} {...scenario} />)
+    }
+  })
+})

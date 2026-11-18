@@ -406,7 +406,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.15`, paired with the current Desktop release candidate `0.18.1`; formal
+  `0.15.15`, paired with the current Desktop release candidate `0.18.2`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -1123,11 +1123,11 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.18.1`, paired with published Agent `0.15.15`, with
+- The current Desktop candidate is `0.18.2`, paired with published Agent `0.15.15`, with
   source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
   `0.2.2-rc.1` (upstream RC). Publication status follows the independent
   Desktop and Agent release channels.
-- Desktop `0.18.1` carries forward the unpublished `0.18.0` scope. It defaults to
+- Desktop `0.18.2` carries forward the unpublished `0.18.0` scope. It defaults to
   the workbench, reorganizes Application Center and
   exposes older task history. It removes several fixed configuration/list
   counts, preserves valid conversation fields and healthy saves, retains
@@ -1141,17 +1141,16 @@ records are listed separately and do not introduce another feature status.
   lists, transport, context or hardware capacity.
   Current-source Linux x64 validation used two real text-provider requests and
   one fixture image save, not real image generation or installed UI acceptance.
-  Desktop `v0.18.0` remains immutable and unpublished after two identical
-  Electron file-list fixture timeouts. The recovery candidate synchronizes
-  window focus and dimensions after fixture navigation; all 16 Windows
-  scenarios pass, but the Linux failure's root cause remains unconfirmed
-  pending exact-candidate CI. No product behavior or assertions were changed.
+  Neither Desktop `v0.18.0` nor `v0.18.1` reached installer publication.
+  The file-list test now loads one Electron page and mounts a fresh panel
+  for each layout. All 16 scenarios passed in two Windows runs without
+  changing product code, existing assertions or timeouts.
   Agent `0.15.15` is public on GitHub and OSS with all three targets and is
   non-Latest; its minimum Desktop version remains `0.18.0`.
   Recovery Desktop CI, packaging and public verification remain pending.
-  GitHub only, six Desktop and three Agent targets, no LoongArch;
+  GitHub only, six Desktop targets, no Agent rebuild and no LoongArch;
   uncommitted Pi exploration is excluded. See
-  [recovery preparation](./docs/development/release-preparation-0.18.1.md).
+  [recovery preparation](./docs/development/release-preparation-0.18.2.md).
 - Desktop `0.17.5` adds continuous canvas views, sharper PDF display, remote
   transcription, explicit ShareServer model imports and preview DingTalk QR
   setup. It improves note editing/media saves, authenticates Office through the

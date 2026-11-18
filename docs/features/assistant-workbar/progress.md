@@ -1,5 +1,11 @@
 # 工作栏实现与验证进度
 
+## 2026-11-18：工作区文件列表布局测试
+
+[0.18.1 标签校验](https://github.com/mesalogo/goodbuddy/actions/runs/44130984423) 在非 Git、深色、640×420 场景等待文件行时超时：窗口已聚焦且尺寸正确，但 `#root` 为空，尚未开始该组布局断言。布局测试现只加载一次页面，每组独立挂载 `WorkspaceFilesPanel`，等新面板自己的文件行出现后再测量。产品代码、原有断言和超时未改。
+
+Windows x64 / Electron 44.5.1：在原驱动上，单次加载断言实测为 16 次。修正后运行 `vitest run --project electron tests/workspace-files-layout.electron.test.ts`，带截图和不带截图各一次，两次均只加载一次页面、16 组全部通过，包括原失败场景的滚动、预览返回与两个新建对话框。模型调用为 0。本次本地验证不代替 Linux 发布 CI。
+
 ## 2026-10-27：聊天中的 Windows 文件链接
 
 修复 Markdown URL 过滤把 `D:/.../file.md:43` 当作协议清空的问题；文件链接先转换为
