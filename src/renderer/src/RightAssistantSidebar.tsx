@@ -2013,7 +2013,7 @@ function RightAssistantSidebarView({
           <div
             className={`assistant-sidebar__body${instance.appId === 'browser' ? ' assistant-sidebar__body--browser' : instance.appId === 'notes' ? ' assistant-sidebar__body--notes' : instance.appId === 'document' ? ' assistant-sidebar__body--document' : ''}`}
           >
-        {actionError ? (
+        {actionError && !notify ? (
           <p className="settings-error" role="alert">
             {actionError}
           </p>
@@ -2375,7 +2375,7 @@ function RightAssistantSidebarView({
                 </p>
               ) : currentWorkspacePreview.state === 'error' ? (
                 <div className="assistant-sidebar__empty" role="alert">
-                  <p>{currentWorkspacePreview.error}</p>
+                  {!notify && <p>{currentWorkspacePreview.error}</p>}
                   <button
                     className="secondary-button"
                     onClick={() =>
@@ -2431,7 +2431,7 @@ function RightAssistantSidebarView({
                       </button>
                     </div>
                   )}
-                  {workspacePreviewLoadMoreError && (
+                  {!notify && workspacePreviewLoadMoreError && (
                     <p
                       className="assistant-sidebar__preview-more-error"
                       role="alert"

@@ -17,6 +17,7 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
   const [branchOpen, setBranchOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
+  const [fetching, setFetching] = useState(false)
   const [error, setError] = useState('')
   useErrorNotification(notify, error)
   const retry = useRef<() => void>(() => {})
@@ -105,6 +106,7 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
   }, [branchOpen])
   const run = async (value?: WorkspaceManagementAction): Promise<void> => {
     if (busy) return
+    setFetching(value?.kind === 'fetch')
     setBusy(true); setError('')
     try {
       if (value) await action(value)
@@ -119,7 +121,7 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
       retry.current = () => void run(value)
       setError(String(reason))
     }
-    finally { setBusy(false) }
+    finally { setBusy(false); setFetching(false) }
   }
   const loadHistory = async (more = false): Promise<void> => {
     const generation = ++request.current
@@ -160,14 +162,14 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
     finally { if (generation === request.current) setBusy(false) }
   }
   return <div className="workspace-git">
-    {error && <p role="alert">{error}<button type="button" disabled={busy} onClick={() => retry.current()}>{t('files.retry')}</button></p>}
-    {busy && <p role="status">{t('files.reading')}</p>}
+    {!notify && error && <p role="alert">{error}<button type="button" disabled={busy} onClick={() => retry.current()}>{t('files.retry')}</button></p>}
+    {busy && !fetching && <p role="status">{t('files.reading')}</p>}
     <div ref={workingRef} hidden={Boolean(commit)} className="workspace-git__working">
       <div className="workspace-git__current">
       <div className="workspace-git__toolbar">
         <div className="workspace-git__repository-actions">
         <button ref={branchTrigger} className="model-button workspace-git__branch-trigger" type="button" aria-haspopup="dialog" aria-controls={branchOpen ? branchPanelId : undefined} aria-expanded={branchOpen} onClick={() => setBranchOpen(!branchOpen)}><GitBranch size={14} aria-hidden="true" /><span className="model-button__label" title={branches?.current}>{branches?.current || t('management.branch')}</span><ChevronDown size={14} aria-hidden="true" /></button>
-        <button className="secondary-button workspace-git__fetch" type="button" title={t('management.fetch')} aria-label={t('management.fetch')} disabled={busy} onClick={() => void run({ kind: 'fetch' })}><Download size={14} aria-hidden="true" /></button>
+        <button className="secondary-button workspace-git__fetch" type="button" title={t('management.fetch')} aria-label={t('management.fetch')} aria-busy={fetching} disabled={busy} onClick={() => void run({ kind: 'fetch' })}><Download size={14} aria-hidden="true" /></button>
         </div>
         {viewControl}
       </div>
