@@ -3,7 +3,9 @@
 // resume and connection pooling are the production implementations.
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm, readFile, readdir, readlink } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, readdir, readlink, writeFile } from 'node:fs/promises'
+import { createInterface } from 'node:readline/promises'
+import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
@@ -11,6 +13,7 @@ import { createRequire } from 'node:module'
 import { Duplex } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
 import { AgentDaemon } from '../src/agent-daemon/daemon'
+import { readAgentDiagnostics } from '../src/agent-daemon/diagnostic-log'
 import { createProductionRuntimeProtocol } from '../src/agent-daemon/runtime-composition'
 import { RuntimeBundleRegistry } from '../src/agent-daemon/runtime-bundle-registry'
 import { SemanticPromptStore } from '../src/agent-daemon/semantic-prompt-store'
@@ -36,7 +39,9 @@ async function main(): Promise<void> {
     return
   }
   const peerIdentityProvider = await createLinuxPeerIdentityProvider({ loadKoffi: async () => createRequire(process.argv[1]!)('koffi') })
-  const root = await mkdtemp('/root/tmp/goodbuddy-recovery-validation/run-')
+  const gatewayReset = process.argv[2] === '--gateway-reset'
+  if (gatewayReset) assert(process.env.TMPDIR?.startsWith('/root/tmp/'), 'Use a private Host test directory')
+  const root = await mkdtemp(gatewayReset ? join(process.env.TMPDIR!, 'run-') : '/root/tmp/goodbuddy-recovery-validation/run-')
   const runtimeCrash = process.argv[2] === '--runtime-crash'
   const liveChannelBudget = process.argv[2] === '--live-channel-budget'
   const prepareLoss = process.argv[2] === '--prepare-loss'
@@ -47,7 +52,7 @@ async function main(): Promise<void> {
   const closedChannel = process.argv[2] === '--closed-channel' || realModel
   const toolFailure = process.argv[2] === '--tool-failure'
   const providerFailure = process.argv[2] === '--provider-failure'
-  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget || prepareLoss || startResponseLoss || liveDisconnect || closedChannel || toolFailure || reopenChannel || providerFailure
+  const catchUp = process.argv[2] === '--catch-up' || liveChannelBudget || prepareLoss || startResponseLoss || liveDisconnect || closedChannel || toolFailure || reopenChannel || providerFailure || gatewayReset
   const retirement = process.argv[2] === '--retirement' || runtimeCrash || catchUp
   const directRetirement = process.argv[2] === '--direct-retirement'
   const directDisconnect = process.argv[2] === '--direct-disconnect'
@@ -186,7 +191,49 @@ async function main(): Promise<void> {
       let realResponseReady = false
       let releaseRealResponse!: () => void
       const realResponseGate = new Promise<void>(resolve => { releaseRealResponse = resolve })
+      let resetPhase: 'exhaust' | 'body' | 'recover' = 'exhaust'
+      let attempts = 0
+      let firstBody = ''
       const server = createServer((modelRequest, response) => {
+        if (gatewayReset) {
+          void (async () => {
+            let body = ''
+            for await (const chunk of modelRequest) body += String(chunk)
+            attempts++
+            if (attempts === 1) firstBody = body
+            if (resetPhase === 'body') {
+              response.writeHead(200, { 'content-type': 'text/event-stream' }).write('data: {')
+              await delay(150)
+              modelRequest.socket.resetAndDestroy()
+            } else if (resetPhase === 'exhaust' || attempts === 1) {
+              assert.equal(body, firstBody, 'Retries must send the same request')
+              modelRequest.socket.resetAndDestroy() // after the complete POST, before any response
+            } else if (attempts === 2) {
+              assert.equal(body, firstBody)
+              const tool_calls = [{ index: 0, id: 'probe-read', type: 'function', function: {
+                name: 'read', arguments: JSON.stringify({ filePath: join(root, 'fixture.txt') })
+              } }]
+              const frame = (delta: object, finish_reason: string | null) =>
+                `data: ${JSON.stringify({ id: 'probe', object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason }] })}\n\n`
+              response.writeHead(200, { 'content-type': 'text/event-stream' }).end(frame({ tool_calls }, null) + frame({}, 'tool_calls') + 'data: [DONE]\n\n')
+            } else {
+              assert.equal(attempts, 3, 'Only one post-tool model round is allowed')
+              toolResultReturned = JSON.parse(body).messages.some((m: { role: string; content?: unknown }) =>
+                m.role === 'tool' && JSON.stringify(m.content)?.includes('GB_GATEWAY_TOOL_OK'))
+              assert(toolResultReturned, 'OpenCode must actually read the fixture')
+              // Send only the synthetic marker, not Host paths or Runtime history.
+              const lines = createInterface({ input: process.stdin })
+              try {
+                process.stdout.write('{"gatewayToolResult":"GB_GATEWAY_TOOL_OK"}\n')
+                const reply = JSON.parse(await lines.question('', { signal: AbortSignal.timeout(90_000) }))
+                assert.equal(reply.status, 200)
+                realModelCalls++
+                response.writeHead(200, { 'content-type': 'text/event-stream' }).end(reply.body)
+              } finally { lines.close() }
+            }
+          })().catch(() => { response.writeHead(502).end('Gateway validation failed') })
+          return
+        }
         if (providerFailure) {
           scriptedModelCalls++
           if (scriptedModelCalls === 1) {
@@ -260,14 +307,14 @@ async function main(): Promise<void> {
           let attachments = 0
           let channels = 0
           let progressConnections = 0
-          let interrupt = !prepareLoss && !startResponseLoss && !toolFailure && !reopenChannel && !providerFailure
+          let interrupt = !prepareLoss && !startResponseLoss && !toolFailure && !reopenChannel && !providerFailure && !gatewayReset
           let exhaust = liveChannelBudget
           const bindings = new MemoryRuntimeSessionBindingStore()
           const controllerId = await controllerState.getControllerId()
           const createInstance = () => new AcpRemoteRuntime({
             runtimeId: 'opencode', label: 'Recovery probe', workspacePath: root,
             bindingStore: bindings, assertHostCurrent: () => {},
-            operationTimeoutMs: realModel ? 110_000 : 30_000,
+            operationTimeoutMs: realModel || gatewayReset ? 110_000 : 30_000,
             identity: {
               controllerId, controllerGeneration: first.client.generation,
               hostId: 'probe-host', hostRevision: 1, hostKeyGeneration: 1,
@@ -360,6 +407,48 @@ async function main(): Promise<void> {
           const controller = new AbortController()
           let pending: Promise<unknown> | undefined
           try {
+            if (gatewayReset) {
+              await writeFile(join(root, 'fixture.txt'), 'GB_GATEWAY_TOOL_OK\n')
+              const counts: number[] = []
+              for (const phase of ['exhaust', 'body', 'recover'] as const) {
+                resetPhase = phase
+                attempts = 0
+                const events = []
+                let error: unknown
+                try {
+                  for await (const event of instance.run({ ...prompt, requestId: randomUUID(), conversationId: randomUUID(),
+                    prompt: 'Read fixture.txt and then reply GB_GATEWAY_OK.' }, AbortSignal.timeout(110_000))) events.push(event)
+                } catch (reason) { error = reason }
+                const done = events.some(e => e.type === 'done')
+                const failures = events.filter(e => e.type === 'error').map(e => e.message).join(' ') + String(error ?? '')
+                if (phase === 'recover') {
+                  assert.equal(failures, '')
+                  assert(done)
+                  assert.equal(events.filter(e => e.type === 'text').map(e => e.delta).join('').trim(), 'GB_GATEWAY_OK')
+                } else {
+                  if (!failures.includes(phase === 'exhaust' ? 'dispatch: ECONNRESET' : 'response-body')) {
+                    console.error(JSON.stringify({ phase, attempts, diagnostics: readAgentDiagnostics(join(root, 'state')).slice(-12) }))
+                  }
+                  assert.equal(done, false)
+                  assert.match(failures, phase === 'exhaust' ? /dispatch: ECONNRESET/u : /response-body/u)
+                }
+                assert.equal(attempts, phase === 'body' ? 1 : 3)
+                counts.push(attempts)
+              }
+              const ledger = new DatabaseSync(join(root, 'state/model-calls.sqlite'), { readOnly: true })
+              try {
+                const count = (condition: string) => ledger.prepare(`SELECT COUNT(*) AS n FROM agent_model_calls WHERE ${condition}`).get()!.n
+                assert.equal(count('1 = 1'), 4)
+                assert.equal(count("status = 'outcome-unknown' AND response_delivered = 0"), 2)
+                assert.equal(count("status = 'completed' AND response_delivered = 1"), 2)
+              } finally { ledger.close() }
+              assert.equal(starts, 3)
+              assert(toolResultReturned && realModelCalls === 1)
+              process.stdout.write(`${JSON.stringify({ passed: true, runtime: runtime.runtimeId, version: registered.entry.runtimeVersion,
+                exhaustedAttempts: counts[0], bodyAttempts: counts[1], recoveredRoundAttempts: counts[2]! - 1,
+                promptStarts: starts, unknownCalls: 2, acknowledgedCalls: 2, fixtureRead: true, relayedFinalResponses: realModelCalls })}\n`)
+              return
+            }
             if (providerFailure) {
               const events = []
               let failure: unknown

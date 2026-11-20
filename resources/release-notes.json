@@ -2,6 +2,44 @@
   "formatVersion": 1,
   "releases": [
     {
+      "version": "0.18.3",
+      "releasedAt": "2026-11-20",
+      "notes": {
+        "zh-CN": {
+          "highlights": [],
+          "features": [
+            "**为对话添加工作目录**：点击输入框的回形针，选择“添加工作目录”，可从本机或当前 SSH 主机选择多个目录。发送时，绝对路径会作为文本提供给模型，不会自动上传目录内容或改变进程工作目录。选择只保留在当前窗口的对应对话中；已排队的消息沿用入队时的目录。",
+            "**限制定时任务的单次运行时长**：创建定时任务时可设置 0 至 9999 分钟，默认 120 分钟，填 0 可关闭这项限制。每次从实际执行开始计时，不含排队时间；到时取消本次请求，重复任务下次重新计时。已有任务不会被自动加上时限。"
+          ],
+          "fixes": [
+            "**统一 Office 服务地址**：在“设备共享”中保存 ShareServer 地址，不必再到“设置 → 平台功能”重复配置。新打开的 Office 文档使用当前保存的地址；已打开的页签继续使用原服务。",
+            "**改善工作区错误提示与 Git 重试**：读取目录、预览文件或查看差异失败时，工作区使用应用通知，减少同一错误的重复提示。Git Fetch 失败后可再次点击 Fetch，重试本次获取，而不是重新加载提交历史。",
+            "**更容易找到“新建对话”**：创建自定义任务时，“新建对话”现在列在“当前对话”之后、历史对话之前。只是调整顺序，不改变默认目标。",
+            "**远端模型请求可从部分连接重置中恢复**：配套 Agent 0.15.16 在收到响应头之前遇到 `ECONNRESET` 时，最多自动重试两次；收到响应头后若响应中断，不会重发。服务商可能已处理第一次请求，因此重试仍可能造成重复处理或计费。"
+          ],
+          "notices": [
+            "新安装或需要恢复默认 Runtime 设置时，默认使用 OpenCode。已明确保存的执行方式不变，仍可选择直连模型；此变更不会自动配置模型凭据。相较 0.18.2，数据库仍为 schema 66。"
+          ]
+        },
+        "en-US": {
+          "highlights": [],
+          "features": [
+            "**Add working directories to a conversation**: Open the paperclip menu and choose “Add working directory” to select one or more folders on your computer or the current SSH host. Their absolute paths are sent to the model as text; selecting a folder does not upload its contents or change the process working directory. Selections last for that conversation in the current window, and queued messages keep the paths selected when they were queued.",
+            "**Set a time limit for each scheduled run**: When creating a scheduled task, choose 0 to 9999 minutes. The default is 120 minutes; enter 0 to disable this limit. The timer starts when execution begins, excludes queue time, and cancels the current request when it expires; each recurring run gets a fresh timer, and existing tasks gain no automatic limit."
+          ],
+          "fixes": [
+            "**Use one Office service address**: Save the ShareServer URL in Device Sharing instead of configuring it again under Settings → Platform Features. Newly opened Office documents use the saved address; open tabs stay on their original service.",
+            "**Make workspace errors and Git retries clearer**: Directory, file preview, and diff failures use application notifications to reduce duplicate messages. If Git Fetch fails, click Fetch again to retry the operation rather than reloading commit history.",
+            "**Make “New conversation” easier to find**: When creating a custom task, “New conversation” appears immediately after the current conversation and before conversation history. The default destination has not changed.",
+            "**Recover from some remote model connection resets**: With Agent 0.15.16, a request can retry up to twice if `ECONNRESET` occurs before response headers arrive; an interrupted response is not resent once headers have arrived. The provider may already have processed the first request, so retries can result in duplicate processing or charges."
+          ],
+          "notices": [
+            "New installations and restored default Runtime settings use OpenCode. Explicitly saved Runtime choices remain unchanged, direct-model execution is still available, and this change does not configure model credentials. The database remains at schema 66, unchanged from 0.18.2."
+          ]
+        }
+      }
+    },
+    {
       "version": "0.18.2",
       "releasedAt": "2026-11-18",
       "notes": {

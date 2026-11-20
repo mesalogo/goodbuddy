@@ -28,13 +28,12 @@ import {
 import { openPrivateSqliteDatabase } from '../shared/node/private-sqlite-database'
 import { raceWithAbort } from './async-utils'
 
-// These errors prove that no HTTP connection was established. Reset/socket/body
-// failures can occur after a write and must never enter this retry path.
-const CONNECT_FAILURE_CODES = new Set([
-  'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT'
+// Retry resets only while waiting for response headers. A reset can follow a successful write.
+const RETRYABLE_DISPATCH_CODES = new Set([
+  'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT', 'ECONNRESET'
 ])
 const TRANSPORT_CODES = new Set([
-  ...CONNECT_FAILURE_CODES, 'ECONNRESET', 'EPIPE', 'ETIMEDOUT',
+  ...RETRYABLE_DISPATCH_CODES, 'EPIPE', 'ETIMEDOUT',
   'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'
 ])
 
@@ -419,7 +418,7 @@ export class AgentModelGateway {
         } catch (error) {
           if (
             requestSignal.aborted || attempt >= 2 ||
-            !CONNECT_FAILURE_CODES.has(transportCode(error) ?? '')
+            !RETRYABLE_DISPATCH_CODES.has(transportCode(error) ?? '')
           ) {
             throw error
           }

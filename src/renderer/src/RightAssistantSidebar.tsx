@@ -45,6 +45,7 @@ import type {
   BrowserTabId
 } from '../../shared/contracts'
 import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
+import { useErrorNotification } from './use-error-notification'
 import { SegmentedControl } from './WorkspacePrimitives'
 import { NativeBrowserViewport } from './NativeBrowserViewport'
 import {
@@ -944,6 +945,7 @@ function RightAssistantSidebarView({
   })
   const actionErrorScope = actionErrorState.scope
   const actionError = actionErrorState.message
+  useErrorNotification(notify, actionError)
   if (actionErrorScope.instanceId !== activeWorkbarInstanceId || actionErrorScope.open !== open) {
     setActionErrorState({ scope: { instanceId: activeWorkbarInstanceId, open }, message: '' })
   }
@@ -986,6 +988,8 @@ function RightAssistantSidebarView({
     workspacePreview?.projectId === workspaceProjectId
       ? workspacePreview
       : undefined
+  useErrorNotification(notify, currentWorkspacePreview?.state === 'error' ? currentWorkspacePreview.error : undefined)
+  useErrorNotification(notify, workspacePreviewLoadMoreError)
   if (workspacePreview && workspacePreview.projectId !== workspaceProjectId) {
     setWorkspacePreview(undefined)
     setWorkspacePreviewRefreshing(false)
@@ -2009,7 +2013,7 @@ function RightAssistantSidebarView({
           <div
             className={`assistant-sidebar__body${instance.appId === 'browser' ? ' assistant-sidebar__body--browser' : instance.appId === 'notes' ? ' assistant-sidebar__body--notes' : instance.appId === 'document' ? ' assistant-sidebar__body--document' : ''}`}
           >
-        {actionError ? (
+        {actionError && !notify ? (
           <p className="settings-error" role="alert">
             {actionError}
           </p>
@@ -2371,7 +2375,7 @@ function RightAssistantSidebarView({
                 </p>
               ) : currentWorkspacePreview.state === 'error' ? (
                 <div className="assistant-sidebar__empty" role="alert">
-                  <p>{currentWorkspacePreview.error}</p>
+                  {!notify && <p>{currentWorkspacePreview.error}</p>}
                   <button
                     className="secondary-button"
                     onClick={() =>
@@ -2427,7 +2431,7 @@ function RightAssistantSidebarView({
                       </button>
                     </div>
                   )}
-                  {workspacePreviewLoadMoreError && (
+                  {!notify && workspacePreviewLoadMoreError && (
                     <p
                       className="assistant-sidebar__preview-more-error"
                       role="alert"

@@ -1736,6 +1736,7 @@ const desktopApi: DesktopApi = {
         ipcChannels.contextSelectFiles,
         ...(conversationId ? [conversationId] : [])
       ) as Promise<ContextAttachment[]>,
+    selectDirectories: () => ipcRenderer.invoke(ipcChannels.contextSelectDirectories) as Promise<string[]>,
     onFileSelectionProgress: (listener) => {
       const handler = (
         _event: Electron.IpcRendererEvent,

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, safeStorage } from 'electron'
+import { app, BrowserWindow, dialog, safeStorage } from 'electron'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
@@ -78,6 +78,55 @@ app.whenReady().then(async () => {
     await js('window.goodbuddy.updates.updateSettings({heartbeatEnabled:true})')
     await wait('!!document.querySelector(".composer textarea") && document.body.innerText.includes("Keep until confirmed")')
     await assertNoMode('.composer')
+    const checkAttachmentPosition = async () => {
+    const trigger = 'button[popovertarget="composer-attachment-picker"]'
+    await click(trigger)
+    await wait('document.querySelector("#composer-attachment-picker").matches(":popover-open")')
+    const attachmentPositions = []
+    for (const width of [1280, 800]) {
+      win.setContentSize(width, 900)
+      await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+      const position = await js<{ dx: number; gap: number; visible: boolean }>(`(() => {
+        const button = document.querySelector('${trigger}').getBoundingClientRect();
+        const menu = document.querySelector('#composer-attachment-picker').getBoundingClientRect();
+        return { dx: menu.left - button.left, gap: button.top - menu.bottom,
+          visible: menu.top >= 0 && menu.right <= innerWidth && menu.height > 0 };
+      })()`)
+      assert(position.visible && Math.abs(position.dx) <= 1 && Math.abs(position.gap - 4) <= 1, JSON.stringify({ width, ...position }))
+      assert(await js(`(() => {
+        const menu = document.querySelector('#composer-attachment-picker');
+        const rows = [...menu.querySelectorAll('button')];
+        return rows.length === 2 && menu.scrollHeight === menu.clientHeight && rows.every(row => {
+          const range = document.createRange();
+          range.selectNodeContents(row.lastChild);
+          const label = range.getBoundingClientRect(), icon = row.querySelector('svg').getBoundingClientRect();
+          const box = row.getBoundingClientRect();
+          return range.getClientRects().length === 1 && icon.right <= label.left && label.right <= box.right &&
+            label.top >= box.top && label.bottom <= box.bottom && icon.top < label.bottom &&
+            icon.bottom > label.top && row.contains(document.elementFromPoint(label.x + label.width / 2, label.y + label.height / 2));
+        });
+      })()`), `Both attachment actions must fit on separate clickable rows at width ${width}`)
+      attachmentPositions.push({ width, ...position })
+    }
+    await escape()
+    await wait('!document.querySelector("#composer-attachment-picker").matches(":popover-open")')
+    const originalOpen = dialog.showOpenDialog
+    try {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [join(directory, 'GoodBuddy'), join(directory, 'logs')] })
+      await click(trigger)
+      await click('#composer-attachment-picker button:last-child')
+      await wait('document.querySelectorAll(".composer-directory-chip").length === 2')
+      assert(await js(`(() => {
+        const chip = document.querySelector('.composer-directory-chip').getBoundingClientRect();
+        const input = document.querySelector('.composer__input').getBoundingClientRect();
+        const header = document.querySelector('.composer__input-header').getBoundingClientRect();
+        return chip.left > input.left && chip.top > input.top && Math.abs(chip.left - header.left) < 1 && chip.bottom < header.top;
+      })()`), 'Directory chips share the input header inset and have space above and below')
+      await click('.composer-directory-chip button')
+      await wait('document.querySelectorAll(".composer-directory-chip").length === 1')
+    } finally { dialog.showOpenDialog = originalOpen }
+    return attachmentPositions
+    }
     await click('.composer__options-trigger')
     await wait('!!document.querySelector(".composer__options")')
     await assertNoMode('.composer__options')
@@ -116,7 +165,8 @@ app.whenReady().then(async () => {
     assert(await js('!document.body.innerText.includes("Keep until confirmed")'))
     const modelAttempts = (globalThis as typeof globalThis & { overlayModelAttempts?: number }).overlayModelAttempts ?? 0
     assert.equal(modelAttempts, 0)
-    await writeFile(join(directory, 'result.json'), JSON.stringify({ composer: true, project: true,
+    const attachmentPositions = await checkAttachmentPosition()
+    await writeFile(join(directory, 'result.json'), JSON.stringify({ attachmentPositions, composer: true, project: true,
       securityAbsent: true, generalClearData: true, cancelPreservedData: true, confirmedClear: true,
       persistedAfterReload: true, modelAttempts }))
   } finally { await dispose(); win.destroy(); database.close() }

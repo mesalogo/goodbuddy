@@ -8,7 +8,7 @@ describe('file entry Office dispatch', () => {
     const { officeStore } = await import('./office-store')
     const source = { kind: 'workspace' as const, projectId: 'project', path: 'result.docx' }
     officeStore.requestOpen(source, 'result.docx')
-    await vi.waitFor(() => expect(officeStore.get(officeStore.getOpenRequest()!.instanceId).error).toContain('请先在设置中连接'))
+    await vi.waitFor(() => expect(officeStore.get(officeStore.getOpenRequest()!.instanceId).error).toContain('请先在“设备共享”中保存'))
     expect(officeStore.get(officeStore.getOpenRequest()!.instanceId).source).toEqual(source)
     expect(open).not.toHaveBeenCalled()
   })

@@ -31,6 +31,7 @@ import { createPortal } from 'react-dom'
 import { PageTabs, SegmentedControl } from './WorkspacePrimitives'
 import { WorkspaceActionDialog } from './WorkspaceActionDialog'
 import { WorkspaceGitTools } from './WorkspaceGitTools'
+import { useErrorNotification } from './use-error-notification'
 import { officeStore } from './office-store'
 import { isOfficeFile } from '../../shared/office-contracts'
 import { WorkspaceFileIcon } from './WorkspaceFileIcon'
@@ -167,6 +168,8 @@ export function WorkspaceFilesPanel({
     value: Record<string, string | undefined>
   }>({ value: {} })
   const [actionError, setActionError] = useState('')
+  useErrorNotification(notify, actionError)
+  useErrorNotification(notify, gitError && t('sidebar.workspace.gitUnavailable', { error: gitError }))
   const [menu, setMenu] = useState<{ entry: WorkspaceDirectoryEntry; trigger: HTMLButtonElement }>()
   const menuRef = useRef<HTMLDivElement>(null)
   const closeMenu = (restoreFocus = false): void => {
@@ -221,6 +224,7 @@ export function WorkspaceFilesPanel({
   const inFlightPaths = useRef(new Set<string>())
   const [diffState, setDiff] = useState<{ projectId?: string; path: string; value?: WorkspaceChanges; error?: string }>()
   const diff = diffState?.projectId === projectId ? diffState : undefined
+  useErrorNotification(notify, diff?.error)
   const diffRequest = useRef(0)
   const [visibleChangeCount, setVisibleChangeCount] = useState(50)
   const openDiff = (path: string): void => {
@@ -293,12 +297,11 @@ export function WorkspaceFilesPanel({
         } }))
       } catch (reason) {
         if (requestGeneration.current === generation) {
+          const message = reason instanceof Error ? reason.message : tRef.current('files.errors.read')
+          notify?.({ tone: 'error', message: `${path || '/'}: ${message}` })
           setErrorState((current) => ({
             projectId,
-            value: { ...(current.projectId === projectId ? current.value : {}), [path]:
-              reason instanceof Error
-                ? reason.message
-                : tRef.current('files.errors.read') }
+            value: { ...(current.projectId === projectId ? current.value : {}), [path]: message }
           }))
         }
       } finally {
@@ -314,7 +317,7 @@ export function WorkspaceFilesPanel({
         }
       }
     },
-    [onListDirectory, projectId]
+    [onListDirectory, projectId, notify]
   )
 
   const refreshDirectories = useEffectEvent((generation: number) => {
@@ -363,7 +366,7 @@ export function WorkspaceFilesPanel({
       ? loadingState.value
       : emptyPaths
   const errors: Record<string, string | undefined> = errorState.projectId === projectId ? errorState.value : emptyRecord
-  const renderDirectoryError = (path: string): React.JSX.Element | null => errors[path] ? (
+  const renderDirectoryError = (path: string): React.JSX.Element | null => !notify && errors[path] ? (
     <p className="workspace-files__error" role="alert">
       {errors[path]}
       <button type="button" disabled={loadingPaths.has(path)} onClick={() => void loadDirectory(path, requestGeneration.current)}>
@@ -530,8 +533,8 @@ export function WorkspaceFilesPanel({
     </time>
   )
   const treeRows = useMemo(
-    () => flattenFileTree(root?.entries ?? [], listings, expandedPaths, loadingPaths, errors, sort),
-    [errors, expandedPaths, listings, loadingPaths, root, sort]
+    () => flattenFileTree(root?.entries ?? [], listings, expandedPaths, loadingPaths, notify ? emptyRecord : errors, sort),
+    [emptyRecord, errors, expandedPaths, listings, loadingPaths, notify, root, sort]
   )
   const treeRowKeysKey = treeRows.map((row) => row.key).join('\n')
   const treeRowKeys = useMemo(() => (treeRowKeysKey ? treeRowKeysKey.split('\n') : []), [treeRowKeysKey])
@@ -593,7 +596,7 @@ export function WorkspaceFilesPanel({
           </div>
         </div>
       </header>
-      {diff.error ? <p role="alert">{diff.error}<button type="button" onClick={() => openDiff(diff.path)}>{t('files.retry')}</button></p>
+       {diff.error ? !notify && <p role="alert">{diff.error}<button type="button" onClick={() => openDiff(diff.path)}>{t('files.retry')}</button></p>
         : !diff.value ? <p>{t('files.reading')}</p> : <>
           {diff.value.stagedPatch && <><h4>{t('files.staged')}</h4>{renderPatch(diff.value.stagedPatch)}</>}
           {diff.value.patch && <>{diff.value.stagedPatch && <h4>{t('files.unstaged')}</h4>}{renderPatch(diff.value.patch)}</>}
@@ -624,10 +627,10 @@ export function WorkspaceFilesPanel({
         </div>
       </nav>}
         <div className="workspace-files__git-view" hidden={activeView !== 'changes'}>
-        {showGit && <WorkspaceGitTools key={projectId} projectId={projectId} refreshToken={refreshToken} onRefresh={refresh} viewControl={
+         {showGit && <WorkspaceGitTools key={projectId} notify={notify} projectId={projectId} refreshToken={refreshToken} onRefresh={refresh} viewControl={
           <SegmentedControl ariaLabel={t('management.changedView')} value={changeView} onChange={setChangeView} options={[{ value: 'list', label: t('management.list') }, { value: 'tree', label: t('management.tree') }]} />
         }>
-        {gitError ? <p className="workspace-files__status" role="status">{t('sidebar.workspace.gitUnavailable', { error: gitError })}</p>
+        {gitError ? !notify && <p className="workspace-files__status" role="status">{t('sidebar.workspace.gitUnavailable', { error: gitError })}</p>
           : isRepository === false ? <p className="assistant-sidebar__empty">{t('files.notRepository')}</p>
             : changedFiles.length === 0 ? <p className="assistant-sidebar__empty">{t('files.noChanges')}</p> : null}
          <div className="workspace-files__changed" data-view={changeView}>
@@ -707,7 +710,7 @@ export function WorkspaceFilesPanel({
       </div>
       </div>
     </div>
-    {actionError && <p className="workspace-files__error" role="alert">{actionError}</p>}
+    {!notify && actionError && <p className="workspace-files__error" role="alert">{actionError}</p>}
     {menu && createPortal(<div ref={menuRef} className="workspace-files__menu" role="menu" aria-label={menu.entry.name} onKeyDown={(event) => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeMenu(true); return }
       const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
@@ -728,7 +731,7 @@ export function WorkspaceFilesPanel({
       <div role="separator" />
       <button role="menuitem" type="button" className="danger-ghost" onClick={() => { closeMenu(true); setDialog({ kind: 'delete', path: menu.entry.path }) }}><Trash2 size={14} />{t('management.delete')}</button>
     </div>, document.body)}
-    {dialog && <WorkspaceActionDialog key={projectId} projectId={projectId} rootPath={rootPath} {...dialog} onClose={() => setDialog(undefined)} onComplete={() => { setSelected(undefined); setCreateTarget(browsedPath); void refresh() }} />}
+    {dialog && <WorkspaceActionDialog key={projectId} notify={notify} projectId={projectId} rootPath={rootPath} {...dialog} onClose={() => setDialog(undefined)} onComplete={() => { setSelected(undefined); setCreateTarget(browsedPath); void refresh() }} />}
     </div>
   )
 }

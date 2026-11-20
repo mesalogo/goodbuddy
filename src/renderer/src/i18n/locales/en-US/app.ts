@@ -239,6 +239,9 @@ export const app = {
     }
   },
   customTask: {
+    duration: 'Maximum run time (minutes)',
+    durationHelp: 'Applies to each run. Enter 0 for no limit.',
+    durationError: 'Enter a whole number from 0 to 9999.',
     eyebrow: 'CUSTOM TASK',
     title: 'New custom task',
     description:
@@ -631,6 +634,7 @@ export const app = {
     newConversationHint: '{{shortcut}} for a new conversation',
     addContent: 'Add content',
     addAttachment: 'Add attachment',
+    addFile: 'Add files', addDirectory: 'Add working directory', removeDirectory: 'Remove working directory {{path}}', directoryUnavailable: 'Remote directory browser unavailable',
     attachmentProgress: {
       selecting: 'Adding attachments…',
       reading: 'Reading {{name}}',

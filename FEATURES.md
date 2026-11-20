@@ -18,6 +18,11 @@ records are listed separately and do not introduce another feature status.
 
 ### Desktop foundation, workspaces, and context
 
+- [x] **Conversation working directories**: The paperclip menu selects local
+  folders or folders on the project's SSH host. The model receives absolute
+  paths, not directory contents; the process working directory and permissions
+  do not change. The selection is per conversation for this window, and queued
+  messages retain their own paths.
 - [x] **Cross-platform desktop application**: Supports Windows, macOS, and
   Linux release targets on `x64` and `arm64`.
 - [x] **Chinese hardware and operating-system coverage**: Standard Linux
@@ -122,7 +127,8 @@ records are listed separately and do not introduce another feature status.
   the bottom, initially expands to half the Git content area, and supports
   resizing with independently scrolling panes and one shared refresh action.
   Project switches automatically detect Git without reusing another project's
-  status. Moves stay inside the workspace,
+  status. File and Git errors use application notifications in the workbar;
+  click Fetch again to retry a failed fetch. Moves stay inside the workspace,
   deletion requires confirmation, and branch conflicts never trigger automatic
   stash or discard. Managed SSH operations require Agent `0.11.23`.
 - [x] **Rich responses**: Supports GitHub Flavored Markdown, LaTeX math,
@@ -221,8 +227,8 @@ records are listed separately and do not introduce another feature status.
   integration with ONLYOFFICE Docs to open multiple filename-labelled document
   tabs in the assistant workbar. DOCX, XLSX, and PPTX support editing and source
   writeback; DOC, XLS, and PPT convert to modern-format copies through Save As,
-  preserving the originals. Existing Office connections are reused, falling back
-  to the device-sharing connection. Ctrl/Cmd+S writes back and Ctrl/Cmd+Shift+S
+  preserving the originals. New tabs use the URL saved in Device Sharing; there
+  is no separate Platform Features form. Ctrl/Cmd+S writes back and Ctrl/Cmd+Shift+S
   saves as; external source changes prevent overwriting. Word, Excel and PowerPoint
   selections can use the current conversation through the context-menu AI dialog.
   Uploads, editor Office API calls and save/writeback use the registered device's
@@ -237,6 +243,9 @@ records are listed separately and do not introduce another feature status.
 
 ### Agent Runtimes and model connections
 
+- [x] **Default Runtime**: Fresh or restored default settings use OpenCode.
+  Explicit saved selections are preserved; users can still select direct-model
+  execution. No model credentials are provisioned by this default.
 - [x] **System One role selection**: Configure a System One decision-model
   connection, assign it to role selection, and enable automatic role routing.
   Manual roles keep priority; uncertain, failed, or timed-out decisions fall back
@@ -406,7 +415,7 @@ records are listed separately and do not introduce another feature status.
   failure, Agent `SIGKILL`/restart, and recovery from a reopened Desktop SQLite
   database. Successful tool START/END events appear exactly once, with no
   Prompt, provider, or tool replay observed. The current Agent source lock is
-  `0.15.15`, paired with the current Desktop release candidate `0.18.2`; formal
+  `0.15.16`, paired with the current Desktop release candidate `0.18.3`; formal
   publication status follows the separate Agent and Desktop
   release channels. Previous macOS validation covered native package installation,
   detached lifecycle, Attach, real Ask/Execute, and cancellation of tools in
@@ -418,12 +427,11 @@ records are listed separately and do not introduce another feature status.
   Agent `0.11.24` requires Desktop `0.13.0` and fixes native question routing
   and sending another message after cancelling a pending question.
 - [x] **Remote model failure details and bounded connection retries**:
-  Agent `0.15.14` preserves the gateway failure instead of replacing it with a
-  generic Runtime-stopped error. Confirmed pre-connection network failures
-  receive at most two retries under the same cancellation and total deadline.
-  Interrupted responses and uncertain delivery are not replayed. Safe diagnostics
-  retain the failure phase and allowlisted transport codes, not request bodies
-  or credentials. Requires Desktop `0.17.5`; see
+  The gateway preserves the failure phase and allowlisted transport code,
+  not request bodies or credentials. Agent `0.15.16` also retries `ECONNRESET`
+  before response headers, up to twice under the original cancellation and
+  deadline. The provider may process or bill repeated attempts. A body interrupted
+  after headers is not resent. Requires Desktop `0.18.3`; see
   [development evidence](./docs/features/unified-execution/progress.md).
 - [x] **Manual SSH Host environment provisioning source path**: After Host Key,
   authentication, and system probes succeed, GoodBuddy saves the Host and
@@ -922,7 +930,10 @@ records are listed separately and do not introduce another feature status.
   incremental PRD work. Scheduled messages use the conversation's current
   history, Runtime, and saved knowledge retrieval settings; task
   details show execution status, and an active occurrence blocks duplicate
-  Run Now actions. See the
+  Run Now actions. In the destination list, New conversation follows the current
+  one, ahead of project history. New schedules default to 120 minutes per run
+  (0 disables this limit; maximum 9999). Queue time is excluded and existing
+  schedules do not acquire the limit. See the
   [Task Center PRD](./docs/features/task-and-job/task-center-prd.md) and
   [Scheduled Task PRD](./docs/features/task-and-job/scheduled-task-prd.md).
   Status counts and filters identify running tasks and those needing attention;
@@ -1123,10 +1134,12 @@ records are listed separately and do not introduce another feature status.
 
 ### Open source, builds, and releases
 
-- The current Desktop candidate is `0.18.2`, paired with published Agent `0.15.15`, with
-  source pins of OpenCode `1.19.3`, Continue `1.5.47` and Desktop DeepSeek Harness
-  `0.2.2-rc.1` (upstream RC). Publication status follows the independent
-  Desktop and Agent release channels.
+- Desktop `0.18.3` and Agent `0.15.16` are release candidates, not published
+  versions. Schema 66, OpenCode `1.19.3`, Continue `1.5.47`, Desktop DeepSeek
+  Harness `0.2.2-rc.1`, Agent Node `24.19.0` and protocol `2.0` are unchanged.
+  Six standard Desktop targets, no LoongArch; the three Agent packages have
+  their own tag and require Desktop `0.18.3`. Exact-source CI, tagged builds and
+  public verification remain pending. See [release preparation](./docs/development/release-preparation-0.18.3.md).
 - Desktop `0.18.2` carries forward the unpublished `0.18.0` scope. It defaults to
   the workbench, reorganizes Application Center and
   exposes older task history. It removes several fixed configuration/list
@@ -1147,8 +1160,9 @@ records are listed separately and do not introduce another feature status.
   changing product code, existing assertions or timeouts.
   Agent `0.15.15` is public on GitHub and OSS with all three targets and is
   non-Latest; its minimum Desktop version remains `0.18.0`.
-  Recovery Desktop CI, packaging and public verification remain pending.
-  GitHub only, six Desktop targets, no Agent rebuild and no LoongArch;
+  Desktop `0.18.2` became GitHub Latest on November 18 with 20 assets after
+  the same-tag packaging retry; the publish job for GitHub and OSS succeeded.
+  GitHub-only source push, six Desktop targets, no Agent rebuild and no LoongArch;
   uncommitted Pi exploration is excluded. See
   [recovery preparation](./docs/development/release-preparation-0.18.2.md).
 - Desktop `0.17.5` adds continuous canvas views, sharper PDF display, remote

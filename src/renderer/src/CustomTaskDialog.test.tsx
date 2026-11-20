@@ -92,6 +92,13 @@ describe('CustomTaskDialog', () => {
       target: { value: '总结完成和失败的工作' }
     })
     fireEvent.click(screen.getByRole('button', { name: '定时执行' }))
+    const duration = screen.getByRole('spinbutton', { name: '最长运行时间（分钟）' })
+    expect(duration).toHaveValue(120)
+    fireEvent.change(duration, { target: { value: '10000' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建任务' }))
+    expect(onCreate).not.toHaveBeenCalled()
+    expect(duration).toHaveAttribute('aria-invalid', 'true')
+    fireEvent.change(duration, { target: { value: '0' } })
     fireEvent.change(screen.getByLabelText('首次运行'), {
       target: { value: futureLocalDateTime() }
     })
@@ -103,6 +110,7 @@ describe('CustomTaskDialog', () => {
         conversationId,
         title: '每周项目总结',
         prompt: '总结完成和失败的工作',
+        maxRunMinutes: 0,
         recurrence: 'once'
       }),
       { runImmediately: false }
@@ -200,6 +208,8 @@ describe('CustomTaskDialog', () => {
       { id: 'elsewhere', projectId: 'another-project', title: '其他项目会话' }
     ]} />)
     expect(screen.queryByRole('option', { name: '其他项目会话' })).not.toBeInTheDocument()
+    const destination = screen.getByLabelText<HTMLSelectElement>('关联会话')
+    expect(Array.from(destination.options, (option) => option.value)).toEqual(['current', 'new', otherId])
     expect(screen.queryByRole('option', { name: '当前项目会话' })).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('关联会话'), { target: { value: otherId } })
     fireEvent.change(screen.getByLabelText('任务内容'), { target: { value: '检查项目' } })

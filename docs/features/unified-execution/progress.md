@@ -1,5 +1,36 @@
 # 进度与证据
 
+## 2026-11-20 Agent model connection resets
+
+`scripts/remote-recovery-host-probe.ts --gateway-reset` ran the candidate's
+production Agent daemon, model gateway and SQLite ledger with actual OpenCode
+`1.19.3` and Node `24.19.0` on the shared Linux x64 Host over VPN. It used
+the installed model-bridge helper with isolated state, not an installed
+`0.15.16` package. The responder read the **complete HTTP POST** before
+resetting its TCP socket. Real Node fetch reported `ECONNRESET` both before
+headers and after a partial response body.
+
+| Case | What reached the test responder | Result |
+| --- | --- | --- |
+| Reset before headers every time | 3 identical POSTs for one model call | Dispatch failed with `ECONNRESET`; one unknown ledger entry. |
+| Reset after headers and partial body | 1 POST | Response-body failure, not resent; one unknown ledger entry. |
+| First dispatch reset, then recovery | 2 identical POSTs for the first call; 1 post-tool model round | OpenCode read the fixture, its marker reached the next model round, and the final reply reached the conversation. Both ledger entries were acknowledged. |
+
+Three explicit prompts started in each passing run. The first passing run used
+**one real external text request, HTTP 200**, in the final round; a desktop
+relay sent only a synthetic marker, never Host history, paths or credentials
+from the Host. The fault responses and tool instruction were controlled; no
+paid request was intentionally duplicated. Two initial launches closed before
+the first provider POST and made no external request; their startup cause was
+not established. The final harness repeated all three cases with a controlled
+last reply, **zero** additional provider requests, and the same counts.
+
+The paid run inherited the local development TLS override. The retained relay
+uses normal HTTPS verification; a separate certificate-verified handshake to
+the configured provider passed without HTTP or credentials. Test-owned Host
+processes and scratch files were checked and cleaned, and the installed
+Agent registry was unchanged. This is not installer, macOS or arm64 acceptance.
+
 ## 2026-11-17 Release count limits Host validation
 
 The user authorized a bounded current-source probe on the shared Linux x64

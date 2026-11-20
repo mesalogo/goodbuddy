@@ -947,6 +947,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     getFilePath: vi.fn(() => ""),
     importFiles: vi.fn(async () => []),
     selectFiles: vi.fn(async () => []),
+    selectDirectories: vi.fn(async () => []),
     onFileSelectionProgress: vi.fn((listener) => {
       fileSelectionProgressListener = listener;
       return () => {
@@ -5270,6 +5271,7 @@ describe("App", () => {
     expect(messageRenderProbe).not.toHaveBeenCalled();
     expect(firstPane?.querySelectorAll(".message")).toHaveLength(mountedRows);
     fireEvent.click(screen.getByLabelText("添加附件"));
+    fireEvent.click(screen.getByText('添加文件'));
     expect(await screen.findByText(draftAttachment.name)).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("第二段会话").closest("button")!);
@@ -7549,6 +7551,22 @@ describe("App", () => {
     );
   });
 
+  it('sends the selected working directories and keeps them available for follow-ups', async () => {
+    vi.mocked(api.context.selectDirectories).mockResolvedValueOnce(['/data/logs', '/data/config', '/data/logs', '/data/scratch']);
+    render(<App />);
+    fireEvent.click(await screen.findByLabelText('添加附件'));
+    fireEvent.click(screen.getByText('添加工作目录'));
+    fireEvent.click(await screen.findByLabelText('移除工作目录 /data/scratch'));
+    fireEvent.change(screen.getByLabelText('向 GoodBuddy 提问'), { target: { value: '对照日志和配置' } });
+    fireEvent.click(screen.getByLabelText('发送'));
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run.mock.calls[0]?.[0].prompt).toContain('["/data/logs","/data/config"]');
+    expect(run.mock.calls[0]?.[0].prompt).not.toContain('/data/scratch');
+    expect(screen.getByLabelText('移除工作目录 /data/logs')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('移除工作目录 /data/logs'));
+    fireEvent.click(screen.getByLabelText('移除工作目录 /data/config'));
+  });
+
   it("keeps sent documents and images in conversation history", async () => {
     const documentAttachment = {
       id: "00000000-0000-4000-8000-000000000301",
@@ -7573,6 +7591,7 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByLabelText("添加附件"));
+    fireEvent.click(screen.getByText('添加文件'));
     const composer = screen
       .getByLabelText("向 GoodBuddy 提问")
       .closest<HTMLElement>(".composer");
@@ -7689,6 +7708,7 @@ describe("App", () => {
     const addButton = await screen.findByLabelText("添加附件");
     fireEvent.click(addButton);
 
+    fireEvent.click(screen.getByText('添加文件'));
     expect(addButton).toBeDisabled();
     expect(
       screen.getByRole("progressbar", {
@@ -7737,6 +7757,7 @@ describe("App", () => {
     fireEvent.change(input, { target: { value: "Keep this draft" } });
     fireEvent.click(addButton);
 
+    fireEvent.click(screen.getByText('添加文件'));
     const notifications = await screen.findByRole("region", { name: "应用通知" });
     expect(within(notifications).getByRole("alert")).toHaveTextContent("不支持的文件类型：.mp3");
     expect(screen.queryByText(/Error invoking remote method/u)).not.toBeInTheDocument();
@@ -7758,6 +7779,7 @@ describe("App", () => {
     vi.useFakeTimers();
     try {
       fireEvent.click(addButton);
+      fireEvent.click(screen.getByText('添加文件'));
       await act(async () => { await Promise.resolve(); });
       expect(screen.getByRole("alert")).toHaveTextContent("不支持的文件类型：.mp3");
       act(() => vi.advanceTimersByTime(4_999));
@@ -7784,6 +7806,7 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByLabelText("添加附件"));
+    fireEvent.click(screen.getByText('添加文件'));
     const composer = screen
       .getByLabelText("向 GoodBuddy 提问")
       .closest<HTMLElement>(".composer");

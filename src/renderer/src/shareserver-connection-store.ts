@@ -23,7 +23,7 @@ export const shareServerConnection = {
   },
   async resolve(): Promise<string> {
     const value = await shareServerConnection.load()
-    if (!value) throw new Error('请先在设置中连接具备 Office 能力的 ShareServer。')
+    if (!value) throw new Error('请先在“设备共享”中保存具备 Office 能力的 ShareServer 地址。')
     const origin = new URL(officeOriginSchema.parse(value)).origin
     const capabilities = await window.goodbuddy.office!.capabilities({ serverUrl: origin })
     const serverUrl = capabilities.webUrl ?? origin

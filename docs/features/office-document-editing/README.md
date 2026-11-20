@@ -33,7 +33,7 @@ Office 协同编辑计划通过 ShareServer 集成 ONLYOFFICE Docs，使 GoodBud
 
 当前采用“本地阅读、用户选择后进入 ONLYOFFICE 编辑”的分层接入方向：预览不上传文件或
 创建编辑会话；编辑链路才通过 ShareServer 管理工作副本。默认打开规则仍由文件打开功能维护。
-当前 Desktop 共用设置中的 ShareServer 连接，文件入口支持 DOCX、XLSX、PPTX 直接编辑，
+当前 Desktop 使用“设备共享”保存的 ShareServer 地址，文件入口支持 DOCX、XLSX、PPTX 直接编辑，
 DOC、XLS、PPT 转换后编辑并另存为现代格式。工作栏“+ → 文档”提供补充文件选择入口。
 工作区／附件入口、远程源文件适配和 Word／Excel／PPT 右键 AI 编辑已有实现；完整应用已用
 本地测试模型验证选区往返，真实供应商与跨平台验收仍待完成。本地预览 Demo

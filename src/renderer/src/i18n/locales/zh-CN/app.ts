@@ -232,6 +232,9 @@ export const app = {
     }
   },
   customTask: {
+    duration: '最长运行时间（分钟）',
+    durationHelp: '每次执行单独计时，填 0 表示不限时。',
+    durationError: '请输入 0 到 9999 之间的整数。',
     eyebrow: '定制任务',
     title: '新建定制任务',
     description: '立即或按计划向会话发送任务内容，回复保留在关联会话中。',
@@ -614,6 +617,7 @@ export const app = {
     newConversationHint: '{{shortcut}} 新建对话',
     addContent: '添加内容',
     addAttachment: '添加附件',
+    addFile: '添加文件', addDirectory: '添加工作目录', removeDirectory: '移除工作目录 {{path}}', directoryUnavailable: '无法浏览远程目录',
     attachmentProgress: {
       selecting: '正在添加附件…',
       reading: '正在读取 {{name}}',

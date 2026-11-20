@@ -402,6 +402,7 @@ export const conversationQueueUserInputSchema = z
     teamMode: z.boolean().optional(),
     smartRouting: z.boolean().optional(),
     includeMemoryContext: z.boolean().default(true),
+    workingDirectories: z.array(z.string().min(1)).optional(),
     prompt: z.string().trim().min(1).max(100_000),
     attachments: z.array(conversationAttachmentSchema).default([]),
     imageContextArtifactIds: z.array(assistantIdSchema).optional(),
@@ -519,7 +520,7 @@ export const defaultContextCompressionSettings = {
 } as const satisfies ContextCompressionSettings
 
 export const defaultRuntimeSettings = {
-  provider: 'model',
+  provider: 'opencode',
   modelBaseUrl: 'http://127.0.0.1:11434/v1',
   modelName: 'qwen3',
   modelProtocol: 'openai-chat-completions',
@@ -2410,6 +2411,7 @@ export type DesktopApi = {
     getDraft: (conversationId: string) => Promise<ContextAttachment[]>
     saveDraft: (conversationId: string, ids: string[]) => Promise<void>
     selectFiles: (conversationId?: string) => Promise<ContextAttachment[]>
+    selectDirectories: () => Promise<string[]>
     getFilePath: (file: File) => string
     importFiles: (paths: string[], conversationId?: string) => Promise<ContextAttachment[]>
     onFileSelectionProgress: (

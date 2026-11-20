@@ -655,11 +655,12 @@ Runtime 包。2026-09-19 完整桌面验证覆盖联合包安装、CN 项目创�
 
 ## Agent 本地模型 gateway
 
-Provider connection failures are distinguished from uncertain dispatches. Before
-an HTTP connection is established, `ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN` and
-`UND_ERR_CONNECT_TIMEOUT` permit at most two retries (250 ms, then 1 second),
-under the same call identity, cancellation signal and total request deadline.
-Resets and incomplete responses do not permit automatic replay. An uncertain
+`ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN` and `UND_ERR_CONNECT_TIMEOUT` permit
+at most two dispatch retries (250 ms, then 1 second). Agent `0.15.16` also
+retries `ECONNRESET` before response headers, even if the upstream service
+already received the request. Duplicate processing or charges are possible.
+All attempts share the same call identity, cancellation signal and request
+deadline. Incomplete responses after headers are not replayed. An uncertain
 provider failure still terminates the affected task, but uses
 `model-request-failed` cleanup and preserves `AgentModelGatewayError` with a safe
 phase/transport code in the semantic terminal. Agent diagnostics record
@@ -675,8 +676,8 @@ phase/transport code in the semantic terminal. Agent diagnostics record
   Desktop blob 模型桥保留已发布 v1 的 canonical JSON 字节，不添加尾随换行。单条消息按
   最多 2 MiB 的帧发送，接收端逐帧消费流量额度，跟踪 JSON 结构并在消息上限内组装；
   已发布端的单帧消息可直接接收，多帧大消息要求两端均使用更新后的实现。每个
-  `(binding, operation, roundIndex)` 只 dispatch 一次；已 dispatch 但未证明完整交付的调用
-  变为 `outcome-unknown`，不会自动重试。
+  `(binding, operation, roundIndex)` 只领取一次；上述有限 HTTP 重试发生在同一次调用内。
+  未证明完整交付且已记录为 `outcome-unknown` 的调用不会再次领取或自动重发。
 - Agent 不按固定模型调用次数或 Prompt 累计输出 Token 数停止 Runtime；每次 Provider
   请求遵循所选模型 profile 的单次输出设置；未设置时保留 Runtime 请求中的 Token 参数，
   更新后的 Agent 不补入固定 32,000 Token，也不再按 60 秒或桥接层的 120/150/180 秒

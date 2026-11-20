@@ -4400,3 +4400,38 @@
 .conversation-input-queue__item--error small {
   display: block;
 }
+.composer__tool-group > button[popovertarget="composer-attachment-picker"] {
+  anchor-name: --composer-paperclip;
+}
+.composer-attachment-picker:popover-open {
+  position-anchor: --composer-paperclip;
+  position: fixed;
+  inset: auto;
+  bottom: anchor(top);
+  left: anchor(left);
+  margin: 0 0 4px;
+  display: grid;
+  max-height: 45vh;
+  max-width: min(28rem, 90vw);
+  overflow: auto;
+  padding: 4px;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+}
+.composer__tool-group .composer-attachment-picker button {
+  display: flex;
+  width: auto;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding-inline: 8px;
+}
+.composer-directories, .composer-directory-chip { display: flex; align-items: center; gap: var(--space-2); }
+.composer-directories { flex-wrap: wrap; margin-bottom: var(--space-2); }
+.composer-directories + .composer__input-header { margin-block-start: 0; margin-inline-start: 0; }
+.composer-directory-choice { display: flex; align-items: center; }
+.composer-directory-chip { box-sizing: border-box; min-width: 0; max-width: 100%; padding-inline: var(--space-2); border-radius: var(--radius-control); background: var(--surface-subtle); }
+.composer-directory-chip__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-directory-chip > svg, .composer-directory-chip > button { flex: none; }

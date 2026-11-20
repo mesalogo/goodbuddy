@@ -23,3 +23,13 @@ all 16 scenarios, full validators and the production bundle in existing
 main-branch CI before seeking approval for the exact SHA and `v0.18.2`.
 Six standard Desktop targets only; no LoongArch or uncommitted Pi work.
 Native packaging, signing and public release checks follow the approved tag.
+
+## Outcome
+
+The user later approved the immutable `v0.18.2` tag at
+`11ef164062b6f53a0bfec230666592d7ce562629` on GitHub only. [Main CI](https://github.com/mesalogo/goodbuddy/actions/runs/44224354920)
+passed. After Apple notarization initially rejected the macOS jobs because of
+an agreement, the user confirmed it was effective and approved a same-tag retry.
+The [release run](https://github.com/mesalogo/goodbuddy/actions/runs/44326964885)
+completed including GitHub/OSS publication. [Desktop 0.18.2](https://github.com/mesalogo/goodbuddy/releases/tag/v0.18.2)
+became GitHub Latest on November 18 with 20 assets; Agent `0.15.15` was not rebuilt.

@@ -392,10 +392,10 @@ describe('AgentModelGateway', () => {
     ledger.close()
   })
 
-  it('retries a refused connection before dispatch, with one ledger claim', async () => {
+  it.each(['ECONNREFUSED', 'ECONNRESET'])('recovers from %s during dispatch with one ledger claim', async code => {
     vi.useFakeTimers()
     const fetcher = vi.fn<typeof fetch>()
-      .mockRejectedValueOnce(new TypeError('fetch failed', { cause: Object.assign(new Error(secret), { code: 'ECONNREFUSED' }) }))
+      .mockRejectedValueOnce(new TypeError('fetch failed', { cause: Object.assign(new Error(secret), { code }) }))
       .mockResolvedValueOnce(new Response('{}'))
     const { gateway, ledger } = setup(fetcher)
     try {
@@ -407,7 +407,7 @@ describe('AgentModelGateway', () => {
     } finally { ledger.close(); vi.useRealTimers() }
   })
 
-  it.each(['dispatch', 'response-body'] as const)('preserves safe %s failure details without replay or secrets', async phase => {
+  it.each(['dispatch', 'response-body'] as const)('bounds %s reset attempts and preserves safe failure details', async phase => {
     const failure = new TypeError(secret, { cause: Object.assign(new Error(secret), { code: 'ECONNRESET' }) })
     const fetcher = vi.fn<typeof fetch>(async () => {
       if (phase === 'dispatch') throw failure
@@ -420,7 +420,7 @@ describe('AgentModelGateway', () => {
       expect(error).toMatchObject({ code: 'outcome-unknown', phase, transportCode: 'ECONNRESET', cause: failure })
       expect(error.message).toContain('ECONNRESET')
       expect(error.message).not.toContain(secret)
-      expect(fetcher).toHaveBeenCalledOnce()
+      expect(fetcher).toHaveBeenCalledTimes(phase === 'dispatch' ? 3 : 1)
     } finally { ledger.close() }
   })
 
