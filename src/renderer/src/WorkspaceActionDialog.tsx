@@ -6,7 +6,10 @@ import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import type { WorkspaceManagementAction, WorkspaceManagementResult } from '../../shared/workspace-management-contracts'
 import type { SshDirectoryBrowseResult } from '../../shared/ssh-host-contracts'
 
-export function WorkspaceActionDialog({ projectId, rootPath, kind, path, onClose, onComplete }: {
+import { useErrorNotification, type Notify } from './use-error-notification'
+
+export function WorkspaceActionDialog({ notify, projectId, rootPath, kind, path, onClose, onComplete }: {
+  notify?: Notify
   projectId: string
   rootPath?: string
   kind: 'rename' | 'move' | 'delete' | 'properties' | 'createFile' | 'createDirectory'
@@ -21,6 +24,7 @@ export function WorkspaceActionDialog({ projectId, rootPath, kind, path, onClose
   const browseRequest = useRef(0)
   const remoteBrowsing = useRef(false)
   const [error, setError] = useState('')
+  useErrorNotification(notify, error)
   const [busy, setBusy] = useState(false)
   const [properties, setProperties] = useState<Extract<WorkspaceManagementResult, { kind: 'properties' }>>()
   const cancel = useRef<HTMLButtonElement>(null)

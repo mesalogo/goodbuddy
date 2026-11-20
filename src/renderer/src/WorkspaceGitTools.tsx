@@ -4,10 +4,12 @@ import { ChevronDown, ChevronLeft, ChevronRight, Download, GitBranch } from 'luc
 import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 import type { WorkspaceManagementAction, WorkspaceManagementResult } from '../../shared/workspace-management-contracts'
 import { FloatingPortal } from './FloatingPortal'
+import { useErrorNotification, type Notify } from './use-error-notification'
 
 type Result<K extends WorkspaceManagementResult['kind']> = Extract<WorkspaceManagementResult, { kind: K }>
 
-export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewControl, children }: {
+export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewControl, children, notify }: {
+  notify?: Notify
   projectId: string; refreshToken?: unknown; onRefresh: () => Promise<void>; viewControl: React.ReactNode; children: React.ReactNode
 }): React.JSX.Element {
   const { t } = useTranslation('workspace')
@@ -16,6 +18,9 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  useErrorNotification(notify, error)
+  const retry = useRef<() => void>(() => {})
+  const [branchAttempt, setBranchAttempt] = useState(0)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [history, setHistory] = useState<Result<'history'>>()
   const [historySize, setHistorySize] = useState(50)
@@ -43,9 +48,13 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
     const generation = ++branchRequest.current
     void window.goodbuddy.workspace.manage(projectId, { kind: 'branches' }).then((result) => {
       if (branchRequest.current === generation && result.kind === 'branches') setBranches(result)
-    }).catch((reason: unknown) => { if (branchRequest.current === generation) setError(String(reason)) })
+    }).catch((reason: unknown) => {
+      if (branchRequest.current !== generation) return
+      retry.current = () => { setError(''); setBranchAttempt(attempt => attempt + 1) }
+      setError(String(reason))
+    })
     return () => { branchCounter.current++ }
-  }, [projectId, refreshToken])
+  }, [projectId, refreshToken, branchAttempt])
   useEffect(() => { if (path) diffBack.current?.focus(); else if (commit) commitBack.current?.focus() }, [path, commit])
   const positionBranches = useEffectEvent(() => {
     const panel = branchPanel.current
@@ -94,18 +103,22 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
       window.visualViewport?.removeEventListener('scroll', reposition)
     }
   }, [branchOpen])
-  const run = async (value: WorkspaceManagementAction): Promise<void> => {
+  const run = async (value?: WorkspaceManagementAction): Promise<void> => {
     if (busy) return
     setBusy(true); setError('')
     try {
-      await action(value)
+      if (value) await action(value)
+      value = undefined // Only refresh on retry once the operation has succeeded.
       setBranchOpen(false); setHistory(undefined); setCommit(undefined); setFiles(undefined); setPath(undefined); setPatch(undefined)
       request.current++
       const result = await action({ kind: 'branches' })
       if (result.kind === 'branches') setBranches(result)
       await onRefresh()
       branchTrigger.current?.focus()
-    } catch (reason) { setError(String(reason)) }
+    } catch (reason) {
+      retry.current = () => void run(value)
+      setError(String(reason))
+    }
     finally { setBusy(false) }
   }
   const loadHistory = async (more = false): Promise<void> => {
@@ -114,7 +127,12 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
     try {
       const result = await action({ kind: 'history', offset: more ? history?.commits.length ?? 0 : 0, head: more ? history?.head : undefined })
       if (generation === request.current && result.kind === 'history') setHistory({ ...result, commits: more ? [...(history?.commits ?? []), ...result.commits] : result.commits })
-    } catch (reason) { if (generation === request.current) setError(String(reason)) }
+    } catch (reason) {
+      if (generation === request.current) {
+        retry.current = () => void loadHistory(more)
+        setError(String(reason))
+      }
+    }
     finally { if (generation === request.current) setBusy(false) }
   }
   const refreshHistory = useEffectEvent(() => {
@@ -133,11 +151,16 @@ export function WorkspaceGitTools({ projectId, refreshToken, onRefresh, viewCont
       if (generation !== request.current) return
       if (result.kind === 'commitFiles') setFiles(result)
       if (result.kind === 'commitDiff') setPatch(result)
-    } catch (reason) { if (generation === request.current) setError(String(reason)) }
+    } catch (reason) {
+      if (generation === request.current) {
+        retry.current = () => void loadCommit(oid, selectedPath)
+        setError(String(reason))
+      }
+    }
     finally { if (generation === request.current) setBusy(false) }
   }
   return <div className="workspace-git">
-    {error && <p role="alert">{error}<button type="button" disabled={busy} onClick={() => { if (commit) void loadCommit(commit, path); else void loadHistory() }}>{t('files.retry')}</button></p>}
+    {error && <p role="alert">{error}<button type="button" disabled={busy} onClick={() => retry.current()}>{t('files.retry')}</button></p>}
     {busy && <p role="status">{t('files.reading')}</p>}
     <div ref={workingRef} hidden={Boolean(commit)} className="workspace-git__working">
       <div className="workspace-git__current">

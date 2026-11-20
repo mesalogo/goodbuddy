@@ -14,6 +14,24 @@ afterEach(async () => {
 })
 
 describe('WorkspaceFilesPanel', () => {
+  it('reports a failed fetch and retries the same Git operation', async () => {
+    const fetch = vi.fn().mockRejectedValueOnce(new Error('could not fetch origin')).mockResolvedValue({ kind: 'done' })
+    const manage = vi.fn(async (_project: string, action: WorkspaceManagementAction) =>
+      action.kind === 'fetch' ? fetch() : { kind: 'branches', current: 'main', branches: [] })
+    Object.assign(window.goodbuddy.workspace, { manage })
+    const notify = vi.fn()
+    render(<WorkspaceFilesPanel projectId="project" isRepository changedFiles={[]} notify={notify}
+      onListDirectory={async () => ({ path: '', entries: [], truncated: false })} onLoadDiff={vi.fn()} onOpenFile={vi.fn()} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Git 工作区' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch' }))
+    const retry = await screen.findByRole('button', { name: '重试' })
+    expect(notify).toHaveBeenCalledExactlyOnceWith({ tone: 'error', message: expect.stringContaining('could not fetch origin') })
+    fireEvent.click(retry)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Fetch' })).toBeEnabled())
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument()
+  })
+
   it('imports into the selected directory, reports partial failure, refreshes and prevents duplicate submission', async () => {
     let complete!: (result: { imported: string[]; failed: { name: string; error: string }[] }) => void
     const importFiles = vi.fn(() => new Promise<{ imported: string[]; failed: { name: string; error: string }[] }>(resolve => { complete = resolve }))

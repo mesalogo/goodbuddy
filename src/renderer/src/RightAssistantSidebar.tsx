@@ -45,6 +45,7 @@ import type {
   BrowserTabId
 } from '../../shared/contracts'
 import { WorkspaceFilesPanel } from './WorkspaceFilesPanel'
+import { useErrorNotification } from './use-error-notification'
 import { SegmentedControl } from './WorkspacePrimitives'
 import { NativeBrowserViewport } from './NativeBrowserViewport'
 import {
@@ -944,6 +945,7 @@ function RightAssistantSidebarView({
   })
   const actionErrorScope = actionErrorState.scope
   const actionError = actionErrorState.message
+  useErrorNotification(notify, actionError)
   if (actionErrorScope.instanceId !== activeWorkbarInstanceId || actionErrorScope.open !== open) {
     setActionErrorState({ scope: { instanceId: activeWorkbarInstanceId, open }, message: '' })
   }
@@ -986,6 +988,8 @@ function RightAssistantSidebarView({
     workspacePreview?.projectId === workspaceProjectId
       ? workspacePreview
       : undefined
+  useErrorNotification(notify, currentWorkspacePreview?.state === 'error' ? currentWorkspacePreview.error : undefined)
+  useErrorNotification(notify, workspacePreviewLoadMoreError)
   if (workspacePreview && workspacePreview.projectId !== workspaceProjectId) {
     setWorkspacePreview(undefined)
     setWorkspacePreviewRefreshing(false)
