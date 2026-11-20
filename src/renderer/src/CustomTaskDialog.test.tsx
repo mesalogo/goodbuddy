@@ -200,6 +200,8 @@ describe('CustomTaskDialog', () => {
       { id: 'elsewhere', projectId: 'another-project', title: '其他项目会话' }
     ]} />)
     expect(screen.queryByRole('option', { name: '其他项目会话' })).not.toBeInTheDocument()
+    const destination = screen.getByLabelText<HTMLSelectElement>('关联会话')
+    expect(Array.from(destination.options, (option) => option.value)).toEqual(['current', 'new', otherId])
     expect(screen.queryByRole('option', { name: '当前项目会话' })).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('关联会话'), { target: { value: otherId } })
     fireEvent.change(screen.getByLabelText('任务内容'), { target: { value: '检查项目' } })

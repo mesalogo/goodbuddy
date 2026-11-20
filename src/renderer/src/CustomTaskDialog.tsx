@@ -258,10 +258,10 @@ export function CustomTaskDialog({
               <option value="current" disabled={!currentConversationAvailable || !currentConversationId}>
                 {t('customTask.destination.current')}
               </option>
+              <option value="new">{t('customTask.destination.new')}</option>
               {otherConversations.map((conversation) => (
                 <option key={conversation.id} value={conversation.id}>{conversation.title}</option>
               ))}
-              <option value="new">{t('customTask.destination.new')}</option>
             </select>
             <small id="custom-task-destination-help">
               {destination === 'new'
