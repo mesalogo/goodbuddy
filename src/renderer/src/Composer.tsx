@@ -2,6 +2,7 @@ import {
   Bot,
   ChevronDown,
   FileText,
+  Folder,
   Library,
   LoaderCircle,
   Mic,
@@ -50,6 +51,8 @@ import {
 } from "../../shared/runtime-selection-contracts";
 import type { TerminalSnapshot } from "../../shared/terminal-contracts";
 import { AttachmentActions, AttachmentStatus } from "./AttachmentActions";
+import { directoryStorageKey, readDirectories, mergeDirectories } from './conversation-directories';
+import { AttachmentPicker } from './AttachmentPicker';
 import { AttachmentCapabilityNotice } from "./AttachmentCapabilityNotice";
 import { AttachmentResultButton } from "./AttachmentResultButton";
 import {
@@ -121,6 +124,7 @@ export type ComposerProps = {
   projectRecoveryBlocked: boolean;
   projectRuntimeSelection: RuntimeSelectionLayer | undefined;
   projectUsesManagedSsh: boolean;
+  directoryHostId?: string;
   queueItems: ConversationQueueItem[];
   runtime: AgentRuntimeStatus | undefined;
   runtimeActionOptions: readonly RuntimeActionChoice[];
@@ -212,6 +216,7 @@ export const Composer = memo(function Composer({
   projectRecoveryBlocked,
   projectRuntimeSelection,
   projectUsesManagedSsh,
+  directoryHostId,
   queueItems,
   runtime,
   runtimeActionOptions,
@@ -242,6 +247,16 @@ export const Composer = memo(function Composer({
   onResolveReferenceSource,
 }: ComposerProps): React.JSX.Element {
   const { t } = useTranslation("app");
+  const directoryKey = directoryStorageKey(activeProjectId, conversationId);
+  const [directoryUpdate, refreshDirectories] = useState<{ key: string; paths: string[] }>();
+  const directories = useMemo(() => directoryUpdate?.key === directoryKey ? directoryUpdate.paths : readDirectories(directoryKey), [directoryKey, directoryUpdate]);
+  const changeDirectories = (paths: string[], remove = false): void => {
+    const current = readDirectories(directoryKey);
+    const next = remove ? current.filter(path => !paths.includes(path)) : mergeDirectories(current, paths);
+    if (next.length) sessionStorage.setItem(directoryKey, JSON.stringify(next));
+    else sessionStorage.removeItem(directoryKey);
+    refreshDirectories({ key: directoryKey, paths: next });
+  };
   const [fallbackReferenceStore] = useState(createExternalReferenceStore);
   const references = useExternalReferences(referenceStore ?? fallbackReferenceStore, conversationId);
   const referencesEnabled = referenceStore !== undefined && (knowledgeLibraries.some(library => library.kind !== 'external') || Object.keys(referenceSources).length > 0);
@@ -754,6 +769,13 @@ export const Composer = memo(function Composer({
           </div>
         )}
         <div className="composer__input">
+          {directories.length > 0 && <div className="composer-directories">
+            {directories.map(path => <span key={path} className="composer-directory-chip" title={path}>
+              <Folder size={14} aria-hidden="true" />
+              <span className="composer-directory-chip__name">{path.split(/[\\/]/).filter(Boolean).at(-1) || path}</span>
+              <button type="button" className="icon-button" aria-label={t('composer.removeDirectory', { path })} onClick={() => changeDirectories([path], true)}><X size={14} /></button>
+            </span>)}
+          </div>}
           <div className="composer__input-header">
             <ComposerMenuSelect
               ariaLabel={t("composer.expertLabel")}
@@ -944,13 +966,13 @@ export const Composer = memo(function Composer({
                 }
                 aria-invalid={contextError ? true : undefined}
                 disabled={selectingContextFiles || attachmentOperations > 0}
-                ref={attachmentButtonRef}
-                onClick={() => actions.selectContextFiles()}
+                popoverTarget="composer-attachment-picker"
                 title={t("composer.addAttachment")}
                 type="button"
               >
                 <Paperclip aria-hidden="true" size={18} />
               </button>
+              <AttachmentPicker key={directoryKey} fileButtonRef={attachmentButtonRef} hostId={directoryHostId} onFiles={() => actions.selectContextFiles()} onDirectories={changeDirectories} onError={actions.setContextError} />
               <button
                 aria-label={
                   voiceRecording

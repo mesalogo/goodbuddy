@@ -7592,6 +7592,12 @@ export function registerIpcHandlers(
     localToolEnvironmentService
   })
 
+  registerHandler(ipcChannels.contextSelectDirectories, async (event) => {
+    assertTrustedSender(event, window)
+    const result = await dialog.showOpenDialog(window, { properties: ['openDirectory', 'multiSelections'] })
+    return result.canceled ? [] : result.filePaths
+  })
+
   registerHandler(ipcChannels.contextSelectFiles, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const conversationId = assistantIdSchema.optional().parse(input)

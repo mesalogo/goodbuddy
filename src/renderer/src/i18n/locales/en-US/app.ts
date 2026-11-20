@@ -631,6 +631,7 @@ export const app = {
     newConversationHint: '{{shortcut}} for a new conversation',
     addContent: 'Add content',
     addAttachment: 'Add attachment',
+    addFile: 'Add files', addDirectory: 'Add working directory', removeDirectory: 'Remove working directory {{path}}', directoryUnavailable: 'Remote directory browser unavailable',
     attachmentProgress: {
       selecting: 'Adding attachments…',
       reading: 'Reading {{name}}',

@@ -614,6 +614,7 @@ export const app = {
     newConversationHint: '{{shortcut}} 新建对话',
     addContent: '添加内容',
     addAttachment: '添加附件',
+    addFile: '添加文件', addDirectory: '添加工作目录', removeDirectory: '移除工作目录 {{path}}', directoryUnavailable: '无法浏览远程目录',
     attachmentProgress: {
       selecting: '正在添加附件…',
       reading: '正在读取 {{name}}',

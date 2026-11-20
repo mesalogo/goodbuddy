@@ -1,3 +1,4 @@
+import { directoryStorageKey, readDirectories } from './conversation-directories';
 import { resolveWorkspaceLink } from './workspace-link';
 import { MagicNotesPanel } from './MagicNotesPanel';
 import { WecomWorkbarPanel } from './WecomWorkbarPanel';
@@ -5262,6 +5263,7 @@ function App(): React.JSX.Element {
         ...(selectedExpertSnapshot === "team" ? { teamMode: true } : {}),
         ...(smartRoutingSnapshot ? { smartRouting: true } : {}),
         includeMemoryContext: !command,
+        workingDirectories: readDirectories(directoryStorageKey(projectIdSnapshot ?? '', conversationId)),
         prompt,
         attachments: attachmentSnapshot,
         imageContextArtifactIds: imageReferences.map(artifact => artifact.id),
@@ -5331,9 +5333,10 @@ function App(): React.JSX.Element {
     const memoryContext = queuedInput.includeMemoryContext
       ? buildMemoryContext(assistantMemories)
       : "";
-    const executionPrompt = memoryContext
-      ? `${prompt}\n\n${memoryContext}`
-      : prompt;
+    const directoryContext = queuedInput.workingDirectories?.length
+      ? `Additional working directories selected for this conversation (absolute paths): ${JSON.stringify(queuedInput.workingDirectories)}. Use these paths as needed. For tools restricted to the project workspace, use the execution host's process tool with absolute paths.`
+      : '';
+    const executionPrompt = [prompt, memoryContext, directoryContext].filter(Boolean).join('\n\n');
     const selectedExpert = selectedExpertSnapshot && selectedExpertSnapshot !== "team"
       ? assistantExperts.find((expert) => expert.id === selectedExpertSnapshot)
       : undefined;
@@ -7444,6 +7447,7 @@ function App(): React.JSX.Element {
                           projectRecoveryBlocked={activeProjectRecoveryBlocked}
                           projectRuntimeSelection={activeProject?.runtimeSelection}
                           projectUsesManagedSsh={activeProjectUsesManagedSsh}
+                          directoryHostId={activeProject?.executionSpace?.kind === 'ssh' ? activeProject.executionSpace.hostId : undefined}
                           queueItems={activeConversationQueueItems}
                           runtime={runtime}
                           runtimeActionOptions={runtimeActionOptions}
