@@ -1542,7 +1542,7 @@ describe('RuntimeSettingsStore', () => {
 
     const migratedStore = new RuntimeSettingsStore(filePath, cipher, {})
     await expect(migratedStore.getPublicSettings()).resolves.toMatchObject({
-      provider: 'model',
+      provider: 'opencode',
       warnings: [{ code: 'runtime-settings-recovered' }]
     })
     expect(
@@ -3059,7 +3059,7 @@ describe('RuntimeSettingsStore', () => {
     await writeFile(filePath, '{not-valid-json', 'utf8')
 
     await expect(store.getPublicSettings()).resolves.toMatchObject({
-      provider: 'model',
+      provider: 'opencode',
       warnings: [{ code: 'runtime-settings-recovered' }]
     })
     const files = await readdir(join(filePath, '..'))

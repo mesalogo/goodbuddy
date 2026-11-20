@@ -520,7 +520,7 @@ export const defaultContextCompressionSettings = {
 } as const satisfies ContextCompressionSettings
 
 export const defaultRuntimeSettings = {
-  provider: 'model',
+  provider: 'opencode',
   modelBaseUrl: 'http://127.0.0.1:11434/v1',
   modelName: 'qwen3',
   modelProtocol: 'openai-chat-completions',
