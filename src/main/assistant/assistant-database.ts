@@ -889,6 +889,7 @@ function toMemory(row: MemoryRow): AssistantMemory {
 
 function toSchedule(row: ScheduleWithTaskRow): AssistantSchedule {
   const template = JSON.parse(row.task_template_json) as {
+    maxRunMinutes?: number
     title: string
     prompt: string
     runtimeSelection?: unknown
@@ -906,6 +907,7 @@ function toSchedule(row: ScheduleWithTaskRow): AssistantSchedule {
     conversationId: row.conversation_id,
     title: template.title,
     prompt: template.prompt,
+    maxRunMinutes: template.maxRunMinutes,
     runtimeSelection: runtimeSelection.success
       ? runtimeSelection.data
       : undefined,
@@ -7619,7 +7621,8 @@ export class AssistantDatabase {
           projectId,
           JSON.stringify({
             title: parsed.title,
-            prompt: parsed.prompt
+            prompt: parsed.prompt,
+            maxRunMinutes: parsed.maxRunMinutes ?? (parsed.runImmediately ? 0 : 120)
           }),
           JSON.stringify({ type: parsed.recurrence }),
           parsed.runImmediately ? now : parsed.nextRunAt,

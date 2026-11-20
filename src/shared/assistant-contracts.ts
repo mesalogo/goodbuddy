@@ -1093,6 +1093,7 @@ export const scheduleCreateSchema = z
     title: z.string().trim().min(1).max(120),
     prompt: z.string().trim().min(1).max(100_000),
     recurrence: z.enum(['once', 'daily', 'weekly']),
+    maxRunMinutes: z.number().int().min(0).max(9999).optional(),
     nextRunAt: z.string().datetime({ offset: true }),
     runImmediately: z.boolean().optional()
   })

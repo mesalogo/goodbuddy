@@ -232,6 +232,9 @@ export const app = {
     }
   },
   customTask: {
+    duration: '最长运行时间（分钟）',
+    durationHelp: '每次执行单独计时，填 0 表示不限时。',
+    durationError: '请输入 0 到 9999 之间的整数。',
     eyebrow: '定制任务',
     title: '新建定制任务',
     description: '立即或按计划向会话发送任务内容，回复保留在关联会话中。',

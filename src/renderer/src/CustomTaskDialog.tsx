@@ -66,13 +66,14 @@ export function CustomTaskDialog({
       : 'new'
   )
   const [timing, setTiming] = useState<'now' | 'scheduled'>('now')
+  const [maxRunMinutes, setMaxRunMinutes] = useState('120')
   const [recurrence, setRecurrence] =
     useState<ScheduleCreateInput['recurrence']>('once')
   const [nextRunAt, setNextRunAt] = useState(() =>
     toLocalDateTimeValue(new Date(Date.now() + 60 * 60 * 1_000))
   )
   const [errors, setErrors] = useState<
-    Partial<Record<'prompt' | 'destination' | 'nextRunAt' | 'form', string>>
+    Partial<Record<'prompt' | 'destination' | 'nextRunAt' | 'maxRunMinutes' | 'form', string>>
   >({})
   const [submitting, setSubmitting] = useState(false)
 
@@ -108,6 +109,10 @@ export function CustomTaskDialog({
     if (Number.isNaN(runAt.getTime())) {
       nextErrors.nextRunAt = t('customTask.errors.time')
     }
+    const minutes = Number(maxRunMinutes)
+    if (timing === 'scheduled' && (!maxRunMinutes || !Number.isInteger(minutes) || minutes < 0 || minutes > 9999)) {
+      nextErrors.maxRunMinutes = t('customTask.durationError')
+    }
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) {
       return
@@ -125,6 +130,7 @@ export function CustomTaskDialog({
           title: title.trim() || generatedTitle,
           prompt: prompt.trim(),
           recurrence: timing === 'now' ? 'once' : recurrence,
+          ...(timing === 'scheduled' ? { maxRunMinutes: minutes } : {}),
           nextRunAt: runAt.toISOString()
         },
         { runImmediately: timing === 'now' }
@@ -332,6 +338,18 @@ export function CustomTaskDialog({
                   </small>
                 )}
               </label>
+              <div className="custom-task-dialog__field">
+                <label htmlFor="custom-task-duration">{t('customTask.duration')}</label>
+                <input id="custom-task-duration" type="number" min={0} max={9999} step={1}
+                  aria-invalid={Boolean(errors.maxRunMinutes)} aria-describedby="custom-task-duration-help"
+                  value={maxRunMinutes} onChange={(event) => {
+                    setMaxRunMinutes(event.target.value)
+                    setErrors((current) => ({ ...current, maxRunMinutes: undefined }))
+                  }} />
+                <small id="custom-task-duration-help" role={errors.maxRunMinutes ? 'alert' : undefined}>
+                  {errors.maxRunMinutes ?? t('customTask.durationHelp')}
+                </small>
+              </div>
             </>
           )}
 

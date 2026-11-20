@@ -1,3 +1,4 @@
+import { startScheduleRunLimit } from './assistant/schedule-run-limit'
 import { registerKnowledgeIpcHandlers } from './knowledge/knowledge-ipc'
 import type { DesktopUpdateService } from './desktop-update-service'
 import { runCleanupBeforeDeadline } from './shutdown'
@@ -2098,7 +2099,7 @@ export function registerIpcHandlers(
   const readyConversationQueues = new Set<string>()
   const conversationQueueErrors = new Map<string, string>()
   const preferredConversationQueueItems = new Map<string, string>()
-  const reservedConversationQueueItems = new Map<string, string>()
+  const reservedConversationQueueItems = new Map<string, { id: string; maxRunMinutes?: number }>()
   const preparingRequestConversations = new Map<string, string>()
   const rendererReadyConversationQueues = new Set<string>()
   const queueDispatchTimers = new Map<string, NodeJS.Timeout>()
@@ -2219,13 +2220,13 @@ export function registerIpcHandlers(
         if (window.isDestroyed() || shuttingDown || executionPaused) return
         reservedConversationQueueItems.set(
           conversationId,
-          claimed.item.id
+          { id: claimed.item.id, maxRunMinutes: claimed.source === 'schedule' ? claimed.schedule.maxRunMinutes : undefined }
         )
         const dispatchTimeout = setTimeout(() => {
           void trackExecution((async () => {
             queueDispatchTimers.delete(claimed.item.id)
             if (
-              reservedConversationQueueItems.get(conversationId) !==
+              reservedConversationQueueItems.get(conversationId)?.id !==
               claimed.item.id
             ) {
               return
@@ -2262,7 +2263,7 @@ export function registerIpcHandlers(
           const timeout = queueDispatchTimers.get(claimedItemId)
           if (timeout) clearTimeout(timeout)
           queueDispatchTimers.delete(claimedItemId)
-          if (reservedConversationQueueItems.get(conversationId) === claimedItemId) reservedConversationQueueItems.delete(conversationId)
+          if (reservedConversationQueueItems.get(conversationId)?.id === claimedItemId) reservedConversationQueueItems.delete(conversationId)
           await assistantDatabase.releaseConversationUserQueueItem(claimedItemId)
           publishConversationQueueChange(conversationId)
         }
@@ -3656,8 +3657,8 @@ export function registerIpcHandlers(
     ) {
       throw new Error('请求正在执行')
     }
-    const reservationItemId =
-      reservedConversationQueueItems.get(parsedInput.conversationId)
+    const reservation = reservedConversationQueueItems.get(parsedInput.conversationId)
+    const reservationItemId = reservation?.id
     // A pump owns admission through claim and attachment restoration. Only its
     // dispatched item may take over the reservation for request preparation.
     if (
@@ -3977,7 +3978,7 @@ export function registerIpcHandlers(
         queueDispatchTimers.delete(parsedInput.queueItemId)
       }
       if (
-        reservedConversationQueueItems.get(request.conversationId) ===
+        reservedConversationQueueItems.get(request.conversationId)?.id ===
         parsedInput.queueItemId
       ) {
         reservedConversationQueueItems.delete(request.conversationId)
@@ -4008,6 +4009,9 @@ export function registerIpcHandlers(
       markManagedSshSubmitted = resolve
     })
     const execution = (async () => {
+      const minutes = reservation?.maxRunMinutes ?? 0
+      const timeoutReason = new Error(`本次任务已达到最长运行时间（${minutes} 分钟）`)
+      const stopRunLimit = startScheduleRunLimit(minutes, () => controller.abort(timeoutReason))
       let completed = false
       let runtimeErrorEvent:
         | Extract<AgentEvent, { type: 'error' }>
@@ -4434,7 +4438,11 @@ export function registerIpcHandlers(
             )
           : ordinaryStream()
         for await (const agentEvent of splitTaggedReasoning(eventStream)) {
-          if (agentEvent.type === 'done' || agentEvent.type === 'error') activeRequestLease.settling = true
+          if (controller.signal.reason === timeoutReason) throw timeoutReason
+          if (agentEvent.type === 'done' || agentEvent.type === 'error') {
+            stopRunLimit()
+            activeRequestLease.settling = true
+          }
           const provenance = remoteSemanticProvenance(agentEvent)
           if (provenance === undefined) {
             // Keep renderer and storage order: earlier remote events commit
@@ -4598,7 +4606,7 @@ export function registerIpcHandlers(
         const cancelled =
           controller.signal.aborted ||
           error instanceof RemotePromptCancelledError
-        const errorMessage = cancelled
+        const errorMessage = controller.signal.reason === timeoutReason ? timeoutReason.message : cancelled
           ? '请求已取消'
           : safeRuntimeError(error, 'Agent Runtime 执行失败')
         const agentEvent: AgentEvent =
@@ -4664,6 +4672,7 @@ export function registerIpcHandlers(
           window.webContents.send(ipcChannels.agentEvent, agentEvent)
         }
       } finally {
+        stopRunLimit()
         await eventBuffer.close().catch(reportBackgroundError)
         activeEventBuffers.delete(request.requestId)
         for (const [questionId, pending] of pendingAgentQuestions) {
@@ -4712,7 +4721,7 @@ export function registerIpcHandlers(
         parsedInput.queueItemId &&
         reservedConversationQueueItems.get(
           parsedInput.conversationId
-        ) === parsedInput.queueItemId
+        )?.id === parsedInput.queueItemId
       ) {
         reservedConversationQueueItems.delete(
           parsedInput.conversationId
@@ -6797,7 +6806,7 @@ export function registerIpcHandlers(
       }
       if (item) {
         if (
-          reservedConversationQueueItems.get(item.conversationId) ===
+          reservedConversationQueueItems.get(item.conversationId)?.id ===
           itemId
         ) {
           reservedConversationQueueItems.delete(item.conversationId)
