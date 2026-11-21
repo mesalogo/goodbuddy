@@ -32,7 +32,8 @@ records are listed separately and do not introduce another feature status.
   releases and automatic updates; it is built only on explicit request. See the
   [preview boundaries](./docs/development/loongarch-preview-build.md).
 - [x] **Configurable global shortcut**: Enable, disable, or record an Electron
-  accelerator under Platform Features / General. The default remains
+  accelerator under Platform Features / General. The recorder previews the
+  keys as they are pressed and Save shortcut applies the combination. The default remains
   `CommandOrControl+Shift+Space`; if registration conflicts or saving fails,
   GoodBuddy keeps the previously registered shortcuts and shows an actionable
   status.
@@ -171,7 +172,8 @@ records are listed separately and do not introduce another feature status.
   explicit choice, including Classic. Page insets, narrow layouts, composer
   corners and branch-source links follow the shared page standard.
 - [x] **Application center and navigation**: Applications, Connectors, Skills
-  and MCP have separate tabs; Obsidian belongs to Connectors. Skills and MCP
+  and MCP have separate tabs. The Obsidian card under Connectors has an enable
+  switch and a settings button for vault scope, connection tests and Runtime assignments. Skills and MCP
   moved out of Settings and preserve drafts when switching visited tabs within
   the same dialog. Application order is fixed, not user-reorderable. Knowledge
   is always enabled but can be unpinned; other page apps have their supported
@@ -1054,7 +1056,9 @@ records are listed separately and do not introduce another feature status.
 - [x] **Remote messaging-channel projects**: WeChat ClawBot, WeCom (Preview),
   Feishu (Preview), DingTalk, and Telegram each have a system-managed project, independent remote
   conversations, working directory, processing backend, and
-  task/activity ownership. Each channel controls complete-response
+  task/activity ownership. Remote rows omit the repeated channel badge and
+  title prefix inside a channel project. Search is shown for multiple remote
+  conversations or an active search. Each channel controls complete-response
   length and segmentation according to platform capabilities rather than
   relying on a shared service truncation. Telegram's live Bot + model chain
   remains [pending acceptance](./docs/features/telegram-channel/progress.md).

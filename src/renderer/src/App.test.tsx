@@ -6574,7 +6574,7 @@ describe("App", () => {
           ...shortcutSnapshot,
           settings: input,
           displayAccelerator:
-            input.accelerator === "Control+Alt+K"
+            input.accelerator === "CommandOrControl+Alt+K"
               ? "Ctrl+Alt+K"
               : "Ctrl+Shift+Space",
           registered: input.enabled,
@@ -6595,15 +6595,14 @@ describe("App", () => {
       fireEvent.click(await screen.findByRole('button', { name: '设置' }));
       await screen.findByRole("heading", { name: "设置中心" });
       fireEvent.click(screen.getByRole("tab", { name: "平台功能" }));
-      const shortcutInput = await screen.findByLabelText("快捷键");
-      fireEvent.change(shortcutInput, {
-        target: { value: "Control+Alt+K" },
-      });
+      const shortcutInput = await screen.findByRole("textbox", { name: "快捷键" });
+      fireEvent.keyDown(shortcutInput, { key: "k", ctrlKey: true, altKey: true });
+      expect(shortcutInput).toHaveValue("Ctrl+Alt+K");
       fireEvent.click(screen.getByRole("button", { name: "保存快捷键" }));
       await waitFor(() =>
         expect(api.shortcuts?.updateSettings).toHaveBeenCalledWith({
           enabled: true,
-          accelerator: "Control+Alt+K",
+          accelerator: "CommandOrControl+Alt+K",
         }),
       );
       fireEvent.click(screen.getByRole("button", { name: "对话" }));
@@ -6622,7 +6621,7 @@ describe("App", () => {
       await waitFor(() =>
         expect(api.shortcuts?.updateSettings).toHaveBeenCalledWith({
           enabled: false,
-          accelerator: "Control+Alt+K",
+          accelerator: "CommandOrControl+Alt+K",
         }),
       );
       fireEvent.click(screen.getByRole("button", { name: "对话" }));

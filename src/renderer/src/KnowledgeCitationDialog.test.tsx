@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -40,7 +41,8 @@ describe('KnowledgeCitationDialog', () => {
   })
   it('shows matched and surrounding context and restores close behavior', async () => {
     const onClose = vi.fn()
-    const onOpenSource = vi.fn(async () => undefined)
+    let finishOpen!: () => void
+    const onOpenSource = vi.fn(() => new Promise<void>(resolve => { finishOpen = resolve }))
     render(
       <KnowledgeCitationDialog
         context={{
@@ -71,10 +73,14 @@ describe('KnowledgeCitationDialog', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: '打开来源' }))
-    await waitFor(() =>
-      expect(onOpenSource).toHaveBeenCalledWith(reference.documentId)
-    )
+    expect(onOpenSource).toHaveBeenCalledWith(reference.documentId)
+    const closeButton = screen.getAllByRole('button', { name: '关闭引用上下文' })[0]!
+    expect(closeButton).toBeDisabled()
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    expect(onClose).not.toHaveBeenCalled()
 
+    await act(async () => { finishOpen() })
+    expect(closeButton).toBeEnabled()
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     expect(onClose).toHaveBeenCalledOnce()
   })

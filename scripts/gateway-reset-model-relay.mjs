@@ -1,5 +1,6 @@
 // Run remote-recovery-host-probe --gateway-reset over pinned SSH. The one
 // paid request contains only the synthetic fixture marker, never Host history.
+/* global process, fetch, AbortSignal, console, URL */
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'

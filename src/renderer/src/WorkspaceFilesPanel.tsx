@@ -210,9 +210,12 @@ export function WorkspaceFilesPanel({
   const [importing, setImporting] = useState(false)
   const importingRef = useRef(false)
   const [sort, setSort] = useState<{ field: 'name' | 'modifiedAt'; descending: boolean }>({ field: 'name', descending: false })
-  const repositoryKnown = useRef<{ projectId?: string; available: boolean }>({ available: false })
-  useEffect(() => { if (!gitError && isRepository !== undefined) repositoryKnown.current = { projectId, available: isRepository } }, [gitError, isRepository, projectId])
-  const showGit = isRepository === true || (Boolean(gitError) && repositoryKnown.current.projectId === projectId && repositoryKnown.current.available)
+  const [knownRepository, setKnownRepository] = useState({ projectId, available: !gitError && isRepository === true })
+  if (!gitError && isRepository !== undefined &&
+      (knownRepository.projectId !== projectId || knownRepository.available !== isRepository)) {
+    setKnownRepository({ projectId, available: isRepository })
+  }
+  const showGit = isRepository === true || (Boolean(gitError) && knownRepository.projectId === projectId && knownRepository.available)
   const activeView = showGit ? view : 'files'
   const [selected, setSelected] = useState<{ projectId?: string; path: string }>()
   const panelRef = useRef<HTMLDivElement>(null)

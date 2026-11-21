@@ -1082,9 +1082,10 @@ describe('registerIpcHandlers computer capabilities', () => {
     ]
     const registrations = electronMocks.handle.mock.calls.map(([channel]) => channel)
     const start = registrations.indexOf(ipcChannels.capabilitiesSnapshot)
-    expect(registrations.slice(start - 1, start + capabilityChannels.length + 1)).toEqual([
+    expect(registrations.slice(start - 1, start + capabilityChannels.length + 2)).toEqual([
       ipcChannels.expertsRemove,
       ...capabilityChannels,
+      ipcChannels.contextSelectDirectories,
       ipcChannels.contextSelectFiles
     ])
 
