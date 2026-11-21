@@ -1,4 +1,4 @@
-import { ClockFading, FolderKanban, ShieldCheck, X } from 'lucide-react'
+import { FolderKanban, ShieldCheck, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -178,12 +178,8 @@ export function CustomTaskDialog({
       >
         <header className="custom-task-dialog__header">
           <div>
-            <span className="custom-task-dialog__eyebrow">
-              <ClockFading aria-hidden="true" size={14} />
-              {t('customTask.eyebrow')}
-            </span>
             <div className="inline-help-label">
-              <h2 id="custom-task-title">{t('customTask.title')}</h2>
+              <h2 className="custom-task-dialog__title" id="custom-task-title">{t('customTask.title')}</h2>
               <InlineHelp label={t('customTask.title')}>{t('customTask.description')}</InlineHelp>
             </div>
             <span className="sr-only" id="custom-task-description">

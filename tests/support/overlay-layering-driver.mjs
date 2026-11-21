@@ -57,6 +57,25 @@ app.whenReady().then(async () => {
     await js(`window.dispatchEvent(new CustomEvent('fixture-theme', { detail: '${theme}' }))`)
     for (const [width, height] of [[1280, 800], [960, 720], [720, 640], [640, 420]]) {
       win.setContentSize(width, height); await settle()
+      await click('#custom-task')
+      await wait('document.activeElement?.matches(".custom-task-dialog textarea")')
+      assert(await js(`(() => {
+        const title = document.querySelector('#custom-task-title')
+        const header = title.closest('header')
+        const help = header.querySelector('.inline-help')
+        const titleRect = title.getBoundingClientRect(), helpRect = help.getBoundingClientRect()
+        return !header.querySelector('.custom-task-dialog__eyebrow') &&
+          getComputedStyle(title).fontSize === getComputedStyle(document.documentElement).getPropertyValue('--font-section-title').trim() &&
+          titleRect.right <= helpRect.left && titleRect.top < helpRect.bottom &&
+          !document.querySelector('[role=tooltip]')
+      })()`), 'Task modal must have one compact title with adjacent help, initially closed')
+      await screenshot(`${theme}-${width}-custom-task`)
+      await click('.custom-task-dialog__header .inline-help')
+      await wait('!!document.querySelector("[role=tooltip]")')
+      await key('Escape')
+      assert(await js('!document.querySelector("[role=tooltip]") && !!document.querySelector("#custom-task-title")'))
+      await key('Escape')
+      await wait('!document.querySelector("#custom-task-title")')
       const workspaceBounds = () => js(`['.workspace-git__changes', '.workspace-git__history-dock'].map(selector => {
         const r = document.querySelector(selector).getBoundingClientRect(); return [r.x, r.y, r.width, r.height]
       })`)

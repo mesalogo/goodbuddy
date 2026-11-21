@@ -4,6 +4,7 @@ import { AppNotificationViewport } from '../../src/renderer/src/App'
 import { SettingsPanel } from '../../src/renderer/src/SettingsPanel'
 import { ApplicationCenter } from '../../src/renderer/src/ApplicationCenter'
 import LocalInferencePage from '../../src/renderer/src/LocalInferencePage'
+import { CustomTaskDialog } from '../../src/renderer/src/CustomTaskDialog'
 import { WorkspaceGitTools } from '../../src/renderer/src/WorkspaceGitTools'
 import { defaultRuntimeSettings } from '../../src/shared/contracts'
 import { UiLocaleProvider } from '../../src/renderer/src/i18n/UiLocaleProvider'
@@ -46,6 +47,7 @@ function Fixture(): React.JSX.Element {
     <div><button id="settings" onClick={() => setModal('settings')}>Settings</button>
       <button id="applications" onClick={() => setModal('applications')}>Applications</button>
       <button id="inference" onClick={() => setModal('inference')}>Inference</button>
+      <button id="custom-task" onClick={() => setModal('custom-task')}>Custom task</button>
       <button id="native" onClick={() => native.current!.showModal()}>Native dialog</button></div>
     <div id="branch-workspace" style={{ position: 'fixed', top: 80, left: 16, width: 'min(420px, calc(100vw - 32px))', height: 260, display: 'flex' }}>
       <WorkspaceGitTools projectId="fixture" onRefresh={async () => {}} viewControl={null}>
@@ -60,6 +62,9 @@ function Fixture(): React.JSX.Element {
     {modal === 'applications' && <ApplicationCenter pending={false} onClose={() => setModal('')}
       onOpen={() => {}} onUpdate={async () => true} onRetry={() => {}} />}
     {modal === 'inference' && <LocalInferencePage onClose={() => setModal('')} />}
+    {modal === 'custom-task' && <CustomTaskDialog currentConversationAvailable={false}
+      projectName="Project" workspaceLabel="Workspace" onClose={() => setModal('')}
+      onCreate={async () => { throw new Error('Unused fixture API') }} />}
     <dialog ref={native}><button onClick={() => native.current!.close()}>Close native</button></dialog>
   </div>
 }

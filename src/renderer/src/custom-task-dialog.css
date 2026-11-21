@@ -1,3 +1,7 @@
+.custom-task-dialog__header .custom-task-dialog__title {
+  font-size: var(--font-section-title);
+}
+
 .custom-task-dialog__form {
   min-width: 0;
   margin: 0;
