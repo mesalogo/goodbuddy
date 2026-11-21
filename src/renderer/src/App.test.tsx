@@ -10326,11 +10326,10 @@ describe("App", () => {
     await screen.findByRole("button", { name: "当前项目" });
     selectProjectOption(channelProject.name);
 
-    expect(
-      screen.getAllByRole("button", {
-        name: /微信 ClawBot · \*{4}0001/u,
-      }).length,
-    ).toBeGreaterThan(0);
+    // The project already names the channel, so the row shows only the sender.
+    const list = screen.getByRole("list");
+    expect(within(list).getByText("****0001")).toBeInTheDocument();
+    expect(within(list).queryByText(/微信 ClawBot/u)).not.toBeInTheDocument();
     expect(
       screen.getByText(
         "请在 微信 ClawBot 客户端继续发送消息。本窗口用于查看历史、任务与执行结果。",

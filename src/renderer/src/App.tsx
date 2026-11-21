@@ -154,6 +154,7 @@ import {
   useConversationCount,
   useConversationTitles,
   usePendingSidebarApprovals,
+  useRemoteConversationCount,
 } from "./conversation-selectors";
 import {
   ConversationBranchBadge,
@@ -2405,6 +2406,11 @@ function App(): React.JSX.Element {
     () => projects.find((project) => project.id === activeProjectId),
     [activeProjectId, projects],
   );
+  // A channel project usually holds one remote conversation, so searching it
+  // is pointless; hide the controls row until there is something to search.
+  const activeRemoteConversationCount = useRemoteConversationCount(conversationStore, activeProjectId);
+  const hideConversationControls =
+    activeProject?.kind === "channel" && activeRemoteConversationCount <= 1 && !searchOpen && !searchQuery;
   const openWorkspaceLink = useCallback((href: string): boolean => {
     if (!activeProjectId || !activeProject) return false;
     const path = resolveWorkspaceLink(href, activeProject.rootPath);
@@ -7100,6 +7106,7 @@ function App(): React.JSX.Element {
           remoteProjectsEnabled={remoteProjectsEnabled}
         />
 
+        {!hideConversationControls && (
         <div
           className={`sidebar-conversation-controls${searchOpen ? " sidebar-conversation-controls--searching" : ""}`}
           onKeyDown={(event) => {
@@ -7157,6 +7164,7 @@ function App(): React.JSX.Element {
             )}
           </div>
         </div>
+        )}
 
         {!workbenchLayout && primaryNavigation}
 

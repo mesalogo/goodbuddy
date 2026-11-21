@@ -21,6 +21,18 @@ export function useConversationCount(store: ConversationStore): number {
   return useConversationStoreSelector(store, selectCount);
 }
 
+/** Remote (message channel) conversations in a project; a number, so it only re-renders when it changes. */
+export function useRemoteConversationCount(store: ConversationStore, projectId: string): number {
+  const selector = useCallback(
+    (conversations: Conversation[]): number =>
+      conversations.filter(
+        (conversation) => conversation.projectId === projectId && conversation.remote !== undefined,
+      ).length,
+    [projectId],
+  );
+  return useConversationStoreSelector(store, selector);
+}
+
 // Streaming replaces the list on every flush. The selector compares the
 // titles in order and keeps the previous map while none changed, instead of
 // building a new map each time only to compare it entry by entry.

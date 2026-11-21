@@ -62,6 +62,17 @@ export function ConversationBranchBadge({
   );
 }
 
+/**
+ * Remote conversations are stored as "<channel> · <sender>". Inside a channel
+ * project the channel is already the project name, so show only the sender.
+ */
+function channelScopedTitle(title: string, conversation: Conversation, inChannelProject: boolean): string {
+  if (!inChannelProject || !conversation.remote) return title;
+  const prefix = `${projectChannelLabels[conversation.remote.channel]} · `;
+  if (!title.startsWith(prefix)) return title;
+  return title.slice(prefix.length).trim() || title;
+}
+
 export type ConversationListRowHandlers = {
   toggleTasks: (conversationId: string) => void;
   select: (conversationId: string) => void;
@@ -149,6 +160,8 @@ type ConversationListRowProps = {
   /** Windowed lists only: 1-based position, since not every row is in the DOM. */
   position?: number;
   setSize?: number;
+  /** Hidden inside a channel project, where the project already names the channel. */
+  showSourceBadge?: boolean;
 };
 
 // Rows skip re-rendering unless their own props change, so streaming into one
@@ -182,6 +195,7 @@ const ConversationListRow = memo(function ConversationListRow({
   rowRef,
   position,
   setSize,
+  showSourceBadge = true,
 }: ConversationListRowProps): React.JSX.Element {
   void listTimeDay;
   const { t } = useTranslation("app");
@@ -237,7 +251,7 @@ const ConversationListRow = memo(function ConversationListRow({
                 sourceTitle={branchSourceTitle}
               />
             )}
-            {conversation.remote && (
+            {conversation.remote && showSourceBadge && (
               <b className="conversation-source-badge">
                 {projectChannelLabels[conversation.remote.channel]}
               </b>
@@ -737,7 +751,11 @@ export const ConversationSidebar = memo(function ConversationSidebar({
                 confirmingDelete={confirmingConversationId === conversation.id}
                 conversation={conversation}
                 conversationTasks={conversationTasks}
-                conversationTitle={getConversationDisplayTitle(conversation, defaultTitle)}
+                conversationTitle={channelScopedTitle(
+                  getConversationDisplayTitle(conversation, defaultTitle),
+                  conversation,
+                  activeProjectKind === "channel",
+                )}
                 deleting={deletingConversationId === conversation.id}
                 handlers={handlers}
                 listTimeDay={listTimeDay}
@@ -753,6 +771,7 @@ export const ConversationSidebar = memo(function ConversationSidebar({
                 renaming={renamingConversationId === conversation.id}
                 rowRef={listWindow.windowed ? listWindow.rowRef(conversation.id) : undefined}
                 setSize={listWindow.windowed ? filteredConversations.length : undefined}
+                showSourceBadge={activeProjectKind !== "channel"}
                 schedules={tasksExpanded ? assistantSchedules : emptyAssistantSchedules}
                 selectedTaskId={tasksExpanded && conversationTasks.some((task) => task.id === selectedAssistantTaskId) ? selectedAssistantTaskId : undefined}
                 tasksExpanded={tasksExpanded}
