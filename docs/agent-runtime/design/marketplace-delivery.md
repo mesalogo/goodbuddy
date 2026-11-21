@@ -57,6 +57,10 @@ UI 留待实现设计确定，本次不新增通用插件框架或独立更新�
 [v2.1.4 源码](https://github.com/anomalyco/opencode/tree/v2.1.4)、
 [SDK 说明](https://github.com/anomalyco/opencode/blob/v2.1.4/packages/sdk/README.md)。
 
+Pi 是 Continue 的替代候选，交付方式尚未决定（[Pi PRD D-1](../providers/pi/prd.md#待决事项)）：
+精简运行资源约 14.6 MiB，与当前 Continue 资源接近，建议随主包携带；若改为市场交付，
+沿用本文流程。
+
 Droid 沿用[现有设计和验证记录](../providers/factory-droid/README.md)，已测组合为
 Droid `0.245.1` 与 SDK `0.10.0`。市场分发前核实官方资源来源及分发条件。
 

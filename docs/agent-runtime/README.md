@@ -31,6 +31,7 @@ docs/agent-runtime/
 | [直连模型](./providers/direct-model/README.md) | GoodBuddy 自有模型 Agent 的需求、能力与实现记录 |
 | [DeepSeek Harness](./providers/deepseek-harness/README.md) | 固定 Harness Host 与官方 Web 的接入设计和验证 |
 | [Factory Droid](./providers/factory-droid/README.md) | Droid 原生 SDK/daemon 接入设计、协议测试及未实现范围 |
+| [Pi](./providers/pi/README.md) | Pi SDK UtilityProcess 宿主方案、Continue 替代判定及上游探针证据 |
 | [远程 Checklist 验证](./validation/remote-checklist.md) | OpenCode/Continue 远程清单的专项验证记录 |
 | [子任务与进程实测](./validation/subagents-and-processes-2026-10-22.md) | 各 Runtime 子代理、命令取消、持续服务与控制接口的实测差异 |
 | [取消修复验证](./validation/cancellation-fixes-2026-10-23.md) | Continue/DSH 后代回收、OpenCode 子任务取消映射及本地/Host 回归证据 |

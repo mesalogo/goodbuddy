@@ -4,6 +4,11 @@
 “已实现”只表示存在生产调用路径，未在本次文档整理中重跑端到端验证。具体测试版本与
 范围以所属 progress/validation 文档为准。Droid 的独立脚本结果不记为产品实现。
 
+Pi 于 2026-11-16 完成 UtilityProcess 宿主探针（确定性 16 项、真实模型 7 项），尚未接入产品；
+各项不在下表逐列展开，计划声明与探针结果见 [Pi PRD](./providers/pi/prd.md#能力声明) 和
+[Pi 验证进度](./providers/pi/progress.md)。其中问答、Todo、子代理只是探针自建扩展的实验，
+不计为原生支持；产品不补这些工具，跨主回复后台任务与后台命令也声明为不支持。
+
 ## 聊天与执行
 
 | 能力 | 直连模型 | OpenCode | Continue | DeepSeek Harness | Droid |
@@ -92,6 +97,7 @@ Continue 的标准 Node 回退可能在点击时下载安装，尚未达到完�
 - DeepSeek：[实现进度](./providers/deepseek-harness/progress.md)。
 - 直连模型：[实现进度](./providers/direct-model/progress.md)。
 - Droid：[协议验证](./providers/factory-droid/progress.md)，尚不是产品接入验收。
+- Pi：[SDK 宿主探针](./providers/pi/progress.md)，尚不是产品接入验收。
 - 远程生命周期：[Host 技术设计](../features/remote-host/technical-design.md)。
 - 子任务/后台命令/服务：[跨 Runtime 实测](./validation/subagents-and-processes-2026-10-22.md)。
 - 取消与回收修复：[本地及 Host 验证](./validation/cancellation-fixes-2026-10-23.md)。
