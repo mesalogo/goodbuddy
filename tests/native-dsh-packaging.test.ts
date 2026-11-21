@@ -21,7 +21,19 @@ it('copies DS dependencies and nested assets through the actual builder matcher'
     'native/addon.node',
     'native/helper.exe',
     'native/helper.dll',
-    'assets/data.map'
+    'assets/data.map',
+    'openai/index.mjs',
+    'openai/LICENSE',
+    'openai/src/_vendor/parser/LICENSE',
+    '@anthropic-ai/sdk/src/internal/qs/LICENSE.md',
+    '@anthropic-ai/sdk/resources/messages.js',
+    '@mixmark-io/domino/lib/index.js',
+    '@mixmark-io/domino/LICENSE',
+    '@deepseek-ai/dsh/node_modules/openai/index.js',
+    '@deepseek-ai/dsh-skill-office/skills/office/SKILL.md',
+    '@deepseek-ai/libreoffice-kit-win32-x64/program/soffice.exe',
+    'unrelated/src/runtime.ts',
+    'unrelated/test/runtime.js'
   ]
   const excluded = [
     '@deepseek-ai/dsh/lib/bin.js.map',
@@ -31,7 +43,12 @@ it('copies DS dependencies and nested assets through the actual builder matcher'
     'example/index.d.ts.map',
     'example/index.mjs.map',
     'example/index.cjs.map',
-    'native/helper.pdb'
+    'native/helper.pdb',
+    'openai/src/index.ts',
+    '@anthropic-ai/sdk/src/index.ts',
+    '@mixmark-io/domino/test/fixture.html',
+    '@mixmark-io/domino/.yarn/releases/yarn.cjs',
+    '@deepseek-ai/dsh/node_modules/openai/src/index.ts'
   ]
   try {
     for (const file of [...files, ...excluded]) {

@@ -207,6 +207,21 @@ the installed dependency layout, plugin configuration, browser assets, licenses,
 native binaries, and non-code `.map` assets. This filter does not change the
 separately built remote Agent or Runtime payloads.
 
+Desktop packaging also excludes code/CSS source maps and TypeScript declarations
+from the main application and the offline OpenCode configuration. The compiled
+`openai`, `@anthropic-ai/sdk`, and `effect` packages retain their JavaScript exports
+but omit duplicate TypeScript source files under `src`; `@mixmark-io/domino` omits its test
+fixtures and bundled Yarn development tool. These exclusions also cover nested
+copies in DS Web; the OpenCode template omits Effect TypeScript sources. Licenses
+and other non-code resources inside these source directories are retained. These are explicit
+package/path rules, not a general deletion of `src`, `test`, Markdown, or `.map`
+files. SDK CommonJS and ESM entry points, licenses, npm help, DS Web plugins,
+LibreOffice, voice support, and inspector assets remain available offline.
+`verifyOpenCodeConfig` checks all files selected by the same builder resource
+filter and still rejects missing or changed runtime files. No extraction work is
+deferred to application startup. Remote Agent/Runtime archives use their own
+builders and are unaffected by these desktop-only copy filters.
+
 Windows x64 development validation on 2026-09-28 compared the existing 0.15.2
 portable directory (excluding `data`) with a fresh unpacked test build:
 `app.asar` decreased from 609.4 to 350.5 MiB, and DS Web decreased from 28,701
@@ -217,6 +232,79 @@ sizes. Builder-copy regression tests, production build/type checks, packaged
 Harness/OpenCode/npm smoke checks, DS Web authentication/page scripts/workspace
 creation, and packaged App/settings/notes-page loading passed. Full editor/canvas
 interaction and other platform packages were not revalidated in this check.
+
+DS Web staging also deduplicates identical nested libraries
+(`build/dedupe-node-modules.cjs`, called from `prepareNativeDshResources`). npm
+nests one copy of each shared library under every plugin. The step keeps one
+byte-identical copy in the root `node_modules`, so Node's normal lookup still finds
+it. A copy is removed only if its name, version and every file's path and bytes
+match; plugins (`dsh` metadata), packages with `bin`, symlinks and packages with
+their own `node_modules` are never touched; and a modelled Node resolution shows
+every package that declares the library still resolves identical bytes, including
+the library's own dependencies. The pass repeats until nothing more can be merged.
+On a 2026-11-21 Windows x64 staging run it reduced the staged DS Web directory from
+39,695 files / 571.9 MiB to 34,227 files / 534.9 MiB (5,468 files, 37.0 MiB) before
+the builder's file filters. A full resolution check across 3,147 declared
+dependencies found no package resolving different bytes. The packaged DS Web suite
+(`src/main/agent/native-dsh-web-client.test.ts`, 7 tests) passed against both the
+baseline and the deduplicated copy. These are staging numbers, not installer
+timings; full-installer and upgrade timing were not measured.
+
+The Windows installer keeps only the `zh-CN` and `en-US` Electron locale packs
+(`build.win.electronLanguages`), matching the portable build, which prunes the same
+pair. The setting is Windows-specific; macOS and Linux packages are unchanged. On
+2026-11-21 it reduced the unpacked Windows x64 directory from 1,423.2 to 1,376.1 MiB
+(`locales` from 55 files / 48.3 MiB to 2 files) and the NSIS installer from 363.1 to
+354.9 MiB; the installer shrinks less than the directory because `.pak` files
+compress well. The unpacked app launched, loaded the zh-CN interface with no console
+errors, and also started with Chromium `--lang=en-US` and `--lang=ja` (the latter
+falls back to zh-CN). The interface language is the application's own setting, not the
+Chromium locale, so it does not change with `--lang`. Native dialogs under a Windows
+display language outside these two were not checked.
+
+
+Windows x64 development validation on 2026-11-21 used the pre-change packaging
+configuration from a detached `bcbaef9a` worktree and the candidate configuration,
+with identical production output, installed dependencies, prepared Runtime
+resources, Electron 44.5.1, and language packs:
+
+| Unpacked content | Before | After |
+| --- | ---: | ---: |
+| Total | 1,624.31 MiB / 30,512 files | 1,445.94 MiB / 26,618 files |
+| `app.asar` | 377.00 MiB | 252.53 MiB |
+| DS Web | 452.34 MiB / 22,778 files | 439.66 MiB / 21,232 files |
+| OpenCode offline configuration | 52.59 MiB / 3,621 files | 17.19 MiB / 1,461 files |
+
+The candidate removes 178.37 MiB (10.98%) and 3,894 filesystem files (12.76%).
+All 26,616 retained files outside ASAR/the integrity-updated executable were
+byte-identical; retained ASAR entries had identical integrity hashes. Removed
+entries matched the explicit development-artifact filters. Vendor licenses
+inside SDK source directories were checked separately and retained.
+The three packaging/release test files passed 56 tests (one Unix symlink test
+skipped on Windows). The actual candidate passed all seven native DS Web tests,
+the packaged Harness utility/bridge probe, OpenCode offline plugin import, npm
+installation with a lifecycle script, PDF generation, OpenAI/Anthropic client
+construction, and Domino HTML parsing. These checks made no external model calls.
+The production bundle/package build, all three TypeScript checks, and ESLint
+passed. A full Vitest run recorded 7,083 passing tests and 100 skips, with one
+outdated exact-array packaging assertion and one suite setup error caused by
+invoking Vitest without npm's environment on Windows. The assertion now verifies
+the allowed inclusion paths separately from exclusions. Running the four affected
+files through `npm.cmd test -- ...` passed 63 tests, with one Unix-only skip.
+
+On Windows 10.0.26300, Intel Core Ultra X7 358H, approximately 32 GiB RAM,
+the same builder's NSIS archive helpers (`createAppPackageArchiveOptions` and
+`configureDifferentialAwareArchiveOptions`, maximum compression) produced payloads
+of 394.38 MiB before and 368.65 MiB after (6.53% smaller). After the test/type/lint
+jobs finished, builder's 7za extracted each payload into a fresh directory three
+times, interleaved before/after/after/before/before/after. Extraction times were
+24.76/28.50/27.47 seconds before and 21.91/21.96/24.45 seconds after: median
+27.47 to 21.96 seconds (20.05% lower). Each extraction directory was removed
+outside the timed interval. These are repeated local payload extraction/write
+measurements, not cold-cache or complete NSIS installation/upgrade measurements;
+registry/shortcut work, old-version removal, and the NSIS plugin are not timed.
+Other platforms were not rebuilt. Task-local packages, archives, and fixtures
+were removed after validation.
 
 以上 `dist*` 与 `portable` 命令用于普通本地桌面打包。它们会携带
 `agent-runtime-lock.json`、`remote-runtime-lock.json` 与公开的

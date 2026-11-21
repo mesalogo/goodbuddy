@@ -2,6 +2,7 @@ const { cp, mkdir, readFile, rm } = require('node:fs/promises');
 const { existsSync } = require('node:fs');
 const { dirname, join, relative } = require('node:path');
 const tar = require('tar');
+const { dedupeNodeModules } = require('./dedupe-node-modules.cjs');
 
 // Preserve npm's installed layout (including nested versions) and every package
 // asset. The official loader discovers plugins and browser assets at runtime.
@@ -59,6 +60,10 @@ async function prepareNativeDshResources(projectDir, platform, architecture, dow
     await mkdir(koffiDestination, { recursive: true });
     await tar.x({ file: archive, cwd: koffiDestination, strip: 1 });
   }
+  // npm nests one copy of each shared library under every plugin. Keep a single
+  // byte-identical copy where Node's lookup still resolves it for every consumer.
+  const deduplicated = await dedupeNodeModules(target);
+  console.log(`DS Web dedupe: ${deduplicated.removedPackages} copies, ${deduplicated.removedFiles} files, ${(deduplicated.removedBytes / 1048576).toFixed(1)} MiB removed`);
   return target;
 }
 

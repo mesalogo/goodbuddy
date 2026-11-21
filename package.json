@@ -97,7 +97,11 @@
       "out/preload/**/*",
       "out/renderer/**/*",
       "package.json",
-      "!node_modules/npm{,/**/*}"
+      "!node_modules/npm{,/**/*}",
+      "!**/*.{js,mjs,cjs,ts,mts,cts,css}.map",
+      "!**/*.d.{ts,mts,cts}",
+      "!**/node_modules/{openai,@anthropic-ai/sdk,effect}/src/**/*.{ts,tsx,mts,cts}",
+      "!**/node_modules/@mixmark-io/domino/{test,.yarn}{,/**/*}"
     ],
     "extraResources": [
       {
@@ -119,7 +123,9 @@
           "**/*",
           "!**/*.{js,mjs,cjs,ts,mts,cts}.map",
           "!**/*.d.{ts,mts,cts}",
-          "!**/*.pdb"
+          "!**/*.pdb",
+          "!{,**/node_modules/}{openai,@anthropic-ai/sdk,effect}/src/**/*.{ts,tsx,mts,cts}",
+          "!{,**/node_modules/}@mixmark-io/domino/{test,.yarn}{,/**/*}"
         ]
       },
       {
@@ -197,7 +203,10 @@
         "from": ".runtime-resources",
         "to": "runtimes",
         "filter": [
-          "opencode-config{,/**/*}"
+          "opencode-config{,/**/*}",
+          "!**/*.{js,mjs,cjs,ts,mts,cts,css}.map",
+          "!**/*.d.{ts,mts,cts}",
+          "!**/node_modules/effect/src/**/*.{ts,tsx,mts,cts}"
         ]
       },
       {
@@ -320,6 +329,10 @@
     ],
     "win": {
       "icon": "build/icon-taskbar.ico",
+      "electronLanguages": [
+        "zh-CN",
+        "en-US"
+      ],
       "target": [
         "nsis"
       ]

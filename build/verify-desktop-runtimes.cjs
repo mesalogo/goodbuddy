@@ -1,9 +1,15 @@
 const { readdirSync, readFileSync, statSync } = require('node:fs')
-const { join, relative } = require('node:path')
+const { dirname, join, relative } = require('node:path')
+const { FileMatcher } = require('app-builder-lib/out/fileMatcher')
 const { opencodeVersion } = require('./opencode-config.cjs')
 
 function verifyOpenCodeConfig(resources, source) {
   const destination = join(resources, 'runtimes', 'opencode-config')
+  // Verify every shipped file, allowing only the build's explicit exclusions.
+  const resource = require('../package.json').build.extraResources.find(
+    entry => entry.filter?.includes('opencode-config{,/**/*}')
+  )
+  const included = new FileMatcher(dirname(source), resources, value => value, resource.filter).createFilter()
   const manifestPath = join(destination, 'node_modules', '@opencode-ai', 'plugin', 'package.json')
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
   if (manifest.name !== '@opencode-ai/plugin' || manifest.version !== opencodeVersion) {
@@ -15,6 +21,7 @@ function verifyOpenCodeConfig(resources, source) {
     const directory = pending.pop()
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const file = join(directory, entry.name)
+      if (!included(file, statSync(file))) continue
       if (entry.isDirectory()) {
         pending.push(file)
       } else if (entry.isFile()) {

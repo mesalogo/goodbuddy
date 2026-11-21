@@ -521,6 +521,16 @@ describe('release build arguments', () => {
     })
   })
 
+  it('keeps only the application languages in the Windows installer Electron locales', () => {
+    const packageJson = require('../package.json') as {
+      build: { win: { electronLanguages: string[] }; electronLanguages?: string[] }
+    }
+    // The interface ships zh-CN and en-US only; the portable build prunes the same pair.
+    expect(packageJson.build.win.electronLanguages).toEqual(['zh-CN', 'en-US'])
+    // Platform-specific so macOS and Linux packages keep their own locale handling.
+    expect(packageJson.build.electronLanguages).toBeUndefined()
+  })
+
   it('identifies the native packages required by each release target', () => {
     expect(
       releaseBuilder.targetRuntimePackageNames({
@@ -809,13 +819,13 @@ describe('release build arguments', () => {
       (entry) => entry.from
     )
 
-    expect(packageJson.build.files).toEqual([
+    expect(packageJson.build.files.filter((pattern) => !pattern.startsWith('!'))).toEqual([
       'out/main/**/*',
       'out/preload/**/*',
       'out/renderer/**/*',
-      'package.json',
-      '!node_modules/npm{,/**/*}'
+      'package.json'
     ])
+    expect(packageJson.build.files).toContain('!node_modules/npm{,/**/*}')
     expect(resourceSources).toContain('resources/skills')
     expect(packageJson.build.extraResources).toContainEqual({
       from: 'resources/tool-environment/managed-python-artifacts.json',
