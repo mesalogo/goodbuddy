@@ -1145,6 +1145,11 @@ records are listed separately and do not introduce another feature status.
   Six standard Desktop targets, no LoongArch; the three Agent packages have
   their own tag and require Desktop `0.18.3`. Exact-source CI, tagged builds and
   public verification remain pending. See [release preparation](./docs/development/release-preparation-0.18.3.md).
+  The Windows installer trims duplicated runtime libraries and development
+  files and ships the Simplified Chinese and US English Electron locales.
+  Segmented controls follow the system motion preference, and the custom task
+  dialog puts help beside a single compact title. The [Pi evaluation](./docs/agent-runtime/providers/pi/README.md)
+  records SDK probe results and proposed integration work.
 - Desktop `0.18.2` carries forward the unpublished `0.18.0` scope. It defaults to
   the workbench, reorganizes Application Center and
   exposes older task history. It removes several fixed configuration/list

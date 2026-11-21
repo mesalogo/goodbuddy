@@ -15,11 +15,13 @@
           "fixes": [
             "**统一 Office 服务地址**：在“设备共享”中保存 ShareServer 地址，不必再到“设置 → 平台功能”重复配置。新打开的 Office 文档使用当前保存的地址；已打开的页签继续使用原服务。",
             "**改善工作区错误提示与 Git 重试**：读取目录、预览文件或查看差异失败时，工作区使用应用通知，减少同一错误的重复提示。Git Fetch 失败后可再次点击 Fetch，重试本次获取，而不是重新加载提交历史。",
-            "**更容易找到“新建对话”**：创建自定义任务时，“新建对话”现在列在“当前对话”之后、历史对话之前。只是调整顺序，不改变默认目标。",
+            "**更容易找到“新建对话”**：创建自定义任务时，“新建对话”现在列在“当前对话”之后、历史对话之前。只是调整顺序，不改变默认目标。弹窗顶部采用紧凑的单行标题，旁边的问号可打开帮助。",
             "**远端模型请求可从部分连接重置中恢复**：配套 Agent 0.15.16 在收到响应头之前遇到 `ECONNRESET` 时，最多自动重试两次；收到响应头后若响应中断，不会重发。服务商可能已处理第一次请求，因此重试仍可能造成重复处理或计费。",
             "在“平台功能 → 通用设置”中录制**全局快捷键**时，输入框会实时显示按下的组合键。按 Esc 可退出录制，点击“保存快捷键”可启用新组合。快捷唤起、桌面通知和会话 HTML 渲染的说明可从标签旁的问号查看。",
             "在“应用中心 → 连接器”中，可直接从 **Obsidian 卡片**启用或停用连接器。点击设置可管理仓库范围、测试连接和分配 Runtime，返回列表即可查看已保存的启用状态。",
-            "在**消息通道项目**的侧栏中，远端会话行省去重复的通道标记和标题前缀，更容易找到发送者。远端会话最多一个时收起空闲的搜索栏，多个远端会话或正在搜索时会显示搜索栏。"
+            "在**消息通道项目**的侧栏中，远端会话行省去重复的通道标记和标题前缀，更容易找到发送者。远端会话最多一个时收起空闲的搜索栏，多个远端会话或正在搜索时会显示搜索栏。",
+            "在文件与 Git 工作区等分段控件中切换视图时，**选中标记**会平滑移到新选项，并随标签宽度调整。开启系统的“减少动态效果”后，选中标记立即切换。",
+            "**Windows 安装包**通过精简重复的运行库和开发文件来减少下载体积。随包的 Electron 语言资源采用简体中文和美式英语，与 Windows 便携版一致。"
           ],
           "notices": [
             "新安装或需要恢复默认 Runtime 设置时，默认使用 OpenCode。已明确保存的执行方式不变，仍可选择直连模型；此变更不会自动配置模型凭据。相较 0.18.2，数据库仍为 schema 66。"
@@ -35,11 +37,13 @@
           "fixes": [
             "**Use one Office service address**: Save the ShareServer URL in Device Sharing instead of configuring it again under Settings → Platform Features. Newly opened Office documents use the saved address; open tabs stay on their original service.",
             "**Make workspace errors and Git retries clearer**: Directory, file preview, and diff failures use application notifications to reduce duplicate messages. If Git Fetch fails, click Fetch again to retry the operation rather than reloading commit history.",
-            "**Make “New conversation” easier to find**: When creating a custom task, “New conversation” appears immediately after the current conversation and before conversation history. The default destination has not changed.",
+            "**Make “New conversation” easier to find**: When creating a custom task, “New conversation” appears immediately after the current conversation and before conversation history. The default destination has not changed. The dialog has a single compact heading with a help button beside it.",
             "**Recover from some remote model connection resets**: With Agent 0.15.16, a request can retry up to twice if `ECONNRESET` occurs before response headers arrive; an interrupted response is not resent once headers have arrived. The provider may already have processed the first request, so retries can result in duplicate processing or charges.",
             "The **global shortcut recorder** under Platform Features → General shows the keys as you press them. Press Esc to leave recording or click Save shortcut to activate the new combination. Help for the global shortcut, desktop notifications, and conversation HTML rendering is available beside each label.",
             "Turn the Obsidian connector on or off from its **Obsidian card** in Application Center → Connectors. Open its settings to manage vault scope, test the connection, or assign Runtimes, then return to the list to see the saved state.",
-            "In **messaging-channel projects**, remote conversation rows omit the repeated channel badge and title prefix so senders are easier to find. The sidebar hides the idle search bar when there is at most one remote conversation and shows it for multiple remote conversations or an active search."
+            "In **messaging-channel projects**, remote conversation rows omit the repeated channel badge and title prefix so senders are easier to find. The sidebar hides the idle search bar when there is at most one remote conversation and shows it for multiple remote conversations or an active search.",
+            "When switching views in segmented controls such as Files and Git Workspace, the **selection indicator** slides to the new option and fits the width of its label. The selection changes immediately when the system’s reduced-motion setting is enabled.",
+            "The **Windows installer** trims duplicate runtime libraries and development files to reduce download size. It includes the Simplified Chinese and US English Electron language packs, matching the Windows portable edition."
           ],
           "notices": [
             "New installations and restored default Runtime settings use OpenCode. Explicitly saved Runtime choices remain unchanged, direct-model execution is still available, and this change does not configure model credentials. The database remains at schema 66, unchanged from 0.18.2."

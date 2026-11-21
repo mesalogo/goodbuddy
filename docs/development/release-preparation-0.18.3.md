@@ -4,8 +4,8 @@ The baseline is published [Desktop 0.18.2](https://github.com/mesalogo/goodbuddy
 (`11ef164062b6f53a0bfec230666592d7ce562629`) and [Agent 0.15.15](https://github.com/mesalogo/goodbuddy/releases/tag/agent-v0.15.15).
 The eight product commits through `172a93bef873210793db8e09ed599773e75fefa2`
 were integrated on top of the released tree in a separate checkout. The
-public 0.18.2 notes and the earlier release test fixes are retained. Local Pi
-exploration and PR article changes are excluded.
+public 0.18.2 notes and the earlier release test fixes are retained. At that
+point the Pi exploration and PR articles were still in the development checkout.
 
 The user approved the [Desktop notes](../../resources/release-notes.json)
 dated `2026-11-20` and the separate [Agent notes](../../resources/agent-release-notes/0.15.16.md).
@@ -59,3 +59,17 @@ state so its Git tab survives a failed refresh for the same project.
 Seven targeted IPC, shortcut and channel tests passed. Another 46 workspace
 and citation tests passed, including 16 native Electron layout scenarios.
 ESLint passed for the affected workspace component and the Host validation relay.
+
+## Windows packaging and UI update
+
+The four subsequent commits through `243085bb` add compact custom task headings,
+sliding segment indicators, Desktop packaging filters and DS Web dependency
+deduplication. Windows Electron language resources now match the portable
+edition. The measurements and their comparison builds are in [BUILD.md](../../BUILD.md).
+The Pi evaluation, probe scripts and article drafts are now committed source
+materials. The desktop selector continues to offer four Runtimes.
+
+The four packaging regression suites passed 63 tests on Windows with one
+Unix-specific skip. The preceding candidate passed its [Desktop CI](https://github.com/mesalogo/goodbuddy/actions/runs/44865094804)
+and [Agent CI](https://github.com/mesalogo/goodbuddy/actions/runs/44865165283).
+Publication uses the new candidate's CI and its independent Desktop and Agent tags.
