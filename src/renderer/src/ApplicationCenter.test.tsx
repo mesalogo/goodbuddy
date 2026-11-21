@@ -3,6 +3,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -481,6 +482,46 @@ describe('Application Center', () => {
     unmount()
     render(<ApplicationCenter {...props()} platform={platform} capabilities={capabilities} initialTab="mcp" />)
     expect(screen.getByRole('tab', { name: 'MCP' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('opens Obsidian settings from a compact connector card and reflects saved enablement on return', async () => {
+    let enabled = false
+    const snapshot = () => ({
+      skills: [], mcpServers: [], computerCapabilities: [],
+      builtinMcpServers: [{ id: 'obsidian', enabled, assignments: ['model'] }],
+      obsidian: { vaultPath: '' },
+    })
+    const setBuiltinMcpServerEnabled = vi.fn(async (_id: string, value: boolean) => {
+      enabled = value
+      return snapshot()
+    })
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: { capabilities: { getSnapshot: vi.fn(async () => snapshot()), setBuiltinMcpServerEnabled } },
+    })
+    render(<ApplicationCenter {...props()} initialTab="connectors"
+      capabilities={{ magicNotesEnabled: true, onOpenImageModelSettings: vi.fn() }} />)
+    const toggle = await screen.findByRole('switch', { name: '启用 Obsidian 内置 MCP' })
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle.closest('article')).toHaveClass('application-card')
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle).toBeChecked())
+    expect(setBuiltinMcpServerEnabled).toHaveBeenCalledWith('obsidian', true)
+    fireEvent.click(screen.getByRole('button', { name: 'Obsidian 应用设置' }))
+    expect(screen.getByRole('dialog', { name: 'Obsidian' })).toBeInTheDocument()
+    expect(await screen.findByRole('combobox')).toBeInTheDocument()
+    const detailToggle = screen.getByRole('switch', { name: '启用 Obsidian 内置 MCP' })
+    await waitFor(() => expect(detailToggle).toBeChecked())
+    fireEvent.click(detailToggle)
+    await waitFor(() => expect(detailToggle).not.toBeChecked())
+    fireEvent.click(screen.getByRole('button', { name: '返回应用中心' }))
+    expect(screen.getByRole('tab', { name: '连接器' })).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => {
+      const returned = screen.getByRole('switch', { name: '启用 Obsidian 内置 MCP' })
+      expect(returned).toBeEnabled()
+      expect(returned).not.toBeChecked()
+    })
   })
 
   it('keeps disabled page drafts mounted without a generic settings shortcut', () => {

@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom'
 import {
   ArrowLeft,
   Cpu,
+  Gem,
   Network,
   HeartPulse,
   Library,
@@ -355,7 +356,7 @@ export function ApplicationCenter({
 }): React.JSX.Element {
   const { t } = useTranslation(['app', 'integrations'])
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState<EditableApplicationId | ProjectChannel | undefined>(
+  const [selected, setSelected] = useState<EditableApplicationId | ProjectChannel | 'obsidian' | undefined>(
     platform?.initialChannel,
   )
   const availableTabs = useMemo<ApplicationCenterTab[]>(() => [
@@ -378,7 +379,7 @@ export function ApplicationCenter({
   const selectedChannel = selected && (projectChannels as readonly string[]).includes(selected)
     ? selected as ProjectChannel
     : undefined
-  const selectedApplication = selectedChannel ? undefined : selected as EditableApplicationId | undefined
+  const selectedApplication = selectedChannel || selected === 'obsidian' ? undefined : selected as EditableApplicationId | undefined
   const dialog = useRef<HTMLElement>(null)
   const body = useRef<HTMLDivElement>(null)
   const search = useRef<HTMLInputElement>(null)
@@ -417,7 +418,7 @@ export function ApplicationCenter({
         : [],
     [platform, query, t],
   )
-  // Local app connectors (Obsidian) are built-in MCP servers configured in place.
+  // Local app connectors use compact cards and the shared settings detail.
   const localConnectorVisible = capabilities !== undefined &&
     `Obsidian ${t('applications.descriptions.obsidian')}`
       .toLocaleLowerCase()
@@ -435,10 +436,11 @@ export function ApplicationCenter({
   }
   // Settings detail mirrors the system settings dialog: every configurable
   // app in a vertical tab list, the selected app's settings on the right.
-  const detailTabs: { id: EditableApplicationId | ProjectChannel; label: string; group: 'work' | 'platform' }[] = [
+  const detailTabs: { id: EditableApplicationId | ProjectChannel | 'obsidian'; label: string; group: 'work' | 'local' | 'platform' }[] = [
     ...applicationDisplayOrder
       .filter((id): id is EditableApplicationId => id !== 'knowledge')
       .map((id) => ({ id, label: t(applicationDefinitions[id].title), group: 'work' as const })),
+    ...(capabilities ? [{ id: 'obsidian' as const, label: 'Obsidian', group: 'local' as const }] : []),
     ...(platform
       ? platformApplicationOrder.map((channel) => ({
           id: channel,
@@ -447,7 +449,7 @@ export function ApplicationCenter({
         }))
       : []),
   ]
-  const selectedTitle = selectedChannel
+  const selectedTitle = selected === 'obsidian' ? 'Obsidian' : selectedChannel
     ? t(`channels.tabs.${selectedChannel}`, { ns: 'integrations' })
     : selectedApplication
       ? t(applicationDefinitions[selectedApplication].title)
@@ -523,12 +525,12 @@ export function ApplicationCenter({
               {detailTabs.map((tab, index) => {
                 const Icon = tab.group === 'work'
                   ? applicationDefinitions[tab.id as EditableApplicationId].icon
-                  : undefined
+                  : tab.group === 'local' ? Gem : undefined
                 return (
                   <Fragment key={tab.id}>
                     {detailTabs[index - 1]?.group !== tab.group && (
                       <span className="settings-tabs__group-label" aria-hidden="true">
-                        {t(tab.group === 'work' ? 'applications.workGroup' : 'applications.platformGroup')}
+                        {t(tab.group === 'work' ? 'applications.workGroup' : tab.group === 'local' ? 'applications.localConnectorGroup' : 'applications.platformGroup')}
                       </span>
                     )}
                     <button
@@ -581,7 +583,15 @@ export function ApplicationCenter({
                   </button>
                 </div>
               )}
-              {selectedChannel && platform ? (
+              {selected === 'obsidian' && capabilities ? (
+                <Suspense fallback={<p role="status">{t('route.loading')}</p>}>
+                  <McpSettingsSection
+                    connectorServerIds={connectorBuiltinMcpServerIds}
+                    magicNotesEnabled={capabilities.magicNotesEnabled}
+                    onOpenImageModelSettings={capabilities.onOpenImageModelSettings}
+                  />
+                </Suspense>
+              ) : selectedChannel && platform ? (
                 <Suspense fallback={<p role="status">{t('route.loading')}</p>}>
                   <ChannelApplicationSettings
                     key={selectedChannel}
@@ -731,6 +741,7 @@ export function ApplicationCenter({
                   <Suspense fallback={<p role="status">{t('route.loading')}</p>}>
                     <McpSettingsSection
                       connectorServerIds={connectorBuiltinMcpServerIds}
+                      onOpenConnectorSettings={() => setSelected('obsidian')}
                       magicNotesEnabled={capabilities.magicNotesEnabled}
                       onOpenImageModelSettings={capabilities.onOpenImageModelSettings}
                     />

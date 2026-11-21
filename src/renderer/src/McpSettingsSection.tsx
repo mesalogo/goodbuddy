@@ -3,11 +3,13 @@ import {
   CircleAlert,
   Database,
   FlaskConical,
+  Gem,
   MonitorCog,
   Network,
   Pencil,
   Plus,
   RefreshCw,
+  Settings,
   Trash2,
   Wrench,
   X
@@ -103,7 +105,8 @@ function editorFromServer(server: McpServerSummary): McpEditor {
 export function McpSettingsSection({
   onOpenImageModelSettings,
   magicNotesEnabled = false,
-  connectorServerIds
+  connectorServerIds,
+  onOpenConnectorSettings
 }: {
   onOpenImageModelSettings: () => void
   magicNotesEnabled?: boolean
@@ -112,6 +115,8 @@ export function McpSettingsSection({
    * connector servers are left out, since the connectors tab already manages them.
    */
   connectorServerIds?: readonly BuiltinMcpServerId[]
+  /** Show compact application cards with a settings entry instead of the form. */
+  onOpenConnectorSettings?: () => void
 }): React.JSX.Element {
   const connectorMode = connectorServerIds !== undefined
   const visibleBuiltinServers = builtinMcpServers.filter((server) =>
@@ -447,6 +452,55 @@ export function McpSettingsSection({
   }
 
   const currentTab: McpSettingsTab = connectorMode ? 'builtin' : activeTab
+
+  if (connectorMode && onOpenConnectorSettings) {
+    return (
+      <>
+        {error && <p className="settings-warning" role="alert">{error}</p>}
+        <div className="application-center__cards">
+          {visibleBuiltinServers.map((server) => {
+            const enabled = builtinMcpStates.get(server.id)?.enabled ?? false
+            return (
+              <article className={`application-card${enabled ? '' : ' application-card--off'}`} key={server.id}>
+                <div className="application-card__body">
+                  <span className="application-card__icon"><Gem size={20} aria-hidden="true" /></span>
+                  <div className="application-card__copy">
+                    <strong>{server.name}</strong>
+                    <p>{t(`applications.descriptions.${server.id}`, { ns: 'app' })}</p>
+                  </div>
+                </div>
+                <footer className="application-card__footer">
+                  <label className="toggle-row application-card__switch">
+                    <input
+                      role="switch"
+                      type="checkbox"
+                      aria-label={t('mcp.builtin.enableAriaLabel', { name: server.name })}
+                      checked={enabled}
+                      disabled={Boolean(busy) || !snapshot}
+                      onChange={(event) => void run(`builtin:toggle:${server.id}`, () =>
+                        window.goodbuddy.capabilities.setBuiltinMcpServerEnabled(server.id, event.target.checked))}
+                    />
+                    <span>{t('applications.enableShort', { ns: 'app' })}</span>
+                  </label>
+                  <span className="application-card__spacer" />
+                  <button
+                    type="button"
+                    className="icon-button"
+                    title={t('applications.settings', { ns: 'app' })}
+                    aria-label={`${server.name} ${t('applications.settings', { ns: 'app' })}`}
+                    disabled={Boolean(busy)}
+                    onClick={onOpenConnectorSettings}
+                  >
+                    <Settings size={16} aria-hidden="true" />
+                  </button>
+                </footer>
+              </article>
+            )
+          })}
+        </div>
+      </>
+    )
+  }
 
   return (
     <>

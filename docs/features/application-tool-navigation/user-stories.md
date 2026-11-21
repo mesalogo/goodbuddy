@@ -135,6 +135,7 @@
 - Then 顶部依次显示“内置应用”“连接器”“Skills”“MCP” Tab，默认选中“内置应用”，此时不读取 Skills 或 MCP 数据
 - When 用户切换到“连接器”
 - Then 显示“本机应用”（Obsidian）和“平台应用”，搜索只过滤本 Tab
+- Then Obsidian 显示紧凑应用卡片，可直接启用或打开设置；仓库范围、测试、保存和 Runtime 分配位于设置详情，返回后仍在连接器 Tab，卡片反映已保存的启用状态
 - When 用户切换到“Skills”或“MCP”
 - Then 显示原“能力与工具”中的对应页面；切回其他 Tab 再返回时保留已读取的内容，MCP 中不再列出 Obsidian
 - Given 用户从飞书或企业微信入口打开某平台设置

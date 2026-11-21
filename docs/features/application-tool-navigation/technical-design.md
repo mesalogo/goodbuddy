@@ -43,7 +43,7 @@ Main/Preload/Renderer 实现仍待交付。系统工具只使用右侧工作栏�
 | `App.tsx` | 组合主导航、应用中心、固定设置，持有确认配置及页面离开检查 |
 | `ApplicationMenu.tsx` / `AnchoredMenu.tsx` | 底部向上锚定的已启用应用菜单；关闭后导航，或打开既有管理 Modal；共享几何定位与键盘行为 |
 | `ApplicationCenter.tsx` | 浏览、搜索内置清单，调用既有页面导航及共同设置入口，编辑常驻和顺序；复用设置 Modal 样式和焦点工具。用 `PageTabs` 分为 `builtin` / `connectors` / `skills` / `mcp`（`ApplicationCenterTab`），`initialTab` 可指定初始 Tab，指定 `platform.initialChannel` 时从 `connectors` 开始；`capabilities` 属性提供 `magicNotesEnabled` 和 `onOpenImageModelSettings`，缺省时不显示 Skills/MCP。Skills/MCP 组件懒加载，首次访问才挂载，之后以 `hidden` 保留 |
-| `SkillsSettingsSection` / `McpSettingsSection` | 原设置中心“能力与工具”的两个页面，自行读取 `capabilities` 快照。`McpSettingsSection` 的 `connectorServerIds` 只渲染这些内置 Server 且不显示内层页签（连接器 Tab 中的 Obsidian）；未传时排除 `connectorBuiltinMcpServerIds`（`shared/builtin-mcp-servers.ts`） |
+| `SkillsSettingsSection` / `McpSettingsSection` | 原设置中心“能力与工具”的两个页面，自行读取 `capabilities` 快照。`McpSettingsSection` 的 `connectorServerIds` 只渲染这些内置 Server 且不显示内层页签；同时传入 `onOpenConnectorSettings` 时显示统一应用卡片，点击设置由 `ApplicationCenter` 打开 Obsidian 详情，详情复用完整表单。未传 `connectorServerIds` 时排除 `connectorBuiltinMcpServerIds`（`shared/builtin-mcp-servers.ts`） |
 | `ApplicationSettingsView` | 位于 `ApplicationCenter.tsx`，由应用中心对应行进入的应用配置表单 |
 | `RightAssistantSidebar.tsx` | 保留右侧工具 Tab 和“+”目录调用链路 |
 | `WorkbarShell.tsx` | 继续负责实例策略、Tab、目录和焦点行为 |

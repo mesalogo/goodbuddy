@@ -137,6 +137,27 @@ app.whenReady().then(async () => {
         await wait('!!document.querySelector("#application-menu")')
         await click('#application-menu [role=menuitem]:last-of-type')
         await wait('!!document.querySelector("#application-center-tab-mcp")')
+        await click('#application-center-tab-connectors')
+        const obsidianCard = '#application-center-local-heading + .application-center__cards .application-card'
+        await wait(`!!document.querySelector('${obsidianCard} input[role=switch]:not(:disabled)')`)
+        assert(await js(`!document.querySelector('${obsidianCard} select') &&
+          document.querySelector('${obsidianCard}').getBoundingClientRect().width <
+          document.querySelector('.application-center__body').getBoundingClientRect().width / 2`),
+        'Obsidian must use a compact application card without the settings form')
+        await click(`${obsidianCard} .icon-button`)
+        await wait('!!document.querySelector("#application-settings-tab-obsidian[aria-selected=true]") && !!document.querySelector(".capability-diagnostic--obsidian select:not(:disabled)")')
+        const obsidianToggle = '.builtin-mcp-card input[role=switch]'
+        await click(obsidianToggle)
+        await wait(`document.querySelector('${obsidianToggle}').checked && !document.querySelector('${obsidianToggle}').disabled`)
+        assert((await capabilities.getSnapshot()).builtinMcpServers?.find(server => server.id === 'obsidian')?.enabled,
+          'Obsidian settings must save through production IPC')
+        await click('.application-center > .settings-panel__header > .icon-button')
+        await wait(`document.querySelector('#application-center-tab-connectors[aria-selected=true]') &&
+          document.querySelector('${obsidianCard} input[role=switch]')?.checked`)
+        await click(`${obsidianCard} input[role=switch]`)
+        await wait(`!document.querySelector('${obsidianCard} input[role=switch]').checked &&
+          !document.querySelector('${obsidianCard} input[role=switch]').disabled`)
+        assert.equal((await capabilities.getSnapshot()).builtinMcpServers?.find(server => server.id === 'obsidian')?.enabled, false)
         await click('#application-center-tab-mcp')
         await wait('!!document.querySelector("#mcp-settings-tab-custom")')
         await click('#mcp-settings-tab-custom')

@@ -1,5 +1,16 @@
 # 应用导航实施进度
 
+## 2026-11-21：Obsidian 连接器卡片统一
+
+连接器列表中的 Obsidian 使用共享 `application-card` 和卡片网格，显示简介、启用开关与设置入口。完整配置移入应用设置详情，返回时仍停留在连接器页签，并读取已保存的启用状态。交互规则见 [UI 设计](./ui-design.md)。本次只修改 Renderer 与验证用例，不涉及 Agent 或远程 Runtime。
+
+验证记录：
+
+- `ApplicationCenter.test.tsx`、`McpSettingsSection.test.tsx` 共 31 项通过，覆盖卡片入口、设置详情和启用状态返回同步。
+- `overlay-layering.electron.test.ts` 的 MCP 生产路径用例通过：在浅深主题、有无原生浏览器四个场景中，使用原生点击验证 Obsidian 卡片宽度、进入详情、生产 IPC 保存启用状态、返回列表和从卡片关闭。模型调用 0 次。
+- `npm run typecheck`、修改文件的 ESLint 通过。全仓库 lint 在 `scripts/gateway-reset-model-relay.mjs` 与 `WorkspaceFilesPanel.tsx` 报错，均未在本次修改。
+- 全量 `vitest run` 未通过、未跑完：已报告 `ipc.test.ts` 的电脑能力注册顺序断言失败（单独复跑仍失败，预期 `context:select-files`，实际为 `context:select-directories`）、`App.test.tsx` 三项设置保存后的快捷键提示失败，以及 `opencode-runtime-lifecycle.test.ts` 一项超时后 MCP 连接测试失败。发现这些其他路径的失败后终止剩余全量运行；上面的定向 Electron 验证是独立完成的结果。
+
 ## 2026-11-17：0.18.0 候选整理
 
 工作台已随 `65b275c1` 进入主分支，`2822e7fa` 将无明确保存选择时的默认布局改为工作台；下方“未提交”和经典默认描述仅是当时的历史截面。
