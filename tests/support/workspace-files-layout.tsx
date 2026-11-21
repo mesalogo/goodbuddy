@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { WorkspaceFilesPanel } from '../../src/renderer/src/WorkspaceFilesPanel'
+import { PageTabs, SegmentedControl } from '../../src/renderer/src/WorkspacePrimitives'
 import { UiLocaleProvider } from '../../src/renderer/src/i18n/UiLocaleProvider'
 import { changeUiLocale } from '../../src/renderer/src/i18n'
 import { applyAppearanceTheme } from '../../src/renderer/src/theme'
@@ -48,10 +49,21 @@ function Fixture({ name, git, sidebar }: LayoutScenario): React.JSX.Element {
   </UiLocaleProvider>
 }
 
+function MotionFixture(): React.JSX.Element {
+  const [value, setValue] = useState('files')
+  return <div style={{ padding: 20 }}>
+    <PageTabs ariaLabel="Motion tabs" idPrefix="motion" variant="segmented" value={value} onChange={setValue}
+      tabs={[{ id: 'files', label: 'Files' }, { id: 'git', label: 'Git workspace' }]} />
+    <SegmentedControl ariaLabel="Motion choices" value={value} onChange={setValue}
+      options={[{ value: 'files', label: 'Files' }, { value: 'git', label: 'Git workspace' }]} />
+  </div>
+}
+
 installBundledUiFonts()
 void changeUiLocale('en-US').then(() => {
   const root = createRoot(document.getElementById('root')!)
   Object.assign(window, {
+    showSegmentedMotion() { root.render(<MotionFixture />) },
     showFilesLayout(scenario: LayoutScenario) {
       applyAppearanceTheme(scenario.theme)
       root.render(<Fixture key={scenario.name} {...scenario} />)

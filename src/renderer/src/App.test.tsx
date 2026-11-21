@@ -4623,11 +4623,11 @@ describe("App", () => {
     vi.stubGlobal(
       "ResizeObserver",
       class {
-        constructor(callback: ResizeObserverCallback) {
-          resizeCallback = callback;
-        }
+        constructor(private callback: ResizeObserverCallback) {}
 
-        observe(): void {}
+        observe(target: Element): void {
+          if (target.classList.contains("chat")) resizeCallback = this.callback;
+        }
         unobserve(): void {}
         disconnect(): void {
           disconnect();

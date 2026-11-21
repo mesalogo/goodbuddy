@@ -298,7 +298,7 @@ app.whenReady().then(async () => {
     })()`))
     await click('.workspace-menu__categories [role="tab"]:last-child')
     assert(await js('document.querySelectorAll(".workspace-menu [role=menuitemradio]").length === 0'))
-    await click('.workspace-menu__categories [role="tab"]:first-child')
+    await click('.workspace-menu__categories [role="tab"]:first-of-type')
     assert(await js(`(() => {
       const tabs = [...document.querySelectorAll('.workspace-menu__categories [role="tab"]')];
       return tabs.length === 3 && tabs[0].getAttribute('aria-selected') === 'true' &&

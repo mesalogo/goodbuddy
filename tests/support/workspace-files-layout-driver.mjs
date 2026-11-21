@@ -158,9 +158,26 @@ app.whenReady().then(async () => {
         assert.equal(await js('document.querySelector(".workspace-files__row[aria-current=true]").title'), 'documents/file-120-workspace-notes.md')
         docked(before, await geometry())
         if (git) {
-          await click('.workspace-files__view-switch button:last-child')
+          const motion = await js(`(async () => {
+            const root = document.querySelector('.workspace-files__view-switch .page-tabs');
+            const indicator = root.querySelector('.segmented-indicator');
+            const target = root.querySelector('button:last-child');
+            const start = indicator.getBoundingClientRect().x;
+            target.click();
+            const frames = [];
+            for (let i = 0; i < 24; i++) {
+              await new Promise(requestAnimationFrame);
+              const r = indicator.getBoundingClientRect();
+              frames.push({ x: r.x, width: r.width });
+            }
+            const end = target.getBoundingClientRect();
+            return { start, frames, end: { x: end.x, width: end.width } };
+          })()`)
+          assert(motion.frames.some(frame => frame.x > motion.start + 1 && frame.x < motion.end.x - 1), 'Selection must slide through intermediate frames')
+          assert(Math.abs(motion.frames.at(-1).x - motion.end.x) < 1, 'Selection must align with the target')
+          assert(Math.abs(motion.frames.at(-1).width - motion.end.width) < 1, 'Selection must match the target width')
           assert.equal(await js(`getComputedStyle(${viewport}).display`), 'none')
-          await click('.workspace-files__view-switch button:first-child')
+          await click('.workspace-files__view-switch button:first-of-type')
           assert.equal(await js(`${viewport}.scrollTop`), after.scrollTop, 'Git view return must retain files scroll')
           docked(before, await geometry())
         }
@@ -175,6 +192,51 @@ app.whenReady().then(async () => {
         observations.push({ name, git, theme, sidebar, root, before, after, previewRetention: true, gitRetention: git, createDialogs: 2 })
       }
     }
+    await js('window.showSegmentedMotion()')
+    await wait('!!document.querySelector("#motion-tab-files")')
+    win.webContents.debugger.attach('1.3')
+    for (const layout of ['classic', 'workbench']) for (const theme of ['light', 'dark']) {
+      await js(`document.documentElement.dataset.layout=${JSON.stringify(layout)}; document.documentElement.dataset.theme=${JSON.stringify(theme)}`)
+      await settle()
+      for (const reduced of [false, true]) {
+        await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-reduced-motion', value: reduced ? 'reduce' : 'no-preference' }]
+        })
+        const result = await js(`(async () => {
+          const roots = [...document.querySelectorAll('.page-tabs--segmented,.segmented-control')];
+          const indicators = roots.map(root => root.querySelector('.segmented-indicator'));
+          roots[0].querySelector('button:first-of-type').click();
+          await new Promise(resolve => setTimeout(resolve, 220));
+          const starts = indicators.map(e => e.getBoundingClientRect().x);
+          roots[1].querySelector('button:last-child').click();
+          const frames = [];
+          for (let i = 0; i < 24; i++) {
+            await new Promise(requestAnimationFrame);
+            frames.push(indicators.map(e => ({x:e.getBoundingClientRect().x,width:e.getBoundingClientRect().width})));
+          }
+          return roots.map((root,index) => {
+            const target = root.querySelector('button:last-child').getBoundingClientRect();
+            const style = getComputedStyle(indicators[index]);
+            return { start:starts[index], frames:frames.map(frame=>frame[index]), end:{x:target.x,width:target.width},
+              duration:style.transitionDuration, background:style.backgroundColor, radius:style.borderRadius };
+          });
+        })()`)
+        for (const item of result) {
+          assert(Math.abs(item.frames.at(-1).x - item.end.x) < 1)
+          assert(Math.abs(item.frames.at(-1).width - item.end.width) < 1)
+          assert.notEqual(item.background, 'rgba(0, 0, 0, 0)')
+          if (reduced) {
+            assert(Number.parseFloat(item.duration) <= 0.00001, 'Reduced motion must disable visible transitions')
+            assert(item.frames.every(frame => Math.abs(frame.x - item.end.x) < 1), 'Reduced motion must switch immediately')
+          } else {
+            assert(item.frames.some(frame => frame.x > item.start + 1 && frame.x < item.end.x - 1), 'Both shared controls must slide')
+          }
+        }
+        assert.equal(result[0].background, result[1].background, 'Shared selection surfaces must match')
+        assert.equal(result[0].radius, result[1].radius, 'Shared selection radii must match')
+      }
+    }
+    win.webContents.debugger.detach()
     assert.equal(documentLoads, 1, 'Layout changes must not reload the test page')
     assert.deepEqual(errors, [])
     await report({ passed: true })

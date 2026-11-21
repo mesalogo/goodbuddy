@@ -161,7 +161,7 @@ app.whenReady().then(async () => {
             win.setContentSize(width, height)
             await win.loadURL(`${process.env.GB_LAYOUT_URL}?surface=settings&locale=${locale}&theme=${theme}`)
             await wait('document.querySelectorAll(".model-type-navigation [role=tab]").length===5')
-            await click('.model-type-navigation [role=tab]:first-child')
+            await click('.model-type-navigation [role=tab]:first-of-type')
             await key('End')
             await wait('!!document.querySelector(".document-ocr-model")')
             assert(await js(`(() => {

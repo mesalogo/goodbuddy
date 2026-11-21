@@ -460,6 +460,9 @@
 }
 
 :root[data-layout='workbench'] :is(.segmented-control, .page-tabs--segmented) {
+  --segmented-radius: var(--wb-radius-pill);
+  --segmented-background: var(--surface-raised);
+  --segmented-shadow: var(--wb-raised-shadow);
   border-color: transparent;
   border-radius: var(--wb-radius-pill);
   background: var(--surface-muted);
@@ -485,9 +488,9 @@
 }
 
 :root[data-layout='workbench'] :is(.segmented-control__option--active, .page-tabs--segmented .page-tabs__tab--active) {
-  background: var(--surface-raised);
+  background: transparent;
   color: var(--text-primary);
-  box-shadow: var(--wb-raised-shadow);
+  box-shadow: none;
 }
 
 /* Page heads: every page level application uses the same title size, top inset and left inset, so

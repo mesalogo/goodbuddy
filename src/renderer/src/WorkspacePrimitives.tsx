@@ -6,6 +6,7 @@ import {
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   type KeyboardEvent,
   type ReactNode
@@ -30,6 +31,49 @@ export type SegmentedOption<T extends string> = {
   value: T
   label: string
   disabled?: boolean
+}
+
+/** One background follows the committed selection, including content-driven widths. */
+function useSegmentedIndicator(enabled: boolean) {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const indicatorRef = useRef<HTMLSpanElement>(null)
+
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    const indicator = indicatorRef.current
+    if (!enabled || !root || !indicator) return
+
+    let frame = 0
+    const update = () => {
+      const selected = root.querySelector<HTMLButtonElement>(
+        '[aria-selected="true"], [aria-pressed="true"]'
+      )
+      if (!selected || !selected.offsetWidth || !selected.offsetHeight) {
+        indicator.hidden = true
+        delete indicator.dataset.ready
+        return
+      }
+      const { offsetLeft, offsetTop, offsetWidth, offsetHeight } = selected
+      indicator.style.transform = `translate(${offsetLeft}px, ${offsetTop}px)`
+      indicator.style.width = `${offsetWidth}px`
+      indicator.style.height = `${offsetHeight}px`
+      indicator.hidden = false
+      if (!indicator.dataset.ready) {
+        cancelAnimationFrame(frame)
+        frame = requestAnimationFrame(() => { indicator.dataset.ready = 'true' })
+      }
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(root)
+    root.querySelectorAll('button').forEach(button => observer.observe(button))
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  })
+
+  return { rootRef, indicatorRef }
 }
 
 function nextControlIndex(
@@ -173,12 +217,15 @@ export function PageTabs<T extends string>({
   /** `underline`: top-level categories of a dialog, drawn as a text row over a divider. */
   variant?: 'default' | 'segmented' | 'underline'
 }): React.JSX.Element {
+  const { rootRef, indicatorRef } = useSegmentedIndicator(variant === 'segmented')
   return (
     <nav
+      ref={rootRef}
       aria-label={ariaLabel}
       className={`page-tabs page-tabs--${variant}`}
       role="tablist"
     >
+      {variant === 'segmented' && <span aria-hidden="true" className="segmented-indicator" ref={indicatorRef} />}
       {tabs.map((tab, index) => (
         <button
           aria-controls={`${idPrefix}-panel-${tab.id}`}
@@ -240,12 +287,15 @@ export function SegmentedControl<T extends string>({
   options: readonly SegmentedOption<T>[]
   value: T
 }): React.JSX.Element {
+  const { rootRef, indicatorRef } = useSegmentedIndicator(true)
   return (
     <div
+      ref={rootRef}
       aria-label={ariaLabel}
       className="segmented-control"
       role="group"
     >
+      <span aria-hidden="true" className="segmented-indicator" ref={indicatorRef} />
       {options.map((option, index) => (
         <button
           aria-pressed={value === option.value}

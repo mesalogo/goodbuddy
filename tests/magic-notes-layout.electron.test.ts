@@ -148,7 +148,7 @@ it('resizes record columns with native Electron input and preserves desktop widt
         assert(Math.abs(typeSwitch.x - newTitle.x - newTitle.width - 8) <= 1 && Math.abs(typeSwitch.y + typeSwitch.height/2 - newTitle.y - newTitle.height/2) <= 1, 'Type options immediately follow the title');
         assert(await js('document.querySelector(".magic-note-entry-type .segmented-control").checkVisibility()'));
         await screenshot('magic-notes-new-entry-types');
-        await key('.magic-note-entry-type button:first-child', 'Right');
+        await key('.magic-note-entry-type button:first-of-type', 'Right');
         await wait('document.querySelector(".magic-note-composer [data-tool=flow-text]")?.disabled === false');
         assert.equal(await js('document.querySelector(".magic-note-entry-type button:last-child").getAttribute("aria-pressed")'), 'true');
         const toolStyle = '.magic-note-composer .canvas-note-color';
@@ -190,7 +190,7 @@ it('resizes record columns with native Electron input and preserves desktop widt
           }
         }
         win.setContentSize(1280, 800); await js('document.documentElement.dataset.theme = "light"'); await settle(); await settle();
-        await click('.magic-note-entry-type button:first-child');
+        await click('.magic-note-entry-type button:first-of-type');
         await wait('!!document.querySelector(' + JSON.stringify(editor) + ')');
         await click('.magic-note-composer__header .secondary-button');
         await wait('!document.querySelector(".magic-note-composer--active")');
@@ -489,10 +489,10 @@ it('resizes record columns with native Electron input and preserves desktop widt
         await click('#magic-note-select-layout-note'); await settle();
         assert.equal(await assertShellPanels(), shellLongHeight, 'Switching back to the long note keeps panel height');
         await click('#magic-note-select-other-note-3'); await settle();
-        await click('.magic-note-entry-type button:nth-child(2)');
+        await click('.magic-note-entry-type button:nth-of-type(2)');
         await wait('document.querySelector(".magic-note-composer [data-tool=flow-text]")?.disabled === false');
         assert.equal(await assertShellPanels(), shellLongHeight, 'Canvas minimum height stays inside the note stream');
-        await click('.magic-note-entry-type button:first-child');
+        await click('.magic-note-entry-type button:first-of-type');
         await wait('!!document.querySelector(' + JSON.stringify(editor) + ')');
         await js('window.dispatchEvent(new Event("layout-comments"))');
         await wait('!!document.querySelector(".magic-notes-ai-feed")'); await settle();

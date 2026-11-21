@@ -472,11 +472,27 @@ textarea.field-control {
 
 .page-tabs__icon { display: grid; place-items: center; }
 
-.segmented-control, .page-tabs--segmented { display: inline-flex; flex: 0 0 auto; max-width: 100%; padding: 3px; border: 1px solid var(--border-control); border-radius: calc(var(--radius-control) + 2px); overflow-x: auto; background: var(--surface-subtle); gap: 2px; }
+.segmented-control, .page-tabs--segmented { position: relative; isolation: isolate; display: inline-flex; flex: 0 0 auto; max-width: 100%; padding: 3px; border: 1px solid var(--border-control); border-radius: calc(var(--radius-control) + 2px); overflow-x: auto; background: var(--surface-subtle); gap: 2px; }
 
 .segmented-control__option, .page-tabs--segmented .page-tabs__tab { min-height: 28px; padding: 5px 10px; border: 0; border-radius: calc(var(--radius-control) - 2px); background: transparent; color: var(--text-secondary); cursor: pointer; font-size: var(--font-caption); font-weight: 600; white-space: nowrap; }
 
-.segmented-control__option--active, .page-tabs--segmented .page-tabs__tab--active { background: var(--surface-raised); color: var(--accent); box-shadow: var(--shadow-card); }
+.segmented-control__option--active, .page-tabs--segmented .page-tabs__tab--active { color: var(--accent); }
+
+.segmented-indicator { position: absolute; z-index: -1; top: 0; left: 0; pointer-events: none; border-radius: var(--segmented-radius, calc(var(--radius-control) - 2px)); background: var(--segmented-background, var(--surface-raised)); box-shadow: var(--segmented-shadow, var(--shadow-card)); }
+
+.segmented-indicator[data-ready='true'] { transition: transform var(--motion-normal) ease-out, width var(--motion-normal) ease-out, height var(--motion-normal) ease-out; }
+
+.page-tabs__tab, .segmented-control__option { transition: color var(--motion-fast) ease-out, background-color var(--motion-fast) ease-out; }
+
+.page-tabs--segmented .page-tabs__tab--active { background: transparent; box-shadow: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .segmented-indicator[data-ready='true'], .page-tabs__tab, .segmented-control__option { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .segmented-indicator { display: none; }
+}
 
 .page-tabs--underline { gap: var(--space-5, 20px); }
 
