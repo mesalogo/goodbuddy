@@ -38,13 +38,17 @@ Object.defineProperty(window, 'goodbuddy', { value: {
     getOcrModelProgress: async () => ({ operations: [] })
   },
   updates: {
-    getSettings: async () => ({ modelDownloadSource: sourceFixture.source }),
+    getSettings: async () => ({ modelDownloadSource: sourceFixture.source, desktopNotificationsEnabled: true, conversationHtmlRenderingEnabled: true }),
     onSettingsChanged: () => () => {},
     updateSettings: async (input: ApplicationSettingsUpdate) => {
       sourceFixture.writes.push(input)
       if (input.modelDownloadSource) sourceFixture.source = input.modelDownloadSource
       return { modelDownloadSource: sourceFixture.source }
     }
+  },
+  shortcuts: {
+    getSettings: async () => ({ settings: { enabled: true, accelerator: 'Alt+Space' },
+      defaultSettings: { enabled: true, accelerator: 'Alt+Space' }, status: 'registered', displayAccelerator: 'Alt+Space' })
   },
   settings: {
     getRuntime: async () => ({ ...defaultRuntimeSettings, modelProfiles: [{
@@ -89,7 +93,7 @@ function WorkbarFixture(): React.JSX.Element {
 function Fixture(): React.JSX.Element {
   return <UiLocaleProvider initialPreference={locale}>
     {query.get('surface') === 'settings'
-      ? <SettingsPanel open initialCategory="model" projects={[]} onClose={() => {}} onSaved={() => {}}
+      ? <SettingsPanel open initialCategory={query.get('category') === 'platform-features' ? 'platform-features' : query.get('category') === 'runtime' ? 'runtime' : 'model'} projects={[]} onClose={() => {}} onSaved={() => {}}
           onUpdateProject={async () => { throw new Error('Unused fixture API') }} onClearLocalData={async () => {}} />
       : <WorkbarFixture />}
   </UiLocaleProvider>

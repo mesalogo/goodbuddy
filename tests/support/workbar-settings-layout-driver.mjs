@@ -78,6 +78,84 @@ app.whenReady().then(async () => {
     for (const locale of ['zh-CN', 'en-US']) {
       for (const theme of ['light', 'dark']) {
         win.setContentSize(1000, 720)
+        if (process.env.GB_LAYOUT_MODE === 'platform') {
+          for (const width of [640, 960, 1280]) {
+            win.setContentSize(width, 720)
+            await win.loadURL(`${process.env.GB_LAYOUT_URL}?surface=settings&category=platform-features&locale=${locale}&theme=${theme}`)
+            await wait('document.querySelectorAll("#platform-features-panel-general [role=switch]").length===3')
+            await js('document.fonts.ready')
+            await settle()
+            const layout = await js(`(() => {
+              const panel=document.getElementById('platform-features-panel-general');
+              return [...panel.querySelectorAll('[role=switch]')].map(input=>{
+                const row=input.closest('.toggle-row'),r=input.getBoundingClientRect(),card=row.closest('.capability-card'),c=card.getBoundingClientRect(),s=getComputedStyle(card);
+                const label=row.querySelector('label'),help=row.querySelector('.inline-help'),l=label.getBoundingClientRect(),h=help.getBoundingClientRect();
+                return {rightGap:c.right-parseFloat(s.paddingRight)-parseFloat(s.borderRightWidth)-r.right,
+                  helpAfterLabel:h.left>=l.right-1,helpBeforeSwitch:h.right<=r.left,helpInLabel:!!help.closest('label'),
+                  overflow:row.scrollWidth>row.clientWidth+1,associated:label.control===input};
+              });
+            })()`)
+            for (const row of layout) {
+              assert(Math.abs(row.rightGap)<2, JSON.stringify({width,locale,row}))
+              assert(row.helpAfterLabel && row.helpBeforeSwitch && row.associated)
+              assert.equal(row.helpInLabel, false)
+              assert.equal(row.overflow, false)
+            }
+            await scrollSettingsControl('#platform-conversation-html')
+            const selector='#platform-conversation-html'
+            const checked=await js(`document.querySelector('${selector}').checked`)
+            await click('#platform-features-panel-general .toggle-row:has(#platform-conversation-html) .inline-help')
+            await wait('!!document.querySelector("[role=tooltip]")')
+            assert.equal(await js(`document.querySelector('${selector}').checked`), checked)
+            await key('Escape')
+            await scrollSettingsControl('#platform-shortcut-accelerator')
+            await click('#platform-shortcut-accelerator')
+            assert.equal(await js('document.querySelector("#platform-shortcut-accelerator").value'), '')
+            await key('A')
+            assert.equal(await js('document.querySelector("#platform-shortcut-accelerator").value'), 'a')
+            win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'K', modifiers: ['control', 'alt'] })
+            win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'K', modifiers: ['control', 'alt'] })
+            await wait('document.querySelector("#platform-shortcut-accelerator").value === "Ctrl+Alt+K"')
+            await click('#platform-shortcut-accelerator')
+            await key('Escape')
+            assert.equal(await js('document.querySelector("#platform-shortcut-accelerator").value'), 'Ctrl+Alt+K')
+            await js('document.querySelector("#platform-features-panel-general .update-settings__actions .secondary-button").click()')
+            await wait('document.querySelector("#platform-shortcut-accelerator").value === "Alt+Space"')
+            observations.push({locale,theme,width,layout})
+            await screenshot(`${locale}-${theme}-platform-${width}`)
+          }
+          continue
+        }
+        if (process.env.GB_LAYOUT_MODE === 'runtime') {
+          for (const width of [640, 960, 1280]) {
+            win.setContentSize(width, 720)
+            await win.loadURL(`${process.env.GB_LAYOUT_URL}?surface=settings&category=runtime&locale=${locale}&theme=${theme}`)
+            await wait('!!document.querySelector(".settings-runtime-default select:not(:disabled)")')
+            await js('document.fonts.ready')
+            await settle()
+            const layout = await js(`(() => {
+              const select=document.querySelector('.settings-runtime-default select'), s=getComputedStyle(select), r=select.getBoundingClientRect();
+              const label=select.previousElementSibling.getBoundingClientRect();
+              const pane=document.querySelector('.settings-panel__content');
+              const reference=document.createElement('select'); reference.className='field-control'; pane.append(reference);
+              const expected=getComputedStyle(reference);
+              const styled=['backgroundColor','color','borderRadius','borderTopColor','fontSize','minHeight'].every(key=>s[key]===expected[key]);
+              reference.remove();
+              return {styled,height:r.height,overlap:label.right>r.left,overflow:pane.scrollWidth>pane.clientWidth+1,
+                visible:r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight,
+                options:select.options.length};
+            })()`)
+            observations.push({locale,theme,width,layout})
+            assert.equal(layout.styled, true, JSON.stringify(layout))
+            assert(layout.height>=38)
+            assert.equal(layout.overlap, false)
+            assert.equal(layout.overflow, false)
+            assert.equal(layout.visible, true)
+            assert.equal(layout.options, 4)
+            await screenshot(`${locale}-${theme}-runtime-${width}`)
+          }
+          continue
+        }
         if (process.env.GB_LAYOUT_MODE === 'recognition') {
           for (const [width, height] of [[640, 600], [960, 720], [1280, 800]]) {
             win.setContentSize(width, height)

@@ -358,6 +358,24 @@
   gap: var(--space-2);
 }
 
+.settings-runtime-default {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  color: var(--text-secondary);
+  font-size: var(--font-body);
+}
+
+.settings-runtime-default > span {
+  white-space: nowrap;
+}
+
+.settings-runtime-default > select {
+  width: auto;
+  min-width: 0;
+}
+
 .settings-category-header > .settings-warning {
   margin: 0;
   grid-column: 1 / -1;

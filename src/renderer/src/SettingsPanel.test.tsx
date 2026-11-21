@@ -1809,8 +1809,8 @@ describe('SettingsPanel runtime files', () => {
     expect(
       await screen.findByText('全局快捷唤起')
     ).toBeInTheDocument()
-    expect(screen.getByLabelText('快捷键')).toHaveValue(
-      'CommandOrControl+Shift+Space'
+    expect(screen.getByRole('textbox', { name: '快捷键' })).toHaveValue(
+      'Ctrl+Shift+Space'
     )
   })
 
@@ -2460,16 +2460,28 @@ describe('SettingsPanel runtime files', () => {
     expect(
       screen.queryByText('读取快捷键设置失败，请重试')
     ).not.toBeInTheDocument()
-    const accelerator = await screen.findByLabelText('快捷键')
+    const accelerator = await screen.findByRole('textbox', { name: '快捷键' })
     expect(accelerator).toHaveValue(
-      'CommandOrControl+Shift+Space'
+      'Ctrl+Shift+Space'
     )
+    expect(accelerator).toHaveAttribute('readonly')
+    fireEvent.focus(accelerator)
+    expect(accelerator).toHaveAttribute('placeholder', '请按下组合键…')
+    expect(accelerator).toHaveValue('')
+    fireEvent.keyDown(accelerator, { key: 'Control', ctrlKey: true })
+    expect(accelerator).toHaveValue('Ctrl')
+    fireEvent.keyDown(accelerator, { key: 'Alt', ctrlKey: true, altKey: true })
+    expect(accelerator).toHaveValue('Ctrl+Alt')
+    expect(screen.getByRole('button', { name: '保存快捷键' })).toBeDisabled()
+    fireEvent.keyDown(accelerator, { key: 'Escape' })
+    expect(accelerator).toHaveValue('Ctrl+Shift+Space')
+    fireEvent.focus(accelerator)
     fireEvent.keyDown(accelerator, {
       key: 'k',
       ctrlKey: true,
       altKey: true
     })
-    expect(accelerator).toHaveValue('CommandOrControl+Alt+K')
+    expect(accelerator).toHaveValue('Ctrl+Alt+K')
     const platformTab = screen.getByRole('tab', {
       name: '平台功能'
     })
@@ -2508,18 +2520,18 @@ describe('SettingsPanel runtime files', () => {
 
     await screen.findByText('GoodBuddy 内置 OpenCode')
     fireEvent.click(screen.getByRole('tab', { name: '平台功能' }))
-    const accelerator = await screen.findByLabelText('快捷键')
+    const accelerator = await screen.findByRole('textbox', { name: '快捷键' })
     fireEvent.keyDown(accelerator, {
       key: 'k',
       ctrlKey: true
     })
-    expect(accelerator).toHaveValue('Control+K')
+    expect(accelerator).toHaveValue('Ctrl+K')
     fireEvent.keyDown(accelerator, {
       key: 'k',
       ctrlKey: true,
       metaKey: true
     })
-    expect(accelerator).toHaveValue('Control+Command+K')
+    expect(accelerator).toHaveValue('Ctrl+Command+K')
   })
 
   it('saves the workspace from platform settings and then closes without discarding', async () => {
@@ -2679,10 +2691,8 @@ describe('SettingsPanel runtime files', () => {
     await waitFor(() =>
       expect(getShortcutSettings).toHaveBeenCalled()
     )
-    const accelerator = await screen.findByLabelText('快捷键')
-    fireEvent.change(accelerator, {
-      target: { value: 'Control+Alt+K' }
-    })
+    const accelerator = await screen.findByRole('textbox', { name: '快捷键' })
+    fireEvent.keyDown(accelerator, { key: 'k', ctrlKey: true, altKey: true })
     fireEvent.click(
       screen.getByRole('button', { name: '保存快捷键' })
     )
@@ -2690,7 +2700,7 @@ describe('SettingsPanel runtime files', () => {
     expect(
       await screen.findByText(/已被其他应用占用/u)
     ).toBeInTheDocument()
-    expect(accelerator).toHaveValue('Control+Alt+K')
+    expect(accelerator).toHaveValue('Ctrl+Alt+K')
   })
 
   it('keeps a speech model draft when saving the selection fails', async () => {
@@ -3420,7 +3430,12 @@ describe('SettingsPanel runtime files', () => {
     ).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'OpenCode' }))
       .toHaveAttribute('aria-selected', 'true')
-    expect(screen.queryByText('默认 Runtime')).not.toBeInTheDocument()
+    const defaultRuntime = screen.getByRole('combobox', { name: '默认 Runtime' })
+    fireEvent.change(defaultRuntime, { target: { value: 'continue' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => expect(updateRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'continue' })
+    ))
     expect(
       screen.getAllByText(/GoodBuddy 内置 OpenCode/).length
     ).toBeGreaterThan(0)

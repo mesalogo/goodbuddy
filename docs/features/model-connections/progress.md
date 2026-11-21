@@ -23,7 +23,7 @@
 ### 待办
 
 - 在运行中的应用里目测两栏选择器（窄窗口、深色主题、长名称）。
-- 移除全局 `provider`，见[设计第 6 节](../../agent-runtime/contracts/selection.md#6-全局-provider历史遗留待移除)。
+- 当时拟移除全局 `provider`。后续设置页提供了“默认 Runtime”选择器，见[当前选择规则](../../agent-runtime/contracts/selection.md#6-全局默认执行方式)。
 - 用途模型，见[设计第 7 节](../../agent-runtime/contracts/selection.md#7-用途模型规划未实现)。
 
 

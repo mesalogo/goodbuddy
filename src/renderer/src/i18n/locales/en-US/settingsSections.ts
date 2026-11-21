@@ -679,7 +679,8 @@ export const settingsSections = {
       enabled: 'Enable global shortcut',
       accelerator: 'Shortcut',
       recorderHelp:
-        'Focus this field and press a key combination, or enter an Electron accelerator such as CommandOrControl+Shift+Space.',
+        'Click to display keys as you press them. A global shortcut requires modifiers and a regular key (such as Ctrl+Alt+K); Ctrl+Alt alone cannot be saved. Press Esc to leave recording, then click Save shortcut when ready.',
+      recording: 'Press a key combination…',
       reset: 'Reset to default',
       save: 'Save shortcut',
       saving: 'Saving…',

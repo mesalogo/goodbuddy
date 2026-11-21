@@ -642,7 +642,8 @@ export const settingsSections = {
       enabled: '启用全局快捷键',
       accelerator: '快捷键',
       recorderHelp:
-        '聚焦输入框后直接按下组合键，或填写 Electron accelerator（例如 CommandOrControl+Shift+Space）。',
+        '点击后按键会实时显示。全局快捷键需要修饰键加一个普通键（如 Ctrl+Alt+K）；仅 Ctrl+Alt 不能保存。按 Esc 退出录制，完成后点击“保存快捷键”。',
+      recording: '请按下组合键…',
       reset: '恢复默认',
       save: '保存快捷键',
       saving: '保存中…',

@@ -177,6 +177,7 @@ export const settings = {
       'Authentication is currently disabled; the saved API Key remains stored with this connection'
   },
   runtime: {
+    defaultProvider: 'Default Runtime',
     configCard: {
       title: '{{runtime}} configuration',
       fileLabel: 'Configuration file',

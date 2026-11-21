@@ -243,9 +243,10 @@ records are listed separately and do not introduce another feature status.
 
 ### Agent Runtimes and model connections
 
-- [x] **Default Runtime**: Fresh or restored default settings use OpenCode.
-  Explicit saved selections are preserved; users can still select direct-model
-  execution. No model credentials are provisioned by this default.
+- [x] **Default Runtime**: Choose a default under Settings → Agent Runtime
+  and click Save settings. Fresh or restored settings use OpenCode. Explicit
+  project and conversation selections take priority. Configure credentials
+  in the model connection settings.
 - [x] **System One role selection**: Configure a System One decision-model
   connection, assign it to role selection, and enable automatic role routing.
   Manual roles keep priority; uncertain, failed, or timed-out decisions fall back

@@ -159,6 +159,7 @@ export const settings = {
       '当前无需认证；已保存的 API Key 仍保留在此连接中'
   },
   runtime: {
+    defaultProvider: '默认 Runtime',
     configCard: {
       title: '{{runtime}} 自有配置',
       fileLabel: '配置文件',

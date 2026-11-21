@@ -67,8 +67,10 @@
 
 ### 3.3 系统设置
 
-“设置 → Agent Runtime”按 OpenCode / Continue / DeepSeek Harness 页签分别选择各自的
-全局默认模型；直连模型的默认值在“模型连接”中设置。设置页没有“全局执行方式”控件。
+在“设置 → Agent Runtime”顶部的“默认 Runtime”中选择直连模型、OpenCode、Continue 或
+DeepSeek Harness，点击“保存设置”后生效。会话和项目已有的执行方式优先于这个默认值。
+OpenCode、Continue 和 DeepSeek Harness 各自的默认模型在对应页签中选择。
+直连模型的默认连接在“模型连接”中选择。
 
 ## 4. 执行时解析（已实现）
 
@@ -90,24 +92,17 @@
   `profileId`。
 - 通道项目创建为 `{ provider: 'model' }`；SSH 项目允许不保存选择。
 
-## 6. 全局 `provider`（历史遗留，待移除）
+## 6. 全局默认执行方式
 
-`RuntimeSettings.provider` 来自项目层出现之前的“全局执行方式”。它已没有设置界面，
-但仍在以下位置被读取。自 Desktop `0.18.3` 起，新安装或恢复默认 Runtime 设置时使用
-`opencode`。已保存的具体选择和旧 `auto` 的迁移规则不变；这里不创建模型连接或凭据。
+`RuntimeSettings.provider` 保存系统设置中的“默认 Runtime”。新安装或恢复默认
+Runtime 设置时使用 `opencode`。模型连接和凭据由对应的模型设置管理。
 
 | 位置 | 用途 |
 | --- | --- |
 | `resolveRuntimeChoice` 的 `normalizedGlobalProvider` | 项目和会话都没有 `provider` 时的兜底（旧数据、无项目的状态查询） |
 | `getConfiguredRuntimeTarget` → `createConfiguredRuntime`（`src/main/index.ts`） | 启动和设置变更时创建默认 Runtime；监督者回顾、无唯一项目的心跳等不带项目的请求使用它 |
 | `runtime-settings-store.ts` | 归一化、`auto` → `model` 迁移和写回 |
-| `SettingsPanel` | 无界面地读入并原样保存 |
-
-结论：该字段不应继续作为用户概念存在。移除方案与第 7 节一起实施：
-
-1. 启动修复为所有 `provider` 为空的项目写入当时解析出的具体执行方式。
-2. 兜底固定为 `model`；默认 Runtime 固定为直连模型。
-3. 设置输入和公开设置不再包含 `provider`；存储保留该字段只用于读取旧文件，不再写入。
+| `SettingsPanel` | 读入当前选择，在用户点击“保存设置”时写回 |
 
 ## 7. 用途模型（规划，未实现）
 

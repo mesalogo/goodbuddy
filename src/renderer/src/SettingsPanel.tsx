@@ -63,6 +63,7 @@ import {
   type RuntimeCustomizationSectionHandle
 } from './RuntimeCustomizationSection'
 import { PageHeader, PageTabs } from './WorkspacePrimitives'
+import { agentRuntimeProviders, agentRuntimeProviderSchema } from '../../shared/runtime-selection-contracts'
 import {
   SettingsCategoryHeader,
   SettingsWarningList
@@ -2229,6 +2230,24 @@ function SettingsPanelView({
               actions={
                 configurationTab && !(activeTab === 'model' && modelType === 'document-recognition') ? (
                   <>
+                    {activeTab === 'runtime' && (
+                      <label className="settings-runtime-default">
+                        <span>{t('runtime.defaultProvider')}</span>
+                        <select
+                          className="field-control"
+                          aria-label={t('runtime.defaultProvider')}
+                          disabled={!settings || saving || testing}
+                          value={provider}
+                          onChange={(event) => setProvider(agentRuntimeProviderSchema.parse(event.target.value))}
+                        >
+                          {agentRuntimeProviders.map((candidate) => (
+                            <option key={candidate} value={candidate}>
+                              {t(`runtimeSelection.providers.${candidate}`, { ns: 'app' })}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                     {(activeTab === 'runtime' ||
                       (activeTab === 'model' && modelType === 'llm')) && (
                       <button

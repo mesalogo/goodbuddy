@@ -8,6 +8,8 @@ import react from '@vitejs/plugin-react'
 import { expect, it } from 'vitest'
 
 it.each([
+  { mode: 'platform', name: 'aligns platform switches at the card edge and keeps help beside labels without toggling settings' },
+  { mode: 'runtime', name: 'styles the default Runtime selector consistently across themes, locales and window widths' },
   { mode: 'layout', name: 'keeps workbar add reachable and model protocols readable at narrow container widths' },
   { mode: 'source', name: 'aligns the model download source button and supports native dialog confirm and cancel' },
   { mode: 'recognition', name: 'keeps document recognition forms aligned and advanced options spaced at desktop and narrow widths' }

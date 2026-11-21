@@ -14,6 +14,7 @@ import type {
 } from '../../shared/application-settings-contracts'
 import {
   canonicalizeShortcutAccelerator,
+  formatShortcutForDisplay,
   type GlobalShortcutSettings,
   type GlobalShortcutSettingsSnapshot,
   type GlobalShortcutUpdateErrorCode
@@ -74,6 +75,8 @@ export function PlatformFeaturesSettingsSection({
   const [shortcutDraft, setShortcutDraft] =
     useState<GlobalShortcutSettings>()
   const [shortcutSaving, setShortcutSaving] = useState(false)
+  const [recordingShortcut, setRecordingShortcut] = useState(false)
+  const [shortcutPreview, setShortcutPreview] = useState('')
   const [shortcutError, setShortcutError] = useState<string | undefined>(
     () =>
       window.goodbuddy.shortcuts
@@ -199,22 +202,16 @@ export function PlatformFeaturesSettingsSection({
   const recordShortcut = (
     event: React.KeyboardEvent<HTMLInputElement>
   ): void => {
-    if (
-      ['Control', 'Shift', 'Alt', 'Meta'].includes(event.key) ||
-      event.key === 'Escape' ||
-      event.key === 'Tab'
-    ) {
-      return
-    }
-    if (
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !event.altKey
-    ) {
-      return
-    }
+    if (event.key === 'Tab') return
     event.preventDefault()
+    event.stopPropagation()
+    if (event.key === 'Escape') {
+      setRecordingShortcut(false)
+      event.currentTarget.blur()
+      return
+    }
     const isMac = shortcutSnapshot?.platform === 'darwin'
+    const modifierOnly = ['Control', 'Shift', 'Alt', 'Meta'].includes(event.key)
     const parts = [
       event.ctrlKey
         ? isMac
@@ -228,8 +225,11 @@ export function PlatformFeaturesSettingsSection({
         : undefined,
       event.altKey ? 'Alt' : undefined,
       event.shiftKey ? 'Shift' : undefined,
-      event.key === ' ' ? 'Space' : event.key
+      modifierOnly ? undefined : event.key === ' ' ? 'Space' : event.key
     ].filter((part): part is string => Boolean(part))
+    setShortcutPreview(formatShortcutForDisplay(parts.join('+'), shortcutSnapshot?.platform ?? ''))
+    setRecordingShortcut(true)
+    if (modifierOnly) return
     try {
       const accelerator = canonicalizeShortcutAccelerator(
         parts.join('+')
@@ -238,6 +238,7 @@ export function PlatformFeaturesSettingsSection({
         current ? { ...current, accelerator } : current
       )
       setShortcutError(undefined)
+      setRecordingShortcut(false)
     } catch {
       setShortcutError(
         t('platformFeatures.shortcut.errors.invalidAccelerator')
@@ -323,17 +324,19 @@ export function PlatformFeaturesSettingsSection({
       >
         <article className="capability-card">
           <div className="capability-card__header">
-            <span className="inline-help-label">
-              <strong>{t('platformFeatures.shortcut.title')}</strong>
-              <InlineHelp label={t('platformFeatures.shortcut.title')}>
-                {t('platformFeatures.shortcut.description')}
-              </InlineHelp>
-            </span>
+            <strong>{t('platformFeatures.shortcut.title')}</strong>
           </div>
           {shortcutDraft && shortcutSnapshot ? (
             <>
-              <label className="toggle-row">
+              <div className="toggle-row">
+                <span className="inline-help-label">
+                  <label htmlFor="platform-shortcut-enabled">{t('platformFeatures.shortcut.enabled')}</label>
+                  <InlineHelp label={t('platformFeatures.shortcut.title')}>
+                    {t('platformFeatures.shortcut.description')}
+                  </InlineHelp>
+                </span>
                 <input
+                  id="platform-shortcut-enabled"
                   checked={shortcutDraft.enabled}
                   disabled={shortcutSaving}
                   onChange={(event) =>
@@ -345,29 +348,30 @@ export function PlatformFeaturesSettingsSection({
                   role="switch"
                   type="checkbox"
                 />
-                <span>{t('platformFeatures.shortcut.enabled')}</span>
-              </label>
-              <label className="field">
-                <span>{t('platformFeatures.shortcut.accelerator')}</span>
+              </div>
+              <div className="field">
+                <span className="inline-help-label">
+                  <label htmlFor="platform-shortcut-accelerator">{t('platformFeatures.shortcut.accelerator')}</label>
+                  <InlineHelp label={t('platformFeatures.shortcut.accelerator')} id="global-shortcut-recorder-help">
+                    {t('platformFeatures.shortcut.recorderHelp')}
+                  </InlineHelp>
+                </span>
                 <input
+                  id="platform-shortcut-accelerator"
                   aria-label={t(
                     'platformFeatures.shortcut.accelerator'
                   )}
                   aria-describedby="global-shortcut-recorder-help"
                   disabled={!shortcutDraft.enabled || shortcutSaving}
-                  onChange={(event) =>
-                    setShortcutDraft({
-                      ...shortcutDraft,
-                      accelerator: event.target.value
-                    })
-                  }
+                  readOnly
+                  onFocus={() => { setShortcutPreview(''); setRecordingShortcut(true) }}
+                  onClick={() => { setShortcutPreview(''); setRecordingShortcut(true) }}
+                  onBlur={() => setRecordingShortcut(false)}
                   onKeyDown={recordShortcut}
-                  value={shortcutDraft.accelerator}
+                  placeholder={t('platformFeatures.shortcut.recording')}
+                  value={recordingShortcut ? shortcutPreview : formatShortcutForDisplay(shortcutDraft.accelerator, shortcutSnapshot.platform)}
                 />
-                <small id="global-shortcut-recorder-help">
-                  {t('platformFeatures.shortcut.recorderHelp')}
-                </small>
-              </label>
+              </div>
               <div className="update-settings__actions">
                 <button
                   className="secondary-button"
@@ -435,8 +439,15 @@ export function PlatformFeaturesSettingsSection({
             <div className="capability-card__header">
               <strong>{t('platformFeatures.groups.conversation')}</strong>
             </div>
-            <label className="toggle-row">
+            <div className="toggle-row">
+              <span className="inline-help-label">
+                <label htmlFor="platform-desktop-notifications">{t('platformFeatures.desktopNotifications.enabled')}</label>
+                <InlineHelp label={t('platformFeatures.desktopNotifications.enabled')} id="desktop-notifications-description">
+                  {t('platformFeatures.desktopNotifications.description')}
+                </InlineHelp>
+              </span>
               <input
+                id="platform-desktop-notifications"
                 aria-describedby="desktop-notifications-description"
                 checked={settings.desktopNotificationsEnabled}
                 disabled={saving}
@@ -446,31 +457,26 @@ export function PlatformFeaturesSettingsSection({
                 role="switch"
                 type="checkbox"
               />
-              <span>{t('platformFeatures.desktopNotifications.enabled')}</span>
-            </label>
-            <p id="desktop-notifications-description">
-              {t('platformFeatures.desktopNotifications.description')}
-            </p>
-            <div className="inline-help-label">
-              <label className="toggle-row">
-                <input
-                  checked={settings.conversationHtmlRenderingEnabled}
-                  disabled={saving}
-                  onChange={(event) =>
-                    void changeConversationHtmlRendering(
-                      event.target.checked
-                    )
-                  }
-                  role="switch"
-                  type="checkbox"
-                />
-                <span>
-                  {t('platformFeatures.conversationHtml.enabled')}
-                </span>
-              </label>
-              <InlineHelp label={t('platformFeatures.conversationHtml.title')}>
-                {t('platformFeatures.conversationHtml.description')}
-              </InlineHelp>
+            </div>
+            <div className="toggle-row">
+              <span className="inline-help-label">
+                <label htmlFor="platform-conversation-html">{t('platformFeatures.conversationHtml.enabled')}</label>
+                <InlineHelp label={t('platformFeatures.conversationHtml.title')}>
+                  {t('platformFeatures.conversationHtml.description')}
+                </InlineHelp>
+              </span>
+              <input
+                id="platform-conversation-html"
+                checked={settings.conversationHtmlRenderingEnabled}
+                disabled={saving}
+                onChange={(event) =>
+                  void changeConversationHtmlRendering(
+                    event.target.checked
+                  )
+                }
+                role="switch"
+                type="checkbox"
+              />
             </div>
           </article>
         )}
