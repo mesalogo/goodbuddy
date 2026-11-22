@@ -2142,6 +2142,7 @@ function RightAssistantSidebarView({
                 type="button"
               >
                 <Plus aria-hidden="true" size={13} />
+                <span>{t('taskStrip.create')}</span>
               </button>
             </div>
             <div className="task-center__filters" id={`task-filters-${instance.id}`} hidden={!taskListExpanded}

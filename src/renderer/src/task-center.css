@@ -126,9 +126,10 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 32px;
+  gap: var(--space-1);
   height: 32px;
-  padding: 0;
+  padding: 0 var(--space-2);
+  white-space: nowrap;
 }
 
 .task-center .task-center__filters { flex: 0 0 auto; }
