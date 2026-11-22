@@ -334,6 +334,74 @@ jobs:
           compression-level: 0
           retention-days: 30
 
+  windows-extra:
+    name: Windows MSI and Store MSIX (${{ matrix.arch }})
+    needs: [validate, authorize-release]
+    if: needs.authorize-release.outputs.authorized == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+          - arch: arm64
+            runner: windows-11-vs2026-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      MS_STORE_IDENTITY_NAME: ${{ vars.MS_STORE_IDENTITY_NAME }}
+      MS_STORE_PUBLISHER: ${{ vars.MS_STORE_PUBLISHER }}
+      MS_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.MS_STORE_PUBLISHER_DISPLAY_NAME }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}/electron
+            ${{ runner.temp }}/electron-builder
+          key: packaging-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: packaging-${{ runner.os }}-${{ matrix.arch }}-
+      - run: npm ci
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
+      - uses: actions/download-artifact@v8
+        with:
+          name: goodbuddy-production-bundle
+          path: out
+      - name: Build MSI
+        run: npm run dist:win:msi -- --arch ${{ matrix.arch }} --skip-build
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
+      - uses: actions/upload-artifact@v7
+        with:
+          name: goodbuddy-msi-${{ matrix.arch }}
+          path: dist/release/windows-${{ matrix.arch }}-msi
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Build Store MSIX
+        if: env.MS_STORE_IDENTITY_NAME != '' || env.MS_STORE_PUBLISHER != '' || env.MS_STORE_PUBLISHER_DISPLAY_NAME != ''
+        run: npm run dist:win:msix -- --arch ${{ matrix.arch }} --skip-build
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
+      - uses: actions/upload-artifact@v7
+        if: env.MS_STORE_IDENTITY_NAME != ''
+        with:
+          name: goodbuddy-msix-${{ matrix.arch }}
+          path: dist/release/windows-${{ matrix.arch }}-msix
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Explain missing Store identity
+        if: env.MS_STORE_IDENTITY_NAME == '' && env.MS_STORE_PUBLISHER == '' && env.MS_STORE_PUBLISHER_DISPLAY_NAME == ''
+        run: echo 'MSIX not built. Configure MS_STORE_IDENTITY_NAME, MS_STORE_PUBLISHER and MS_STORE_PUBLISHER_DISPLAY_NAME from Partner Center.'
+
   release:
     name: Publish GitHub and OSS release
     if: >-

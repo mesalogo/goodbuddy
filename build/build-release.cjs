@@ -127,7 +127,7 @@ const platformDefinitions = {
   windows: {
     builderFlag: '--win',
     defaultFormats: ['nsis', 'portable'],
-    supportedFormats: ['nsis', 'portable'],
+    supportedFormats: ['nsis', 'portable', 'msi', 'msix'],
     unpackedPattern: /^win(?:-.+)?-unpacked$/u,
     executable: [`${productName}.exe`],
     runtimeExecutable: 'opencode.exe',
@@ -159,6 +159,8 @@ const platformDefinitions = {
 }
 const formatExtensions = {
   nsis: '.exe',
+  msi: '.msi',
+  msix: '.msix',
   portable: '.zip',
   dmg: '.dmg',
   zip: '.zip',
@@ -243,6 +245,9 @@ function parseArguments(argv, environment = process) {
     }
     return normalized
   }))]
+  if (options.formats.some((format) => format === 'msi' || format === 'msix') && options.formats.length !== 1) {
+    throw new Error('MSI 与 MSIX 使用各自的更新渠道，请分别指定 --format msi 或 --format msix 构建')
+  }
   return options
 }
 
@@ -349,13 +354,13 @@ function runCapture(command, args, environment = process.env) {
   })
 }
 
-function buildElectronBuilderArguments(options, outputDirectory) {
+function buildElectronBuilderArguments(options, outputDirectory, environment = process.env) {
   const definition = platformDefinitions[options.platform]
   const builderFormats = [...new Set(
     options.formats.map((format) =>
       options.platform === 'windows' && format === 'portable'
         ? 'dir'
-        : format
+        : format === 'msix' ? 'appx' : format
     )
   )]
   const builderArguments = [
@@ -379,6 +384,19 @@ function buildElectronBuilderArguments(options, outputDirectory) {
   }
   if (options.platform === 'macos' && options.unsigned) {
     builderArguments.push('--config.mac.notarize=false')
+  }
+  if (options.platform === 'windows' && options.formats.includes('msi')) {
+    builderArguments.push(
+      '--config.extraMetadata.goodbuddyWindowsDistribution=msi',
+      '--config.msi.oneClick=false',
+      '--config.msi.perMachine=true',
+      '--config.msi.runAfterFinish=false',
+      '--config.msi.artifactName=GoodBuddy-${version}-windows-${arch}.msi'
+    )
+  }
+  if (options.platform === 'windows' && options.formats.includes('msix')) {
+    const { storeBuilderArguments } = require('./windows-store.cjs')
+    builderArguments.push(...storeBuilderArguments(outputDirectory, environment))
   }
   return builderArguments
 }
@@ -1333,7 +1351,7 @@ async function createPortableZip(
   }
 }
 
-function readZipEntryNames(filePath) {
+function readZipEntryNames(filePath, label = 'Portable ZIP', minimumEntries = portableRequiredFiles.length + 1) {
   const handle = openSync(filePath, 'r')
   try {
     let parsed
@@ -1342,15 +1360,16 @@ function readZipEntryNames(filePath) {
         handle,
         fstatSync(handle).size,
         {
-          label: 'Portable ZIP',
-          minimumEntries: portableRequiredFiles.length + 1,
+          label,
+          minimumEntries,
+          zip64DirectoryListing: label === 'MSIX',
           maximumEntries: maxPortableZipEntries,
           maximumCentralDirectoryBytes:
             maxPortableCentralDirectoryBytes
         }
       )
     } catch (error) {
-      throw new Error('Portable ZIP 中央目录无效', {
+      throw new Error(`${label} 中央目录无效`, {
         cause: error
       })
     }
@@ -1400,7 +1419,7 @@ function verifyArtifacts(directory, options) {
         ? candidates.filter((name) =>
             format === 'nsis'
               ? /-setup\.exe$/iu.test(name)
-              : /-portable\.zip$/iu.test(name)
+              : format === 'portable' ? /-portable\.zip$/iu.test(name) : true
           )
         : candidates
     if (matches.length !== 1) {
@@ -1415,6 +1434,12 @@ function verifyArtifacts(directory, options) {
     )
     if (format === 'portable') {
       verifyPortableZip(join(directory, matches[0]))
+    }
+    if (format === 'msix') {
+      const names = new Set(readZipEntryNames(join(directory, matches[0]), 'MSIX', 1))
+      for (const required of ['AppxManifest.xml', 'AppxBlockMap.xml', '[Content_Types].xml', 'app/GoodBuddy.exe', 'app/resources/app.asar']) {
+        if (!names.has(required)) throw new Error(`MSIX 缺少必要文件：${required}`)
+      }
     }
   }
 }
@@ -1445,13 +1470,19 @@ function normalizeAppImageArtifact(directory, options) {
 }
 
 function verifyArtifactSignature(filePath, format, arch) {
+  if (format === 'msi') {
+    if (readChunk(filePath, 8).toString('hex') !== 'd0cf11e0a1b11ae1') {
+      throw new Error('msi 产物不是有效的 Windows Installer 复合文档')
+    }
+    return
+  }
   if (format === 'nsis') {
     if (readChunk(filePath, 2).toString('ascii') !== 'MZ') {
       throw new Error(`${format} 产物不是有效的 Windows PE 文件`)
     }
     return
   }
-  if (format === 'portable' || format === 'zip') {
+  if (format === 'portable' || format === 'zip' || format === 'msix') {
     const signature = readChunk(filePath, 4).toString('hex')
     if (
       !['504b0304', '504b0506', '504b0708'].includes(signature)
@@ -1622,7 +1653,7 @@ function printHelp() {
   --unsigned       仅用于 macOS，明确禁用代码签名与公证
 
 默认格式：
-  windows: nsis, portable (ZIP)
+  windows: nsis, portable (ZIP)；另可分别指定 --format msi 或 --format msix
   macos:   dmg
   linux:   AppImage, deb, rpm`)
 }
@@ -1633,10 +1664,13 @@ async function main(argv = process.argv.slice(2)) {
     printHelp()
     return
   }
-  const targetName = `${options.platform}-${options.arch}`
+  const distribution = options.formats.find((format) => format === 'msi' || format === 'msix')
+  const targetName = `${options.platform}-${options.arch}${distribution ? `-${distribution}` : ''}`
   const destination = safeReleasePath(join(releaseRoot, targetName))
   const stagingDirectory = safeReleasePath(
-    join(releaseRoot, `.stage-${targetName}-${process.pid}`)
+    // WiX's bundled linker still uses MAX_PATH. Keep additional Windows package
+    // staging short enough for the bundled inspector's long resource filenames.
+    join(releaseRoot, distribution ? `.w-${process.pid}` : `.stage-${targetName}-${process.pid}`)
   )
   const builderArguments = buildElectronBuilderArguments(
     options,
@@ -1676,6 +1710,9 @@ async function main(argv = process.argv.slice(2)) {
     }
     cleanupTargetDependencies =
       await stageTargetRuntimeDependencies(options)
+    if (distribution === 'msix') {
+      await require('./windows-store.cjs').prepareStoreAssets(stagingDirectory)
+    }
     await run(
       process.execPath,
       builderArguments,
@@ -1710,6 +1747,9 @@ async function main(argv = process.argv.slice(2)) {
     }
     verifyArtifacts(stagingDirectory, options)
     rmSync(unpackedDirectory, { recursive: true, force: true })
+    if (distribution === 'msix') {
+      rmSync(join(stagingDirectory, 'store-resources'), { recursive: true, force: true })
+    }
     const manifest = await writeManifest(stagingDirectory, options)
     replaceOutput(stagingDirectory, destination, options)
     console.log(`发布包构建完成：${destination}`)

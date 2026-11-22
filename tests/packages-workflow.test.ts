@@ -93,6 +93,7 @@ describe('desktop packages workflow', () => {
       'validate',
       'authorize-release',
       'package',
+      'windows-extra',
       'release'
     ])
     const actionReferences = [

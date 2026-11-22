@@ -993,6 +993,10 @@ if (hasSingleInstanceLock) {
         }
       }
     })
+    const packageMetadata = app.isPackaged && process.platform === 'win32'
+      ? JSON.parse(await readFile(join(app.getAppPath(), 'package.json'), 'utf8')) as { goodbuddyWindowsDistribution?: 'msi' | 'store' }
+      : undefined
+    const windowsDistribution = process.windowsStore ? 'store' : packageMetadata?.goodbuddyWindowsDistribution
     desktopUpdateService = new DesktopUpdateService({
       directory: join(app.getPath('userData'), 'desktop-updates', 'package'),
       portable: Boolean(portableUserDataPath),
@@ -1006,7 +1010,7 @@ if (hasSingleInstanceLock) {
       run: (job, report) => runUpdateWorker(join(mainModuleDirectory, 'desktop-update-worker.js'), job, report),
       openPath: path => shell.openPath(path),
       showItemInFolder: path => shell.showItemInFolder(path),
-      requestRestart: installedWindowsBuild && !portableUserDataPath ? path => {
+      requestRestart: installedWindowsBuild && !portableUserDataPath && !windowsDistribution ? path => {
         pendingDesktopUpdateInstaller = path
         app.quit()
       } : undefined
@@ -1016,6 +1020,7 @@ if (hasSingleInstanceLock) {
       currentVersion: app.getVersion(),
       platform: process.platform,
       arch: process.arch,
+      windowsDistribution,
       onResult: (result, source) => desktopUpdateService?.accept(result, source)
     })
     const speechModelManager = new SpeechModelManager({

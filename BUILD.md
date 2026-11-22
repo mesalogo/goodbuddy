@@ -105,6 +105,9 @@ broker 调用已分配自定义 MCP 的真实 OpenCode 和 Continue 用例。
 
 ## 生产构建
 
+Windows 的 MSI、MSIX 独立构建入口、Partner Center 标识和商店自动提交见
+[Windows MSI、MSIX 构建与商店提交](./docs/development/windows-store.md)。
+
 生成 Electron Main、Preload 和 Renderer 生产文件：
 
 ```bash

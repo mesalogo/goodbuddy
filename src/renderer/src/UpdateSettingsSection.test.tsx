@@ -20,6 +20,31 @@ afterEach(() => {
 })
 
 describe('UpdateSettingsSection', () => {
+  it.each(['store', 'msi'] as const)('explains %s updates without claiming the installed version is current', async managedBy => {
+    const openReleasePage = vi.fn()
+    Object.defineProperty(window, 'goodbuddy', {
+      configurable: true,
+      value: {
+        app: { getInfo: vi.fn(async () => ({ name: 'GoodBuddy', version: '0.18.3', platform: 'win32', arch: 'x64' })) },
+        updates: {
+          getSettings: vi.fn(async () => ({ checkUpdatesOnStartup: true, updateSource: 'github' })),
+          check: vi.fn(async () => ({ managedBy, updateAvailable: false, currentVersion: '0.18.3', latestVersion: '0.18.3', target: { platform: 'windows', arch: 'x64', formats: [], files: [] } })),
+          openReleasePage
+        }
+      }
+    })
+    render(<UpdateSettingsSection />)
+    fireEvent.click(screen.getByRole('button', { name: '立即检查更新' }))
+    await screen.findByText(managedBy === 'store'
+      ? '此版本通过 Microsoft Store 更新，请在商店的“下载”或“库”中检查更新。'
+      : '此版本通过 MSI 安装，请由管理员使用新版 MSI 安装包升级。')
+    expect(screen.queryByText('当前已是最新版本')).not.toBeInTheDocument()
+    if (managedBy === 'store') {
+      fireEvent.click(screen.getByRole('button', { name: 'Microsoft Store' }))
+      expect(openReleasePage).toHaveBeenCalledOnce()
+    }
+  })
+
   it('checks the official release manifest and updates the startup preference', async () => {
     let applicationSettings: ApplicationSettings = {
       checkUpdatesOnStartup: true,

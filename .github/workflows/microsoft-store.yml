@@ -1,0 +1,93 @@
+name: Submit Microsoft Store update
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_run_id:
+        description: Cross-platform packages run ID containing both MSIX artifacts
+        required: true
+        type: string
+      commit_submission:
+        description: Submit for certification (false uploads a draft; uploading replaces any pending draft)
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: microsoft-store-submission
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    environment: microsoft-store
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download x64 MSIX
+        uses: actions/download-artifact@v8
+        with:
+          name: goodbuddy-msix-x64
+          run-id: ${{ inputs.package_run_id }}
+          github-token: ${{ github.token }}
+          path: packages/x64
+      - name: Download ARM64 MSIX
+        uses: actions/download-artifact@v8
+        with:
+          name: goodbuddy-msix-arm64
+          run-id: ${{ inputs.package_run_id }}
+          github-token: ${{ github.token }}
+          path: packages/arm64
+      - name: Prepare upload archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packages = @(Get-ChildItem packages -Recurse -Filter '*.msix')
+          if ($packages.Count -ne 2) { throw 'Expected exactly one MSIX per architecture' }
+          foreach ($arch in @('x64', 'arm64')) {
+            $manifest = Get-Content "packages/$arch/release-manifest.json" -Raw | ConvertFrom-Json
+            if ($manifest.platform -ne 'windows' -or $manifest.arch -ne $arch -or @($manifest.formats).Count -ne 1 -or $manifest.formats[0] -ne 'msix') { throw 'Unexpected package manifest' }
+            $package = @($packages | Where-Object { $_.Directory.Name -eq $arch })
+            if ($package.Count -ne 1) { throw "Expected one $arch MSIX" }
+            $entry = @($manifest.files | Where-Object { $_.name -eq $package[0].Name })
+            if ($entry.Count -ne 1 -or (Get-FileHash $package[0].FullName -Algorithm SHA256).Hash -ne $entry[0].sha256) { throw 'MSIX hash mismatch' }
+            if ($arch -eq 'x64') { $version = $manifest.version }
+            elseif ($manifest.version -ne $version) { throw 'Architecture versions differ' }
+          }
+          Compress-Archive -LiteralPath $packages.FullName -DestinationPath store-upload.zip
+          Move-Item store-upload.zip store-upload.msixupload
+      - uses: microsoft/microsoft-store-apppublisher@v1.4
+      - name: Configure Store API identity
+        shell: pwsh
+        env:
+          STORE_TENANT_ID: ${{ secrets.MS_STORE_TENANT_ID }}
+          STORE_SELLER_ID: ${{ secrets.MS_STORE_SELLER_ID }}
+          STORE_CLIENT_ID: ${{ secrets.MS_STORE_CLIENT_ID }}
+          STORE_CLIENT_SECRET: ${{ secrets.MS_STORE_CLIENT_SECRET }}
+        run: |
+          foreach ($key in @('STORE_TENANT_ID', 'STORE_SELLER_ID', 'STORE_CLIENT_ID', 'STORE_CLIENT_SECRET')) {
+            if (-not [Environment]::GetEnvironmentVariable($key)) { throw "Missing $key" }
+          }
+          msstore reconfigure --tenantId "$env:STORE_TENANT_ID" --sellerId "$env:STORE_SELLER_ID" --clientId "$env:STORE_CLIENT_ID" --clientSecret "$env:STORE_CLIENT_SECRET"
+          if ($LASTEXITCODE -ne 0) { throw 'Store CLI authentication configuration failed' }
+      - name: Upload and optionally submit for certification
+        shell: pwsh
+        env:
+          STORE_APP_ID: ${{ vars.MS_STORE_APP_ID }}
+          COMMIT_SUBMISSION: ${{ inputs.commit_submission }}
+        run: |
+          if (-not $env:STORE_APP_ID) { throw 'Missing MS_STORE_APP_ID' }
+          $arguments = @('publish', '.', '--inputFile', 'store-upload.msixupload', '--appId', $env:STORE_APP_ID)
+          if ($env:COMMIT_SUBMISSION -ne 'true') { $arguments += '--noCommit' }
+          msstore @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'Store upload/submission failed' }
+          "Store upload completed. Submitted for certification: $env:COMMIT_SUBMISSION. Check Partner Center for certification and publication status." >> $env:GITHUB_STEP_SUMMARY
+      - name: Clear CLI credentials
+        if: always()
+        shell: pwsh
+        run: |
+          if (Get-Command msstore -ErrorAction SilentlyContinue) { msstore reconfigure --reset }

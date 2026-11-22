@@ -280,7 +280,7 @@ export function UpdateSettingsSection({
             type="button"
           >
             <ExternalLink aria-hidden="true" size={13} />
-            {t('updates.actions.openDownloadPage')}
+            {result?.managedBy === 'store' ? 'Microsoft Store' : t('updates.actions.openDownloadPage')}
           </button>
           {downloads.supported && <button
             className="secondary-button"
@@ -302,7 +302,7 @@ export function UpdateSettingsSection({
           <div className="capability-card__header">
             <div>
               <strong>
-                {result.updateAvailable
+                {result.managedBy ? t(`updates.result.managed.${result.managedBy}`) : result.updateAvailable
                   ? t('updates.result.available', {
                       version: result.latestVersion
                     })
@@ -331,7 +331,7 @@ export function UpdateSettingsSection({
               </li>
             ))}
           </ul>
-          {!downloads.supported && <p>{t('updates.result.safety')}</p>}
+          {!downloads.supported && !result.managedBy && <p>{t('updates.result.safety')}</p>}
         </article>
       )}
       <article className="capability-card feedback-entry-card">

@@ -1,5 +1,23 @@
 # 桌面更新实施记录
 
+## 2026-11-22：MSI 与 Microsoft Store 更新渠道
+
+- 对应 FR-8、US-15：MSI/Store 包写入独立渠道标识，检查更新返回渠道说明和空安装文件列表。Store 版下载页跳转系统商店，MSI 版提示管理员部署；两者不注册 NSIS 重启回调。
+- 构建脚本、附加 Windows CI 产物、商店提交工作流及配置见 [Windows 分发说明](../../development/windows-store.md)。未配置商店凭据，未执行实际上传或提交。
+- 打包与发布回归 73 项通过；更新检查、UI、IPC 定向回归 285 项通过、2 项跳过；Agent 包及真实 Electron 更新回归 25 项通过、1 项跳过。
+- `npm.cmd run build:bundle`、`npm.cmd run lint`、Web 与 Agent TypeScript 检查通过。完整 `typecheck` 被当前工作区 `tests/crm-dynamic-runtime.test.ts` 的自引用 transport 及未知 body 类型错误阻塞；该文件存在并行工作。
+- 实际打包发现 WiX 路径长度限制和 MakeAppx ZIP64 目录问题，已缩短 Windows staging 路径并为 MSIX 增加 ZIP64 目录读取；普通 ZIP 提取调用保持原有行为，Agent 包回归通过。本次不改变远端 Agent 的协议、部署或 Runtime 行为。
+- 全量测试在代码修改期间启动，结果为 611 个文件通过、8 个文件失败、21 个文件跳过；7099 项通过、10 项失败、93 项跳过，耗时 1576.19 秒。其中更新页 2 项失败已在最终源码定向复测中通过（更新页、版本检查、工作流共 42 项通过）。其余失败涉及 CRM、Runtime 及布局用例，未判定为本次变更造成，也未据此宣称全量测试通过。
+- 最后一轮 ZIP64 修正通过真实 MakeAppx 小包验证；构建与 Agent 包回归 76 项通过、1 项跳过，修改脚本的 ESLint 通过。
+- x64 完整 MSI、MSIX 均实际生成，并通过生产 `verifyUnpackedOutput`、`verifyArtifacts` 和 ASAR 中更新渠道标识校验。因 Electron 下载遇到 TLS 中断，最终隔离验证复用本机已安装的同版本 Electron 44.5.1；构建参数由生产脚本生成，仅额外指定本地 `electronDist`。MSIX 使用显式测试产品标识，未提交商店。生成结果如下，临时包验证后清理。
+
+| 格式 | 字节数 | SHA-256 |
+| --- | --- | --- |
+| MSI x64 | 376612523 | `e983816aeb5eef335a269040e5ded8720dfb007f1cc481feb24e4d61a7cd2e7a` |
+| MSIX x64 | 514774457 | `2282bdcf1b002135b709d129af8b3048c67585c7b3d02d5c40613ddaa9c98694` |
+
+ARM64 构建/安装、MSI 升级、MSIX 商店安装及实际 API 提交仍未验证。当前 GitHub CLI 未登录，无法从本机读取远端商店变量或触发 CI；这些限制不由本地打包成功替代。
+
 ## 2026-11-04：更新安装进度窗口
 
 - 修复“重启并更新”使用静默参数导致安装期间缺少窗口反馈的问题。客户端去掉 `/S` 和隐藏窗口选项；安装包同时为旧客户端的 `/S --updated --force-run` 恢复可见进度。安装结束后自动启动新版。

@@ -48,13 +48,41 @@ function readZipCentralDirectory(handle, archiveSize, limits) {
   if (endOffset < 0) {
     throw new Error(`${limits.label} central directory is missing`)
   }
-  const diskNumber = end.readUInt16LE(endOffset + 4)
-  const centralDisk = end.readUInt16LE(endOffset + 6)
-  const diskEntryCount = end.readUInt16LE(endOffset + 8)
-  const entryCount = end.readUInt16LE(endOffset + 10)
-  const centralSize = end.readUInt32LE(endOffset + 12)
-  const centralOffset = end.readUInt32LE(endOffset + 16)
-  const absoluteEndOffset = endStart + endOffset
+  let diskNumber = end.readUInt16LE(endOffset + 4)
+  let centralDisk = end.readUInt16LE(endOffset + 6)
+  let diskEntryCount = end.readUInt16LE(endOffset + 8)
+  let entryCount = end.readUInt16LE(endOffset + 10)
+  let centralSize = end.readUInt32LE(endOffset + 12)
+  let centralOffset = end.readUInt32LE(endOffset + 16)
+  let absoluteEndOffset = endStart + endOffset
+  // MakeAppx emits ZIP64 directory records even for small packages. This opt-in
+  // is for listing MSIX names only; extraction callers retain classic ZIP rules.
+  if (limits.zip64DirectoryListing && absoluteEndOffset >= 20) {
+    const locator = readExactZipBytes(handle, 20, absoluteEndOffset - 20, limits.label)
+    if (locator.readUInt32LE(0) === 0x07064b50) {
+      const number64 = (buffer, offset) => {
+        const value = buffer.readBigUInt64LE(offset)
+        if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`${limits.label} ZIP64 value exceeds safe bounds`)
+        return Number(value)
+      }
+      const recordOffset = number64(locator, 8)
+      if (locator.readUInt32LE(4) !== 0 || locator.readUInt32LE(16) !== 1 || recordOffset > absoluteEndOffset - 76) {
+        throw new Error(`${limits.label} ZIP64 locator is invalid`)
+      }
+      const record = readExactZipBytes(handle, 56, recordOffset, limits.label)
+      if (record.readUInt32LE(0) !== 0x06064b50 || recordOffset + 12 + number64(record, 4) !== absoluteEndOffset - 20 ||
+          record.readUInt32LE(16) !== 0 || record.readUInt32LE(20) !== 0) {
+        throw new Error(`${limits.label} ZIP64 end record is invalid`)
+      }
+      diskEntryCount = number64(record, 24)
+      entryCount = number64(record, 32)
+      diskNumber = record.readUInt32LE(16)
+      centralDisk = record.readUInt32LE(20)
+      centralSize = number64(record, 40)
+      centralOffset = number64(record, 48)
+      absoluteEndOffset = recordOffset
+    }
+  }
   if (
     diskNumber !== 0 ||
     centralDisk !== 0 ||

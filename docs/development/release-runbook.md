@@ -42,8 +42,9 @@ to a public channel; follow the user's explicit publication instruction.
   automation to a packaged app, or perform exhaustive per-asset network probes
   unless the user explicitly asks for that additional validation.
 - `.github/workflows/packages.yml` is the canonical cross-platform packaging
-  workflow. It validates and builds `out` once, then packages on six native
-  runners: Windows, macOS, and Linux, each for x64 and arm64.
+  workflow. It validates and builds `out` once, then packages six primary native
+  targets: Windows, macOS, and Linux, each for x64 and arm64. Additional Windows
+  jobs produce the MSI and Store MSIX artifacts described below.
 - Linux source validation configures the installed Electron `chrome-sandbox`
   helper with root ownership and mode `4755`, rehydrates the Electron
   distribution without cache when the helper is missing, then runs the full
@@ -63,6 +64,15 @@ to a public channel; follow the user's explicit publication instruction.
 - Default deliverables are NSIS and portable ZIP for Windows, DMG for
   macOS, and AppImage, DEB, and RPM for Linux. Every target includes
   `release-manifest.json` with SHA-256 hashes.
+- Additional Windows jobs produce MSI artifacts and, when Store identity variables
+  are configured, MSIX artifacts for x64 and arm64. These are separate Actions
+  artifacts, not entries in the existing public update matrix. See
+  [Windows Store packaging and submission](./windows-store.md) for commands,
+  credentials, retention, and the manually triggered automated submission workflow.
+- `.github/workflows/msi.yml` also supports a standalone manual MSI build from
+  current `main`, selecting x64, arm64, or both. It builds and verifies its own
+  source bundle on the native Windows runners and uploads MSI/checksum artifacts
+  for 30 days without Store credentials or release publication.
 - Starting with Desktop 0.12.8, macOS releases contain DMG only. Older macOS
   GitHub update readers and all older mirror readers require ZIP and cannot
   validate this new matrix; affected users must upgrade manually from the

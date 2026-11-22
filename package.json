@@ -55,6 +55,8 @@
     "release:notes:verify": "node build/release-notes.cjs",
     "dist": "npm run build && node build/run-electron-builder.cjs",
     "dist:win": "npm run build && node build/run-electron-builder.cjs --win nsis --x64 --arm64",
+    "dist:win:msi": "node build/build-release.cjs --platform windows --format msi",
+    "dist:win:msix": "node build/build-release.cjs --platform windows --format msix",
     "dist:mac": "npm run build && node build/run-electron-builder.cjs --mac dmg --x64 --arm64",
     "dist:linux": "npm run dist:linux:x64 && npm run dist:linux:arm64",
     "dist:linux:x64": "npm run build && node build/run-electron-builder.cjs --linux AppImage deb rpm --x64",
@@ -336,6 +338,9 @@
       "target": [
         "nsis"
       ]
+    },
+    "appx": {
+      "languages": ["zh-CN", "en-US"]
     },
     "nsis": {
       "include": "build/installer.nsh",

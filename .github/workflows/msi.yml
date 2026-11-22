@@ -1,0 +1,91 @@
+name: Windows MSI packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: Windows architecture to build
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - x64
+          - arm64
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msi-${{ github.ref }}-${{ inputs.architecture }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: MSI ${{ matrix.arch }}
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(inputs.architecture == 'both' && '["x64","arm64"]' || format('["{0}"]', inputs.architecture)) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'windows-11-vs2026-arm' || 'windows-2025' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Verify manual build ref
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve main' }
+          $mainCommit = git rev-parse refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0 -or $mainCommit -ne $env:GITHUB_SHA) {
+            throw 'Run this workflow against the current main commit.'
+          }
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Cache packaging toolsets
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}/electron
+            ${{ runner.temp }}/electron-builder
+          key: packaging-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: packaging-${{ runner.os }}-${{ matrix.arch }}-
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
+
+      - name: Verify native runner architecture
+        run: node -e "if(process.arch !== '${{ matrix.arch }}'){throw new Error('Expected ${{ matrix.arch }} runner, received '+process.arch)}"
+
+      - name: Check source and packaging regressions
+        shell: pwsh
+        run: |
+          npm run lint
+          if ($LASTEXITCODE -ne 0) { throw 'Lint failed' }
+          npm exec vitest run tests/windows-package-formats.test.ts tests/build-release.test.ts
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging regression tests failed' }
+
+      - name: Build and verify MSI
+        run: npm run dist:win:msi -- --arch ${{ matrix.arch }}
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/electron
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder
+
+      - name: Upload MSI and checksum manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: goodbuddy-msi-${{ matrix.arch }}
+          path: |
+            dist/release/windows-${{ matrix.arch }}-msi/*.msi
+            dist/release/windows-${{ matrix.arch }}-msi/release-manifest.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

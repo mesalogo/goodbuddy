@@ -146,6 +146,7 @@ export type VersionCheckerDependencies = {
   currentVersion: string
   platform: NodeJS.Platform
   arch: string
+  windowsDistribution?: 'msi' | 'store'
   timeoutMs?: number
   maxJsonBytes?: number
   onResult?: (result: VersionCheckResult, source: UpdateSource) => void
@@ -728,7 +729,25 @@ export function getUpdateDownloadPage(source: UpdateSource): string {
 export class VersionChecker {
   constructor(private readonly dependencies: VersionCheckerDependencies) {}
 
+  getDownloadPage(source: UpdateSource): string {
+    return this.dependencies.platform === 'win32' && this.dependencies.windowsDistribution === 'store'
+      ? 'ms-windows-store://downloadsandupdates'
+      : getUpdateDownloadPage(source)
+  }
+
   async check(source: UpdateSource = 'github'): Promise<VersionCheckResult> {
+    if (this.dependencies.platform === 'win32' && this.dependencies.windowsDistribution) {
+      const result: VersionCheckResult = {
+        managedBy: this.dependencies.windowsDistribution,
+        updateAvailable: false,
+        currentVersion: this.dependencies.currentVersion,
+        latestVersion: this.dependencies.currentVersion,
+        releaseUrl: this.getDownloadPage(source),
+        target: { platform: 'windows', arch: normalizeArchitecture(this.dependencies.arch), formats: [], files: [] }
+      }
+      this.dependencies.onResult?.(result, source)
+      return result
+    }
     const result = await (source === 'mirror'
       ? checkMirrorForUpdates(this.dependencies)
       : checkForUpdates(this.dependencies))

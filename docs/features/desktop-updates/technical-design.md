@@ -16,6 +16,8 @@ Preload 只暴露快照、下载、取消和安装等明确动作；Renderer 不
 
 ## 平台安装
 
+新增 MSI/Store 包通过 `extraMetadata.goodbuddyWindowsDistribution` 写入安装渠道。Main 在打包的 Windows 环境异步读取包元数据，`process.windowsStore` 优先识别商店环境；`VersionChecker` 返回带 `managedBy` 的本地说明结果并交给原更新服务，文件列表为空。MSI/Store 不注册 NSIS 重启回调，Store 下载页 IPC 使用 Main 固定的 `ms-windows-store://downloadsandupdates`。构建与提交配置见 [Windows 分发说明](../../development/windows-store.md)。
+
 Windows 用户级安装优先采用现有 NSIS 直接交接。2026-10-26 的隔离小安装包实验证明 `/S /currentuser --updated --force-run` 能找回原目录、替换程序并启动新版；省略安装模式参数也能恢复已有用户级安装。依据和覆盖边界见[实施记录](./progress.md#2026-10-26nsis-与退出事件小实验)。正式实现仍需验证完整 GoodBuddy 载荷及全局安装提权，不能将小载荷结果扩大到所有 Windows 安装模式。
 
 macOS 和 AppImage 继续评估成熟的自动更新实现。它们与现有检查器必须共用一个固定版本目标，不能独立追踪两个 latest。

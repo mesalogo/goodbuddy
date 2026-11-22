@@ -160,6 +160,7 @@ export type VersionCheckTarget = {
 }
 
 export type VersionCheckResult = {
+  managedBy?: 'msi' | 'store'
   updateAvailable: boolean
   currentVersion: string
   latestVersion: string

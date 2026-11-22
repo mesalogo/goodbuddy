@@ -1079,6 +1079,10 @@ export const settingsSections = {
     result: {
       available: 'New version {{version}} is available',
       current: 'You have the latest version',
+      managed: {
+        store: 'Updates are managed by Microsoft Store. Check Downloads or Library in the Store.',
+        msi: 'This version was installed using MSI. Ask your administrator to upgrade with a newer MSI package.'
+      },
       target: 'Current: {{version}} · {{platform}}/{{arch}}',
       safety:
         'Verify the file name and SHA-256 on the release page before downloading. GoodBuddy never downloads or runs installers automatically.'

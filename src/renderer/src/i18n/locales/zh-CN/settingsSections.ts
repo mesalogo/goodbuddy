@@ -1014,6 +1014,10 @@ export const settingsSections = {
     result: {
       available: '发现新版本 {{version}}',
       current: '当前已是最新版本',
+      managed: {
+        store: '此版本通过 Microsoft Store 更新，请在商店的“下载”或“库”中检查更新。',
+        msi: '此版本通过 MSI 安装，请由管理员使用新版 MSI 安装包升级。'
+      },
       target: '当前 {{version}} · {{platform}}/{{arch}}',
       safety:
         '下载前请在发布页核对文件名和 SHA-256。GoodBuddy 不会自动下载或执行安装包。'

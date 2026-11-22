@@ -5724,7 +5724,7 @@ export function registerIpcHandlers(
       throw new Error('应用设置服务不可用')
     }
     const { updateSource } = await applicationSettingsStore.get()
-    await shell.openExternal(getUpdateDownloadPage(updateSource))
+    await shell.openExternal(versionChecker?.getDownloadPage?.(updateSource) ?? getUpdateDownloadPage(updateSource))
   })
 
   desktopUpdateService?.setRestartPreparation(async () => {
