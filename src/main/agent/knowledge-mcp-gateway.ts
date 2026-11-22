@@ -2130,12 +2130,26 @@ export class KnowledgeMcpGateway {
         if (!binding) {
           throw new Error('GoodBuddy MCP 工具不存在或已失效')
         }
-        return this.callCustomMcpTool(
+        const capability = this.getCapability(token)
+        const connection = session.mcp.getClientVersion()?.name === 'opencode' && binding.server.allowDynamicTools
+          ? (await capability.customMcpConnections)?.find(value => value.client === binding.client && value.dynamicToolsSupported)
+          : undefined
+        const before = connection && JSON.stringify(connection.bindings.map(value => value.exposedTool))
+        const result = await this.callCustomMcpTool(
           token,
           binding,
           input,
           extra.signal
         )
+        if (connection) {
+          // Notifications and the call result travel on separate HTTP streams.
+          // Read after the call so a fast result cannot overtake its catalog change.
+          await this.refreshDynamicTools(capability, connection, extra.signal)
+          if (before !== JSON.stringify(connection.bindings.map(value => value.exposedTool))) {
+            return { ...result, _meta: { ...result._meta, 'goodbuddy/toolsChanged': true } }
+          }
+        }
+        return result
       }
     )
     return session

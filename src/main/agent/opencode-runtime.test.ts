@@ -2304,6 +2304,18 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       ),
     ).not.toContain("private.example");
     expect(gateway.revoke).toHaveBeenCalledWith("custom-capability");
+    const name = vi.mocked(setup.client.mcp.add).mock.calls[0]![0]!.name;
+    expect(setup.client.session.create).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: expect.arrayContaining([
+        { permission: "gbc-*", pattern: "*", action: "deny" },
+        { permission: `${name}_*`, pattern: "*", action: "allow" },
+      ]) }),
+      expect.anything(),
+    );
+    expect(setup.client.session.promptAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ tools: expect.objectContaining({ "gbc-*": false, [`${name}_*`]: true }) }),
+      expect.anything(),
+    );
     await runtime.dispose();
   });
 
@@ -3185,7 +3197,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       (setup.client.mcp.add as unknown as ReturnType<typeof vi.fn>).mock
         .calls[0]?.[0] as { name: string }
     ).name;
-    const knowledgeToolId = `${knowledgeMcpName}_knowledge_search`;
+    const knowledgeToolId = `${knowledgeMcpName}_*`;
     expect(setup.session.create).toHaveBeenCalledWith(
       expect.objectContaining({
         permission: [
@@ -3319,7 +3331,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       }
       if (succeeds) {
         const name = add.mock.calls.at(-1)![0]!.name;
-        const toolId = `${name}_${kind === "custom" ? "custom_tool" : "knowledge_search"}`;
+        const toolId = `${name}_*`;
         expect(setup.session.create).toHaveBeenCalledWith(expect.objectContaining({
           permission: expect.arrayContaining([{ permission: toolId, pattern: "*", action: "allow" }]),
         }), expect.anything());
@@ -3866,7 +3878,7 @@ describe("OpenCodeRuntime embedded permission mediation", () => {
       (setup.client.mcp.add as unknown as ReturnType<typeof vi.fn>).mock
         .calls[0]?.[0] as { name: string }
     ).name;
-    const knowledgeToolId = `${knowledgeMcpName}_knowledge_search`;
+    const knowledgeToolId = `${knowledgeMcpName}_*`;
     expect(toolIds).not.toHaveBeenCalled();
     expect(setup.session.promptAsync).toHaveBeenCalledWith(
       expect.objectContaining({

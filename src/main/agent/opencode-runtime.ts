@@ -23,6 +23,8 @@ import { tmpdir } from "node:os";
 import { createRuntimeTemporaryDirectory, recordRuntimeTemporaryChild, removeRuntimeTemporaryDirectory } from "../runtime-temporary-directory";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
+import { openCodeDynamicToolsPlugin } from "./opencode-dynamic-tools-plugin";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type {
   AgentQuestionAnswer,
@@ -1197,10 +1199,14 @@ export class OpenCodeRuntime implements AgentRuntime {
       env.XDG_DATA_HOME = join(registration.root, "xdg-data");
       env.XDG_STATE_HOME = join(registration.root, "xdg-state");
       const skillConfig = createOpenCodeSkillConfig(registration, skillIds);
+      const dynamicToolsPluginPath = this.options.mcpServers?.some(server => server.enabled && server.allowDynamicTools)
+        ? join(registration.root, "dynamic-tools.mjs") : undefined;
+      if (dynamicToolsPluginPath) await writeFile(dynamicToolsPluginPath, openCodeDynamicToolsPlugin, "utf8");
       // GoodBuddy does not use native Git snapshots or their synchronous diffs.
       env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
         ...(profile ? createOpenCodeProviderConfig(profile) : {}),
         ...skillConfig,
+        ...(dynamicToolsPluginPath ? { plugin: [pathToFileURL(dynamicToolsPluginPath).href] } : {}),
         snapshot: false,
       });
       if (!profile && this.options.configPath.trim()) {
@@ -2232,7 +2238,6 @@ export class OpenCodeRuntime implements AgentRuntime {
     const nativeSkillPermissionRules =
       createSkillPermissionRules(nativeSkillIds);
     let knowledgeMcpName: string | undefined;
-    let knowledgeToolIds: string[] = [];
     let customMcpName: string | undefined;
     let customMcpToken: string | undefined;
     type McpAttempt = Pick<DesktopMcpDiagnosticMetadata, "correlationId" | "kind" | "attempt">;
@@ -2370,12 +2375,6 @@ export class OpenCodeRuntime implements AgentRuntime {
       ) {
         const knowledgeEndpoint = this.options.knowledgeGateway.getEndpoint()!;
         knowledgeMcpName = await addMcp(KNOWLEDGE_MCP_PREFIX, knowledgeEndpoint, scopedCapabilityToken, "连接内置只读工具");
-        // OpenCode 1.18.x does not include dynamically added MCP tools in
-        // experimental/tool/ids. Its model tool namespace is deterministic:
-        // "<MCP server name>_<declared tool name>".
-        knowledgeToolIds = this.options.knowledgeGateway
-          .getAvailableToolNames(scopedCapabilityToken)
-          .map((toolName) => `${knowledgeMcpName}_${toolName}`);
       }
       if (
         this.usesEmbeddedPermissionMediation() &&
@@ -2389,24 +2388,26 @@ export class OpenCodeRuntime implements AgentRuntime {
           signal,
         );
         if (customMcpToken) {
-          const tools =
-            await this.options.knowledgeGateway.prepareCustomMcpTools(
-              customMcpToken,
-              signal,
-            );
-          customMcpName = await addMcp(CUSTOM_MCP_PREFIX, customMcpEndpoint, customMcpToken, "连接自定义 MCP 工具");
-          knowledgeToolIds.push(
-            ...tools.map((tool) => `${customMcpName}_${tool.name}`),
+          await this.options.knowledgeGateway.prepareCustomMcpTools(
+            customMcpToken,
+            signal,
           );
+          customMcpName = await addMcp(CUSTOM_MCP_PREFIX, customMcpEndpoint, customMcpToken, "连接自定义 MCP 工具");
         }
       }
+      // The gateway owns each registration's tool catalog, including tools
+      // loaded during a tool call. Only isolate by this request's registrations
+      // (other requests' temporary MCPs stay denied); never list tool names.
+      const scopedToolPatterns = [knowledgeMcpName, customMcpName]
+        .filter((name): name is string => !!name)
+        .map((name) => `${name}_*`);
       const permission = [
         { permission: "*", pattern: "*", action: "allow" as const },
         ...(this.usesEmbeddedPermissionMediation()
           ? temporaryMcpDenyRules
           : []),
         ...nativeSkillPermissionRules,
-        ...knowledgeToolIds.map((toolId) => ({
+        ...scopedToolPatterns.map((toolId) => ({
           permission: toolId,
           pattern: "*",
           action: "allow" as const,
@@ -2417,7 +2418,7 @@ export class OpenCodeRuntime implements AgentRuntime {
         toolOverrides = {
           ...temporaryMcpToolOverrides,
           ...Object.fromEntries(
-            knowledgeToolIds.map((toolId) => [toolId, true]),
+            scopedToolPatterns.map((toolId) => [toolId, true]),
           ),
         };
       }

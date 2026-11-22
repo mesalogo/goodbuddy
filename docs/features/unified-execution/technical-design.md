@@ -2,6 +2,30 @@
 
 状态：主要源码改造已落地，完整验证待完成。规则见[PRD](./prd.md)与[执行规则](./logic-design.md)，调研基线见[源码调研](./source-audit.md)，字段级转换见[数据迁移](./data-migration.md)，实际证据见[进度](./progress.md)。
 
+## Local OpenCode dynamic MCP catalogs
+
+The embedded adapter denies temporary MCP registrations by default and allows
+only the current request's own registrations (built-in and custom) as
+`<registration>_*`. No per-tool-name list is built; the only isolation is by
+registration, so another request's temporary MCP stays denied. The gateway
+remains the owner of the request-scoped tool catalog and token; tool names
+discovered after initialization are never frozen into a session allowlist.
+
+For an OpenCode client using an upstream with dynamic tools enabled and
+`tools.listChanged` support, the gateway reads that upstream's catalog after
+each custom-tool call. This adds a catalog request on this path to handle
+notifications and call results arriving out of order on separate HTTP streams.
+Only changed definitions set `_meta["goodbuddy/toolsChanged"]` on the result.
+
+The embedded Runtime installs a local plugin when a dynamic MCP server is
+enabled. It observes `mcp.tools.changed` for the owning registration and waits
+for that cache-update event before completing a changed-catalog tool call.
+The wait is bounded to 30 seconds after the tool result, releases on session
+end, and does not reconnect the MCP client or replay business operations.
+Ordinary results do not wait. Plugin state and files belong to the existing
+Runtime lifetime; no new persistent settings are required. This applies to the
+local embedded adapter, not the Agent's separate ACP profile or Continue.
+
 ## 结构调整
 
 正常调用保留现有 Renderer → IPC → Runtime → 工具执行链路，删除各层携带的产品工作模式。无需新增权限服务、策略框架或持久化状态。

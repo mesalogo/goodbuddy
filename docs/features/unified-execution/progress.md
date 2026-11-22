@@ -1,5 +1,65 @@
 # 进度与证据
 
+## 2026-11-22 Local OpenCode dynamic MCP tools
+
+The embedded OpenCode adapter previously allowed only the initial tool names
+after denying temporary MCP namespaces. OpenCode 1.19.3 received the changed
+catalog, but newly loaded tools were filtered from the next model request.
+The per-tool-name allowlist is removed: the adapter no longer calls
+`getAvailableToolNames` or enumerates custom tools. Both the built-in and the
+custom registration of the current request are allowed only as
+`<registration>_*`, while the deny rules for other registrations remain.
+
+A second reproduction removed the fixture's delay: the next model step could
+overtake notification processing. The gateway now reads the dynamic catalog
+after an OpenCode custom-tool call and marks changed results in MCP `_meta`.
+The embedded plugin waits for OpenCode's existing `mcp.tools.changed` event
+(emitted after its cache update), without reconnecting or replaying the tool.
+See [technical design](./technical-design.md#local-opencode-dynamic-mcp-catalogs).
+
+Validation on Windows with the real OpenCode 1.19.3 binary:
+
+- `tests/opencode-dynamic-tools-runtime.test.ts`: two cases passed, with an
+  immediate notification and with the result arriving without a notification.
+  Each uses one prompt and three model rounds: load, call the newly exposed
+  query tool, finish. Both assert the wire catalogs and actual tool execution;
+  neither inserts a sleep to let catalog refresh settle.
+- `opencode-runtime.test.ts` retains the foreign-registration deny rule and
+  checks that only the active registration receives a wildcard allow.
+- Four plugin tests cover event ordering, parallel registration isolation,
+  long-running tools, timeout and session-end cleanup.
+- After removing the allowlist: full suite 620 files / 7113 tests passed,
+  21 files / 93 tests skipped, including the real OpenCode 1.19.3 dynamic-tools
+  cases above.
+- `npm run typecheck` and `npm run lint` passed.
+
+The two fixture cases above use a real Runtime binary and GoodBuddy gateway, with
+CRM protocol responses and model decisions from local fixtures.
+
+Live acceptance (2026-11-22, Windows): `tests/opencode-dynamic-tools-live.test.ts`
+ran the real OpenCode 1.19.3 binary and GoodBuddy gateway against the real CRM
+MCP server and a real model (`claude-sonnet-5-5`, Anthropic Messages protocol
+through the configured BigToken endpoint). In one prompt the model called
+`crmtools_load_tools` for the customer-tag group, then called the newly exposed
+`crmtools_list_customer_tags`; both calls completed and the model reported the
+four returned tags. The test passed twice on the final code. The prompt forbids
+create/update/delete tools and the assertion requires every dynamic call to be
+a read-style tool; no CRM business record was changed. The test skips unless
+`GOODBUDDY_LIVE_CRM_TOKEN`, `GOODBUDDY_LIVE_MODEL_API_KEY` and
+`GOODBUDDY_LIVE_MODEL_BASE_URL` are set, and never logs them.
+
+Not established: a control run of the pre-fix adapter against the live stack.
+An attempt to revert the whole adapter file failed in about one second, which
+points at the revert rather than at dynamic loading, so it proves nothing about
+the old behaviour. The earlier fixture reproduction remains the evidence for
+the original defect. This is a test harness run, not the installed desktop app.
+Continue remains outside this fix.
+
+The remote Agent uses `AcpRemoteRuntime` and its own OpenCode profile, not this
+embedded adapter or its `gbc-*` rules. Its profile allows tools, and the generic
+remote custom-MCP forwarding gap remains separately documented. No Agent
+package or remote-host implementation was changed or validated by this fix.
+
 ## 2026-11-20 Agent model connection resets
 
 `scripts/remote-recovery-host-probe.ts --gateway-reset` ran the candidate's
