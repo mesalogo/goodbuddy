@@ -383,15 +383,18 @@
 }
 
 .workbar-shell__catalog-list {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 120px), 1fr));
   padding: 0;
   margin: var(--space-4) 0 0;
-  flex-direction: column;
   gap: var(--space-2);
   list-style: none;
 }
 
 .workbar-shell__catalog-item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-card);
   background: var(--surface-raised);
@@ -400,13 +403,20 @@
 .workbar-shell__catalog-choice {
   display: flex;
   width: 100%;
+  flex: 1;
   padding: var(--space-3);
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
   border-radius: var(--radius-card);
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
-  text-align: left;
+  text-align: center;
+}
+
+.workbar-shell__catalog-choice .workbar-shell__app-icon {
+  margin-right: 0;
 }
 
 .workbar-shell__app-icon {
@@ -439,12 +449,14 @@
 .workbar-shell__catalog-copy {
   display: flex;
   min-width: 0;
+  width: 100%;
+  flex: 1;
   flex-direction: column;
   gap: var(--space-1);
+  overflow-wrap: anywhere;
 }
 
 .workbar-shell__catalog-copy span,
-.workbar-shell__catalog-copy small,
 .workbar-shell__unavailable {
   color: var(--text-secondary);
   font-size: var(--font-caption);

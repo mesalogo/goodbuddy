@@ -586,6 +586,7 @@ export function WorkbarShell({
               className="workbar-shell__catalog-list"
             >
               {appDefinitions.map((definition) => {
+                if (definition.required) return null
                 const AppIcon = WORKBAR_APP_ICONS[definition.id]
                 const existing =
                   definition.instancePolicy === 'single' &&
@@ -620,13 +621,6 @@ export function WorkbarShell({
                       <span className="workbar-shell__catalog-copy">
                         <strong>{definition.label}</strong>
                         <span>{definition.description}</span>
-                        <small>
-                          {existing
-                            ? t('sidebar.workbar.existing')
-                            : definition.instancePolicy === 'multiple'
-                              ? t('sidebar.workbar.multiple')
-                              : t('sidebar.workbar.single')}
-                        </small>
                       </span>
                     </button>
                     {availability.state === 'unavailable' ? (

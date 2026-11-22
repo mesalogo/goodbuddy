@@ -301,6 +301,28 @@ app.whenReady().then(async () => {
           })()`), 'Scroll arrows must reserve space outside the tab viewport')
           await click('.workbar-shell__add')
           await wait('!!document.querySelector(".workbar-shell__catalog") && document.activeElement.matches("[data-workbar-app-choice]")')
+          if (!many) {
+            for (const width of [300, 480, 720]) {
+              await js(`Object.assign(document.querySelector('.assistant-sidebar').style,{width:'${width}px',flexBasis:'${width}px'})`)
+              await wait(`Math.abs(document.querySelector('.assistant-sidebar').getBoundingClientRect().width-${width})<1`)
+              await settle()
+              const cards = await js(`(() => {
+                const list=document.querySelector('.workbar-shell__catalog-list');
+                const items=[...list.children], first=items[0].getBoundingClientRect();
+                return {columns:items.filter(e=>Math.abs(e.getBoundingClientRect().top-first.top)<1).length,
+                  overflow:list.scrollWidth>list.clientWidth+1 || items.some(e=>e.scrollWidth>e.clientWidth+1),
+                  stacked:items.every(e=>e.querySelector('.workbar-shell__app-icon').getBoundingClientRect().bottom<=e.querySelector('.workbar-shell__catalog-copy').getBoundingClientRect().top)};
+              })()`)
+              assert.equal(cards.columns, width === 300 ? 2 : width === 480 ? 3 : 5, JSON.stringify(cards))
+              assert.equal(cards.overflow, false)
+              assert.equal(cards.stacked, true)
+              observations.push({locale,theme,width,cards})
+              await screenshot(`${locale}-${theme}-catalog-${width}`)
+            }
+            await js("Object.assign(document.querySelector('.assistant-sidebar').style,{width:'300px',flexBasis:'300px'})")
+            await wait("Math.abs(document.querySelector('.assistant-sidebar').getBoundingClientRect().width-300)<1")
+            await settle()
+          }
           await key('Escape')
           await wait('!document.querySelector(".workbar-shell__catalog") && document.activeElement.matches(".workbar-shell__add")')
           const active = await js('document.querySelector("[role=tab][aria-selected=true]").id')

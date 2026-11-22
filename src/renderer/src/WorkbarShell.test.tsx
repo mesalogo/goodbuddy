@@ -262,9 +262,12 @@ describe('WorkbarShell', () => {
 
     fireEvent.click(addButton)
     const firstChoice = screen
-      .getByText('任务中心', { selector: 'strong' })
+      .getByText('浏览器', { selector: 'strong' })
       .closest('button')!
     await waitFor(() => expect(firstChoice).toHaveFocus())
+    expect(screen.queryByText('任务中心', { selector: 'strong' })).not.toBeInTheDocument()
+    expect(screen.queryByText('工作区', { selector: 'strong' })).not.toBeInTheDocument()
+    expect(document.querySelector('.workbar-shell__catalog-copy small')).not.toBeInTheDocument()
     expect(
       screen.getByRole('heading', { name: '新建工作栏应用' })
     ).toBeInTheDocument()
@@ -281,19 +284,22 @@ describe('WorkbarShell', () => {
 
   it('focuses an existing single instance instead of requesting a duplicate', async () => {
     const onCreate = vi.fn()
-    render(<ControlledShell onCreate={onCreate} />)
+    render(<ControlledShell onCreate={onCreate} initialInstances={[
+      ...DEFAULT_WORKBAR_INSTANCES,
+      { id: 'notes-instance', appId: 'notes', title: '笔记' }
+    ]} />)
 
     fireEvent.click(
       screen.getByRole('button', { name: '打开工作栏应用' })
     )
     fireEvent.click(
       screen
-        .getByText('工作区', { selector: 'strong' })
+        .getByText('笔记', { selector: 'strong' })
         .closest('button')!
     )
 
     const workspaceTab = screen.getByRole('tab', {
-      name: '工作区'
+      name: '笔记'
     })
     await waitFor(() => expect(workspaceTab).toHaveFocus())
     expect(workspaceTab).toHaveAttribute('aria-selected', 'true')
