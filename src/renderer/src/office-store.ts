@@ -1,11 +1,12 @@
-import type { OfficeSession, OfficeSource } from '../../shared/office-contracts'
+import type { OfficeCloseChoice, OfficeInteraction, OfficeSession, OfficeSource } from '../../shared/office-contracts'
 import { shareServerConnection } from './shareserver-connection-store'
 
-type State = { session?: OfficeSession; source?: OfficeSource; name?: string; busy: boolean; error?: string; message?: string; selectedText?: string; reply?: string; aiPending?: boolean }
+type State = { interaction?: OfficeInteraction; session?: OfficeSession; source?: OfficeSource; name?: string; busy: boolean; error?: string; message?: string; selectedText?: string; reply?: string; aiPending?: boolean }
 const empty: State = { busy: false }
 const states = new Map<string, State>()
 const listeners = new Set<() => void>()
 let requested: { instanceId: string; name: string } | null = null
+let unsubscribe: (() => void) | undefined
 function update(id: string, patch: Partial<State>): void {
   states.set(id, { ...officeStore.get(id), ...patch })
   for (const listener of listeners) listener()
@@ -20,7 +21,18 @@ export const officeStore = {
     if (!previous?.[1].session && !previous?.[1].busy) void officeStore.open(instanceId)
   },
   get: (id: string): State => states.get(id) ?? empty,
-  subscribe: (listener: () => void): (() => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+  subscribe: (listener: () => void): (() => void) => {
+    listeners.add(listener)
+    unsubscribe ??= window.goodbuddy.office?.onInteraction?.(interaction => {
+      update(interaction.instanceId, { interaction: interaction.kind === 'clear' ? undefined : interaction, error: undefined, message: undefined })
+    })
+    return () => { listeners.delete(listener); if (!listeners.size) { unsubscribe?.(); unsubscribe = undefined } }
+  },
+  async resolveClose(instanceId: string, choice: OfficeCloseChoice): Promise<void> {
+    try { await window.goodbuddy.office!.resolveClose({ instanceId, choice }) }
+    catch (error) { update(instanceId, { error: String(error) }) }
+  },
+  dismissInteraction(instanceId: string): void { update(instanceId, { interaction: undefined, error: undefined }) },
   async open(instanceId: string, serverUrl?: string): Promise<OfficeSession | null> {
     if (officeStore.get(instanceId).busy) return null
     if (officeStore.get(instanceId).session) return officeStore.get(instanceId).session!
@@ -45,6 +57,7 @@ export const officeStore = {
     try {
       const session = await window.goodbuddy.office!.save({ instanceId, saveAs })
       update(instanceId, { ...(session ? { session } : {}), message: session ? `版本 ${session.document.revision} 已保存到文件` : '已取消另存为' })
+      if (session) update(instanceId, { interaction: undefined })
     } catch (error) { update(instanceId, { error: String(error), message: undefined }) }
     finally { update(instanceId, { busy: false }) }
   },
@@ -79,9 +92,11 @@ export const officeStore = {
     finally { update(instanceId, { busy: false }) }
   },
   async close(instanceId: string): Promise<boolean> {
-    if (officeStore.get(instanceId).busy) return false
-    const accepted = await window.goodbuddy.office?.close({ instanceId }) ?? true
-    if (accepted) { states.delete(instanceId); for (const listener of listeners) listener() }
-    return accepted
+    if (officeStore.get(instanceId).busy || officeStore.get(instanceId).interaction?.closing) return false
+    try {
+      const accepted = await window.goodbuddy.office?.close({ instanceId }) ?? true
+      if (accepted) { states.delete(instanceId); for (const listener of listeners) listener() }
+      return accepted
+    } catch (error) { update(instanceId, { error: String(error) }); return false }
   }
 }

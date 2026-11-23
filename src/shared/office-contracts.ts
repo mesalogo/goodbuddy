@@ -45,7 +45,12 @@ export const officeViewportSchema = officeInstanceSchema.extend({
   width: z.number().finite().nonnegative(), height: z.number().finite().nonnegative()
 }).strict()
 export type OfficeSession = { instanceId: string; document: OfficeDocument; savedToSource: boolean; readOnlySource?: boolean }
+export const officeCloseChoiceSchema = officeInstanceSchema.extend({ choice: z.enum(['save', 'saveAs', 'discard', 'cancel']) }).strict()
+export type OfficeCloseChoice = z.infer<typeof officeCloseChoiceSchema>['choice']
+export type OfficeInteraction = { instanceId: string; name: string; kind: 'progress' | 'confirm' | 'error' | 'clear'; detail?: string; closing: boolean }
 export interface OfficeApi {
+  onInteraction(listener: (event: OfficeInteraction) => void): () => void
+  resolveClose(input: z.infer<typeof officeCloseChoiceSchema>): Promise<void>
   context(input: z.infer<typeof officeContextSchema>): Promise<void>
   capabilities(input: { serverUrl: string; fresh?: boolean }): Promise<OfficeCapabilities>
   open(input: z.infer<typeof officeOpenSchema>): Promise<OfficeSession | null>

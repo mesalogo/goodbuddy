@@ -852,6 +852,12 @@ const desktopApi: DesktopApi = {
     cancel: (taskId) => ipcRenderer.invoke(ipcChannels.localInferenceCancel, { taskId })
   },
   office: {
+    onInteraction: listener => {
+      const handler = (_event: Electron.IpcRendererEvent, input: import('../shared/office-contracts').OfficeInteraction): void => listener(input)
+      ipcRenderer.on(officeChannels.interaction, handler)
+      return () => ipcRenderer.removeListener(officeChannels.interaction, handler)
+    },
+    resolveClose: input => ipcRenderer.invoke(officeChannels.resolveClose, input),
     context: input => ipcRenderer.invoke(officeChannels.context, input),
     capabilities: input => ipcRenderer.invoke(officeChannels.capabilities, input),
     open: input => ipcRenderer.invoke(officeChannels.open, input),

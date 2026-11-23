@@ -147,6 +147,12 @@ export function WorkbarShell({
   const catalogRef = useRef<HTMLDivElement>(null)
   const returnInstanceIdRef = useRef<string | null>(null)
   const pendingTabFocusRef = useRef<string | null | undefined>(undefined)
+  const currentActiveRef = useRef(activeInstanceId)
+  const currentInstancesRef = useRef(instances)
+  useEffect(() => {
+    currentActiveRef.current = activeInstanceId
+    currentInstancesRef.current = instances
+  }, [activeInstanceId, instances])
   const focusCreatedInstanceRef = useRef(false)
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [creatingAppId, setCreatingAppId] =
@@ -376,16 +382,6 @@ export function WorkbarShell({
     if (definition?.closable !== true) {
       return
     }
-    const closingIndex = instances.findIndex(
-      (candidate) => candidate.id === instance.id
-    )
-    const isActive = instance.id === activeInstanceId
-    const nextActive = isActive
-      ? (instances[closingIndex + 1] ??
-        instances[closingIndex - 1] ??
-        null)
-      : activeInstance
-
     let closeAccepted: boolean | void
     try {
       closeAccepted = await onCloseInstance(instance)
@@ -395,9 +391,14 @@ export function WorkbarShell({
     if (closeAccepted === false) {
       return
     }
-    pendingTabFocusRef.current = nextActive?.id ?? null
-    if (isActive && nextActive?.id !== activeInstanceId) {
-      onActiveInstanceChange(nextActive?.id ?? null)
+    if (currentActiveRef.current === instance.id) {
+      const current = currentInstancesRef.current
+      const closingIndex = current.findIndex(candidate => candidate.id === instance.id)
+      const adjacent = closingIndex < 0 ? current[0] : current[closingIndex + 1] ?? current[closingIndex - 1]
+      pendingTabFocusRef.current = adjacent?.id ?? null
+      onActiveInstanceChange(adjacent?.id ?? null)
+    } else if (currentActiveRef.current === activeInstanceId) {
+      pendingTabFocusRef.current = currentActiveRef.current
     }
   }
 

@@ -7,6 +7,12 @@ import type { OfficeSession } from '../../shared/office-contracts'
 export function OfficePanel({ instanceId, onOpened, conversationId }: { instanceId: string; onOpened?: (session: OfficeSession) => void; conversationId?: string }): React.JSX.Element {
   const state = useSyncExternalStore(officeStore.subscribe, () => officeStore.get(instanceId))
   const host = useRef<HTMLDivElement>(null)
+  const interaction = state.interaction
+  const continueButton = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    const button = continueButton.current
+    if (button && !button.closest('[hidden]')) button.focus()
+  }, [interaction?.kind])
   useEffect(() => {
     if (state.session) void window.goodbuddy.office?.context?.({ instanceId, conversationId })
   }, [instanceId, conversationId, state.session])
@@ -42,7 +48,7 @@ export function OfficePanel({ instanceId, onOpened, conversationId }: { instance
     }
   }, [instanceId, state.session])
   return <section className="office-panel" aria-label="在线文档" data-office-instance={instanceId} onKeyDown={event => {
-    if (state.session && (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
+    if (state.session && !interaction?.closing && (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
       event.preventDefault()
       if (!state.busy) void officeStore.save(instanceId, event.shiftKey)
     }
@@ -55,8 +61,38 @@ export function OfficePanel({ instanceId, onOpened, conversationId }: { instance
         void officeStore.open(instanceId).then(session => { if (session) onOpened?.(session) })
       }}>{state.source ? '重试打开' : '选择 Office 文件并编辑'}</button>
     </div>}
-    {state.message && <p role="status">{state.message}</p>}
-    {state.error && <p role="alert" className="settings-error">{state.error}</p>}
+    {!interaction && state.message && <p role="status">{state.message}</p>}
+    {!interaction && state.error && <p role="alert" className="settings-error">{state.error}</p>}
+    {interaction && <div className="office-panel__decision" role="dialog" aria-modal="false" aria-label={interaction.closing ? '关闭文档' : '保存到源文件失败'} onKeyDown={event => {
+      if (event.key === 'Escape' && interaction.kind !== 'progress' && !state.busy) {
+        event.stopPropagation()
+        if (interaction.closing) void officeStore.resolveClose(instanceId, 'cancel')
+        else officeStore.dismissInteraction(instanceId)
+      }
+    }}>
+      <div className="office-panel__decision-card">
+        <h3>{interaction.closing ? '关闭文档' : '保存到源文件失败'}</h3>
+        <strong>{interaction.name}</strong>
+        <p role={interaction.kind === 'error' ? 'alert' : 'status'}>{interaction.detail}</p>
+        {state.error && <p role="alert">{state.error}</p>}
+        {state.message && <p role="status">{state.message}</p>}
+        {interaction.kind !== 'progress' && <div className="office-panel__toolbar">
+          <button type="button" className="primary-button" disabled={state.busy} onClick={() => {
+            if (interaction.closing) void officeStore.resolveClose(instanceId, 'save')
+            else void officeStore.save(instanceId, false)
+          }}>{interaction.closing ? '保存到源文件并关闭' : '重试保存'}</button>
+          <button type="button" className="secondary-button" disabled={state.busy} onClick={() => {
+            if (interaction.closing) void officeStore.resolveClose(instanceId, 'saveAs')
+            else void officeStore.save(instanceId, true)
+          }}>{interaction.closing ? '另存为并关闭' : '另存为'}</button>
+          {interaction.closing && <button type="button" className="secondary-button" onClick={() => { void officeStore.resolveClose(instanceId, 'discard') }}>不写回源文件并关闭</button>}
+          <button ref={continueButton} type="button" className="secondary-button" disabled={state.busy} onClick={() => {
+            if (interaction.closing) void officeStore.resolveClose(instanceId, 'cancel')
+            else officeStore.dismissInteraction(instanceId)
+          }}>继续编辑</button>
+        </div>}
+      </div>
+    </div>}
     <div className="office-panel__viewport" ref={host} />
   </section>
 }

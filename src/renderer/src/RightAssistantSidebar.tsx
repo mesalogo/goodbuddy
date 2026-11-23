@@ -1499,7 +1499,10 @@ function RightAssistantSidebarView({
         return false
       }
       if (instance.appId === 'notes' && onBeforeCloseNotes && !await onBeforeCloseNotes()) return false
-      if (instance.appId === 'document' && !await officeStore.close(instance.id)) return false
+      if (instance.appId === 'document') {
+        setActiveWorkbarInstanceId(instance.id)
+        if (!await officeStore.close(instance.id)) return false
+      }
       if (instance.appId === 'browser') {
         let tabId = browserTabIdsRef.current[instance.id]
         let conversationId =

@@ -408,6 +408,18 @@ describe('WorkbarShell', () => {
     expect(tasks).toHaveAttribute('aria-selected', 'true')
   })
 
+  it('does not steal the selected tab after an asynchronous close decision', async () => {
+    let finish!: (accepted: boolean) => void
+    render(<ControlledShell onClose={() => new Promise<boolean>(resolve => { finish = resolve })} />)
+    fireEvent.click(screen.getByRole('tab', { name: '浏览器' }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭浏览器' }))
+    const tasks = screen.getByRole('tab', { name: '任务中心' })
+    fireEvent.click(tasks)
+    await act(async () => { finish(true) })
+    expect(tasks).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('tab', { name: '浏览器' })).toBeNull()
+  })
+
   it('retains an instance when its close operation rejects', async () => {
     const onClose = vi.fn(async () => {
       throw new Error('Close denied')

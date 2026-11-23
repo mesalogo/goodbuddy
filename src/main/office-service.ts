@@ -5,7 +5,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import {
   officeChannels, officeDocumentSchema, officeInstanceSchema, officeOpenSchema, officeInputExtensions,
-  officeViewportSchema, officeApplySchema, officeContextSchema, officeEditorRequestSchema, type OfficeDocument, type OfficeSession, type OfficeSource
+  officeViewportSchema, officeApplySchema, officeContextSchema, officeEditorRequestSchema, officeCloseChoiceSchema,
+  type OfficeInteraction, type OfficeCloseChoice, type OfficeDocument, type OfficeSession, type OfficeSource
 } from '../shared/office-contracts'
 import type { OfficeFileJob } from './office-file-operations'
 import { assertTrustedSender } from './trusted-ipc-sender'
@@ -31,6 +32,7 @@ type Session = {
   syncedRevision: number
   autoWritebackBlocked?: boolean
   closing?: boolean
+  closeChoice?: (choice: OfficeCloseChoice) => void
 }
 
 function fileJob(workerPath: string, job: OfficeFileJob): Promise<{ document: OfficeDocument; digest: string }> {
@@ -188,7 +190,7 @@ export class OfficeService {
       view.webContents.on('before-input-event', (event, key) => {
         if (key.type !== 'keyDown' || !(key.control || key.meta) || key.alt || key.key.toLowerCase() !== 's') return
         event.preventDefault()
-        if (!session.busy) void this.saveFromKeyboard(session, key.shift)
+        if (!session.busy && !session.closing) void this.saveFromKeyboard(session, key.shift)
       })
       try {
         await view.webContents.loadURL(`${serverUrl}/office/editor?document=${result.document.id}`)
@@ -227,23 +229,51 @@ export class OfficeService {
     session.visible = input.visible
     session.view.setBounds({ x: Math.round(input.x), y: Math.round(input.y),
       width: Math.max(0, Math.round(input.width)), height: Math.max(0, Math.round(input.height)) })
-    session.view.setVisible(input.visible && !session.busy)
+    session.view.setVisible(input.visible && !session.busy && !session.closing)
   }
 
   private async saveFromKeyboard(session: Session, saveAs: boolean, persistedOnly = false): Promise<void> {
     try {
       const result = await this.save(session.instanceId, saveAs, persistedOnly)
+      if (result && !session.closing) this.interaction(session, 'clear')
       if (!result && persistedOnly) session.autoWritebackBlocked = true
       if (result && !session.view.webContents.isDestroyed()) {
         await session.view.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('gb-office-save-result',{detail:${JSON.stringify(`版本 ${result.document.revision} 已保存到文件`)}}))`)
       }
     } catch (error) {
       session.autoWritebackBlocked = true
-      session.view.setVisible(false)
-      try {
-        await dialog.showMessageBox(this.window, { type: 'error', message: '文档保存失败',
-          detail: `${error instanceof Error ? error.message : String(error)}\n可使用 Ctrl/Cmd+Shift+S 另存为，或重试保存。` })
-      } finally { if (!session.view.webContents.isDestroyed()) session.view.setVisible(session.visible) }
+      this.interaction(session, 'error', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  private interaction(session: Session, kind: OfficeInteraction['kind'], detail?: string): void {
+    this.window.webContents.send(officeChannels.interaction, {
+      instanceId: session.instanceId, name: session.document.name, kind, detail, closing: !!session.closing
+    } satisfies OfficeInteraction)
+  }
+
+  resolveClose(instanceId: string, choice: OfficeCloseChoice): void {
+    this.sessions.get(instanceId)?.closeChoice?.(choice)
+  }
+
+  private async persist(session: Session): Promise<void> {
+    const deadline = Date.now() + 60_000
+    // Dirty=false only means submitted to Docs, not persisted by ShareServer.
+    while (true) {
+      const status = await session.view.webContents.executeJavaScript(
+        '({ready:document.documentElement.dataset.officeReady,dirty:document.documentElement.dataset.officeDirty})'
+      ) as { ready?: string; dirty?: string }
+      if (status.ready === 'true' && status.dirty === 'false') break
+      if (Date.now() > deadline) throw new Error('编辑器尚未将修改交给编辑服务，请等待后重试')
+      await delay(250)
+    }
+    await this.request(session, '/save', 'POST')
+    while (true) {
+      session.document = officeDocumentSchema.parse(await this.request(session))
+      if (session.document.error || session.document.state === 'error') throw new Error(session.document.error ?? '服务器保存失败')
+      if (['editing', 'saved', 'closed'].includes(session.document.state)) break
+      if (Date.now() > deadline) throw new Error('等待服务器保存超时，请重试；源文件尚未更新')
+      await delay(500)
     }
   }
 
@@ -266,24 +296,7 @@ export class OfficeService {
         target = selected.filePath
       }
       if (!persistedOnly) {
-        const deadline = Date.now() + 60_000
-        // Fixed, read-only expression in our editor shell; no arbitrary bridge.
-        while (true) {
-          const status = await session.view.webContents.executeJavaScript(
-            '({ready:document.documentElement.dataset.officeReady,dirty:document.documentElement.dataset.officeDirty})'
-          ) as { ready?: string; dirty?: string }
-          if (status.ready === 'true' && status.dirty === 'false') break
-          if (Date.now() > deadline) throw new Error('编辑器尚未将修改交给编辑服务，请等待后重试')
-          await delay(250)
-        }
-        await this.request(session, '/save', 'POST')
-        while (true) {
-          session.document = officeDocumentSchema.parse(await this.request(session))
-          if (session.document.error || session.document.state === 'error') throw new Error(session.document.error ?? '服务器保存失败')
-          if (['editing', 'saved', 'closed'].includes(session.document.state)) break
-          if (Date.now() > deadline) throw new Error('等待服务器保存超时，请重试；源文件尚未更新')
-          await delay(500)
-        }
+        await this.persist(session)
       }
       const result = await fileJob(this.workerPath, { action: 'download', path: target, serverUrl: session.serverUrl, headers: session.headers,
         document: session.document, ...(target === session.path && !session.source?.commit ? { expectedDigest: session.digest } : {}) })
@@ -298,7 +311,7 @@ export class OfficeService {
       return this.summary(session)
     } finally {
       session.busy = false
-      session.view.setVisible(session.visible)
+      session.view.setVisible(session.visible && !session.closing)
     }
   }
 
@@ -314,10 +327,45 @@ export class OfficeService {
     if (this.opening.has(instanceId)) return false
     const session = this.sessions.get(instanceId)
     if (!session) return true
-    if (session.busy) return false
+    if (session.closing) return false
     session.closing = true
     session.view.setVisible(false)
+    let closeError: string | undefined
     try {
+      if (destroy) {
+        this.interaction(session, 'progress', '正在确认保存状态…')
+        const deadline = Date.now() + 65_000
+        while (session.busy) {
+          if (Date.now() > deadline) throw new Error('文档仍在保存，请稍候重试关闭')
+          await delay(100)
+        }
+        try {
+          await this.persist(session)
+          // A save may produce another revision with identical bytes.
+          if (session.document.revision === session.syncedRevision || session.document.digest === session.digest) {
+            await this.destroy(session)
+            return true
+          }
+          this.interaction(session, 'confirm', '在线版本已保存到服务器，尚未同步到源文件。仅保留在线版本不会撤销已经完成的保存。')
+        } catch (error) {
+          this.interaction(session, 'error', `${error instanceof Error ? error.message : String(error)}\n尚不能确认最新内容已保存，直接关闭可能丢失未保存的修改。`)
+        }
+        while (true) {
+          const choice = await new Promise<OfficeCloseChoice>(resolve => { session.closeChoice = resolve })
+          session.closeChoice = undefined
+          if (choice === 'cancel') return false
+          if (choice === 'discard') { await this.destroy(session); return true }
+          this.interaction(session, 'progress', '正在保存到源文件…')
+          try {
+            if (await this.save(instanceId, choice === 'saveAs')) { await this.destroy(session); return true }
+            this.interaction(session, 'confirm', '已取消另存为。文档仍然打开，请选择继续编辑或关闭。')
+          } catch (error) {
+            this.interaction(session, 'error', error instanceof Error ? error.message : String(error))
+          }
+        }
+      }
+      // Application exit may still use a window-level decision for all documents.
+      if (session.busy) return false
       const answer = await dialog.showMessageBox(this.window, {
         type: 'question', message: `关闭 ${session.document.name}`,
         detail: '保存会将当前服务器版本写回源文件。不回写只保留服务器副本，不会撤销已完成的保存。',
@@ -328,11 +376,13 @@ export class OfficeService {
       if (destroy) await this.destroy(session)
       return true
     } catch (error) {
-      await dialog.showMessageBox(this.window, { type: 'error', message: '文档未关闭',
-        detail: error instanceof Error ? error.message : String(error) })
+      if (destroy) closeError = error instanceof Error ? error.message : String(error)
+      else await dialog.showMessageBox(this.window, { type: 'error', message: '文档未关闭', detail: error instanceof Error ? error.message : String(error) })
       return false
     } finally {
       session.closing = false
+      session.closeChoice = undefined
+      if (destroy) this.interaction(session, closeError ? 'error' : 'clear', closeError)
       if (this.sessions.has(instanceId)) session.view.setVisible(session.visible)
     }
   }
@@ -349,6 +399,10 @@ export class OfficeService {
 
 export function registerOfficeIpc(window: BrowserWindow, service: OfficeService): () => void {
   const handlers: Record<string, (input: unknown) => unknown> = {
+    [officeChannels.resolveClose]: input => {
+      const value = officeCloseChoiceSchema.parse(input)
+      return service.resolveClose(value.instanceId, value.choice)
+    },
     [officeChannels.context]: input => service.context(officeContextSchema.parse(input)),
     [officeChannels.capabilities]: input => {
       const value = z.object({ serverUrl: z.string(), fresh: z.boolean().optional() }).strict().parse(input)

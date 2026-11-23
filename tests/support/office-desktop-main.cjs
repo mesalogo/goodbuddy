@@ -18,7 +18,8 @@ app.whenReady().then(async () => {
   let service
   const conversation = { id: '10000000-0000-4000-8000-000000000010', title: 'Office test conversation', updatedAt: Date.now(), messages: [] }
   let saveDialogs = 0
-  ipcMain.handle('office-probe:diagnostics', () => ({ lastError, keys, saveDialogs, sessions: [...service.sessions.values()].map(s => ({ busy: s.busy, path: s.path })) }))
+  let messageDialogs = 0
+  ipcMain.handle('office-probe:diagnostics', () => ({ lastError, keys, saveDialogs, messageDialogs, sessions: [...service.sessions.values()].map(s => ({ busy: s.busy, path: s.path, visible: s.view.getVisible() })) }))
   const window = new BrowserWindow({ width: 1440, height: 1000, webPreferences: {
     preload: join(__dirname, 'office-desktop-preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false
   } })
@@ -38,7 +39,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('office-probe:editor-key', (_event, key) => editorKey(key))
   dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [join(root, filename)] })
   dialog.showSaveDialog = async () => { saveDialogs++; return { canceled: false, filePath: join(root, 'export.' + filename.split('.').pop().replace(/^doc$/, 'docx')) } }
-  dialog.showMessageBox = async (_window, options) => { if (options.type === 'error') lastError = options.detail; return { response: options.type === 'error' ? 0 : 1 } }
+  dialog.showMessageBox = async (_window, options) => { messageDialogs++; if (options.type === 'error') lastError = options.detail; return { response: options.type === 'error' ? 0 : 1 } }
   let authentication
   if (process.env.GB_OFFICE_PROBE_REGISTER === 'true') {
     const { DeviceSharingService } = require(join(root, 'sharing.cjs'))

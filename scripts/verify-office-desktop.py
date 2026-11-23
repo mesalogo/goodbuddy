@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 import tempfile
 import json
+import signal
 import urllib.request
 from playwright.sync_api import sync_playwright
 
@@ -19,7 +20,11 @@ parser.add_argument('--legacy', action='store_true', help='Convert a real DOC an
 parser.add_argument('--native-save', action='store_true', help='Use ONLYOFFICE toolbar Save and verify automatic source writeback')
 parser.add_argument('--registered-device', action='store_true', help='Register an isolated test device and authenticate every Office request')
 parser.add_argument('--timing', action='store_true', help='Measure click-to-ready for a first open and a reopen, then exit')
+parser.add_argument('--close-tab', action='store_true', help='Verify tab-local close confirmation, switch/cancel, conflict recovery and silent synchronized close')
 args = parser.parse_args()
+def interrupted(_signal, _frame):
+    raise InterruptedError('Office probe interrupted')
+signal.signal(signal.SIGTERM, interrupted)
 repo = Path(__file__).resolve().parents[1]
 (repo / 'temp').mkdir(exist_ok=True)
 root = Path(tempfile.mkdtemp(prefix='office-desktop-', dir=repo / 'temp'))
@@ -77,6 +82,14 @@ with (root / 'electron.log').open('w') as log:
             else:
                 raise RuntimeError('Desktop panel did not open')
             panel.wait_for_url('**/index.html')
+            def wait_diagnostics(predicate, timeout=70):
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    diagnostics = panel.evaluate('window.goodbuddy.probeDiagnostics()')
+                    if predicate(diagnostics):
+                        return diagnostics
+                    panel.wait_for_timeout(100)
+                raise AssertionError(diagnostics)
             assert panel.get_by_role('textbox', name='ShareServer 地址').count() == 0
             if args.timing:
                 def timed_open(label):
@@ -134,6 +147,56 @@ with (root / 'electron.log').open('w') as log:
             assert bounds['x'] == 0 and bounds['y'] == 0 and abs(bounds['height'] - viewport['height']) <= 1
             print('PASS: inherited connection, no duplicate toolbars, embedded editor fills viewport', flush=True)
             frame = editor.frames[1]
+            if args.close_tab:
+                if frame.get_by_role('button', name='取消', exact=True).count():
+                    frame.get_by_role('button', name='取消', exact=True).click()
+                (root / 'source.docx').write_bytes(docx('external edit'))
+                editor.mouse.click(650, 560)
+                editor.keyboard.press('Control+End')
+                editor.keyboard.type(' TAB_LOCAL_CLOSE', delay=30)
+                editor.keyboard.press('Control+a')
+                for attempt in range(30):
+                    try:
+                        selection = editor.evaluate('window.goodbuddyOffice.selection()')
+                        break
+                    except Exception:
+                        if attempt == 29:
+                            raise
+                        editor.wait_for_timeout(500)
+                assert 'TAB_LOCAL_CLOSE' in selection['text'], selection
+                editor.keyboard.press('ArrowRight')
+                panel.get_by_role('button', name='关闭文档', exact=True).click()
+                decision = panel.get_by_role('dialog', name='关闭文档', exact=True)
+                decision.get_by_role('button', name='继续编辑', exact=True).wait_for(timeout=70000)
+                assert decision.get_attribute('aria-modal') == 'false'
+                assert not panel.evaluate('window.goodbuddy.probeDiagnostics()')['sessions'][0]['visible']
+                panel.get_by_role('button', name='切换标签').click()
+                panel.get_by_role('textbox', name='其他标签的输入').fill('Other tab remains usable')
+                assert not decision.is_visible()
+                panel.get_by_role('button', name='切换标签').click()
+                decision.get_by_role('button', name='继续编辑', exact=True).click()
+                decision.wait_for(state='hidden')
+                wait_diagnostics(lambda value: value['sessions'][0]['visible'])
+                print('PASS: close prompt belongs to document; other tab usable; cancel restores same view', flush=True)
+                # The online copy differs from this external write. Closing must not overwrite it.
+                (root / 'source.docx').write_bytes(docx('external edit'))
+                editor.mouse.click(650, 560)
+                editor.keyboard.press('Control+End')
+                editor.keyboard.type(' CLOSE_CONFLICT', delay=30)
+                panel.get_by_role('button', name='关闭文档', exact=True).click()
+                decision.get_by_role('button', name='保存到源文件并关闭', exact=True).wait_for(timeout=70000)
+                decision.get_by_role('button', name='保存到源文件并关闭', exact=True).click()
+                decision.get_by_role('alert').filter(has_text='源文件已被其他程序修改').wait_for(timeout=70000)
+                assert 'external edit' in text(root / 'source.docx')
+                decision.get_by_role('button', name='另存为并关闭', exact=True).click()
+                wait_diagnostics(lambda value: len(value['sessions']) == 0)
+                assert 'CLOSE_CONFLICT' in text(root / 'export.docx')
+                assert panel.evaluate('window.goodbuddy.probeDiagnostics()')['messageDialogs'] == 0
+                print('PASS: close conflict stays local; save-as recovers contents; no application message boxes', flush=True)
+                panel.evaluate('window.goodbuddy.quitProbe()')
+                browser.close()
+                child.wait(timeout=15)
+                sys.exit(0)
             if frame.get_by_role('button', name='取消', exact=True).count():
                 frame.get_by_role('button', name='取消', exact=True).click()
             editor.mouse.click(650, 560)
@@ -193,10 +256,10 @@ with (root / 'electron.log').open('w') as log:
                     frame.locator('button[aria-label^="保存"]:visible').first.click()
                 else:
                     panel.evaluate('window.goodbuddy.probeSaveKey(false)')
-                panel.wait_for_function('async () => (await window.goodbuddy.probeError()).includes("源文件已被其他程序修改")', timeout=65000)
+                panel.get_by_role('dialog', name='保存到源文件失败').get_by_role('alert').filter(has_text='源文件已被其他程序修改').wait_for(timeout=65000)
                 assert 'external edit' in text(root / 'source.docx')
                 print('PASS: conflict keeps external source and editing view', flush=True)
-                panel.evaluate('window.goodbuddy.probeSaveKey(true)')
+                panel.get_by_role('dialog', name='保存到源文件失败').get_by_role('button', name='另存为', exact=True).click()
                 for _ in range(130):
                     if (root / 'export.docx').exists(): break
                     panel.wait_for_timeout(500)
@@ -213,11 +276,10 @@ with (root / 'electron.log').open('w') as log:
             browser.close()
             child.wait(timeout=15)
     finally:
-        import signal
         if child.poll() is None:
             os.killpg(child.pid, signal.SIGTERM)
             child.wait(timeout=15)
         log.flush()
-        if sys.exc_info()[0]:
+        if sys.exc_info()[0] not in (None, SystemExit):
             print((root / 'electron.log').read_text(), file=sys.stderr)
         shutil.rmtree(root)

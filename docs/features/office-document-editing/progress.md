@@ -1,5 +1,15 @@
 # Office 协同编辑实施进度
 
+## 2026-11-23：文档标签内关闭与回写恢复（FR-10／US-B3）
+
+- 单标签关闭和自动回写失败通过 OfficePanel 内的非应用模态确认层处理；保存到源文件、另存为、不回写关闭和继续编辑均接通生产 OfficeService。系统文件选择框仍负责另存路径，整个应用退出保留应用级确认。
+- Main 等待在途回写并确认服务器持久化版本，再对比 syncedRevision／文件摘要；相同内容不重复询问或写入。未知保存结果明确提示，不把 Docs 已收到修改等同于服务器落盘。
+- 复用原生视图遮挡机制，确认时保留会话；切换标签不丢确认，异步关闭不抢回后来选择的标签。源文件冲突不覆盖外部修改，另存为成功后才关闭。
+- 49 项 Office／工作栏定向单测和全仓 lint 通过。新增 `tests/office-close.electron.test.ts` 使用真实 OfficeService、Worker、OfficePanel 与远端 ShareServer／ONLYOFFICE，通过选择确认、切换其他标签输入、取消恢复、关闭回写冲突及另存为恢复；应用消息框计数为 0。系统文件选择由测试驱动返回隔离路径，不代表三平台系统文件框验收。
+- 真实 `--native-save` 回归通过内置保存自动回写、冲突局部提示、另存为及同步后直接关闭。通过 VPN IP 注册，服务器当前声明的编辑入口为 HTTPS 公共地址，测试沿用该入口；本轮未改变服务器的地址策略。
+- 复现：设置 `GB_OFFICE_TEST_WEB` 为测试服务、`GB_OFFICE_TEST_PYTHON` 为安装 Playwright 的 Python，再运行 `npm run test:electron -- tests/office-close.electron.test.ts`；Linux 需 xvfb。内置保存回归使用 `python scripts/verify-office-desktop.py --web <服务地址> --registered-device --file-entry --native-save`。
+- 全仓类型检查仍受缺失 playwright、material-icon-theme、dsh-tool-executor-native 及既有 DeepSeek 测试类型错误阻塞；未声称全仓类型检查、全量测试或安装包构建通过。此次未改 Agent 协议／来源 commit，远程来源沿用原回写实现；未重跑完整远程文件 UI 链路。模型调用 0 次，无模型行为变更。
+
 ## 2026-11-09：已注册设备的 Office 认证
 
 - 修复 Office 新权限边界只接受网页登录，而桌面请求未携带身份导致的 `office:open` 401。
