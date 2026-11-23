@@ -1,5 +1,28 @@
 # Magic Notes Progress
 
+## 2026-11-23: Rich-Text Note Switch First Frame
+
+Moved Quill toolbar initialization and read-only content updates into layout
+effects, so note switches do not paint native toolbar selects or empty rich-text
+record shells. The same reader update also prevents the previous record's text
+from appearing before the new Delta is applied. See the lifecycle rule in
+[technical design](./technical-design.md).
+
+Both new pre-paint regressions failed against the previous implementation:
+the editor exposed no initialized toolbar or text, and the reader exposed an
+empty mount followed by stale text on update. With the fix, all 169 editor,
+content and workspace tests passed. The full `npm.cmd test` run finished with
+7,113 passed, 94 skipped and two failed tests. Workspace Files failed waiting for
+native window focus and passed its isolated rerun. The notes layout test exposed
+a pending type-switch focus frame reopening the composer after cancellation;
+the previous effect timing passed the same test. Draft discard and unmount now
+cancel that frame.
+
+After the focus correction, the 169 targeted tests passed again, as did all four
+Electron scenarios across notes layout, navigation and analysis/persistence.
+Type checking and lint passed. The full suite was not repeated after this correction;
+its earlier result is not claimed as an all-green run.
+
 ## 2026-11-10: Continuous Canvas, PDF Display Density and Media Saves
 
 FR-15–FR-17 are implemented; behavior and ownership are in

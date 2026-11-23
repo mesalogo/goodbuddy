@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ClipboardEvent as ReactClipboardEvent,
@@ -256,7 +257,7 @@ export function MagicNoteEditor({
   const [tableDialogOpen, setTableDialogOpen] = useState(false)
   const [hasTableSelection, setHasTableSelection] = useState(false)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onChangeRef.current = onChange
     onReadyRef.current = onReady
     onErrorRef.current = onError
@@ -369,7 +370,9 @@ export function MagicNoteEditor({
     tableTriggerRef.current?.focus()
   }
 
-  useEffect(() => {
+  // Quill transforms the native toolbar controls and fills the document. Finish
+  // both before paint so note switches cannot expose the uninitialized markup.
+  useLayoutEffect(() => {
     const toolbar = toolbarRef.current
     const editor = editorRef.current
     if (!toolbar || !editor) {

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import Quill from 'quill'
 import { useTranslation } from 'react-i18next'
 import type { MagicNoteContent as NoteContent, MagicNoteRichContent } from '../../shared/magic-notes-contracts'
@@ -26,7 +26,7 @@ function RichNoteContent({
   const containerRef = useRef<HTMLDivElement>(null)
   const quillRef = useRef<Quill | null>(null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = containerRef.current
     if (!container) {
       return
@@ -44,7 +44,8 @@ function RichNoteContent({
     }
   }, [])
 
-  useEffect(() => {
+  // Apply the selected record before paint, including when React reuses this reader.
+  useLayoutEffect(() => {
     quillRef.current?.setContents(content.ops, 'silent')
   }, [content])
 

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import Quill from 'quill'
+import { useLayoutEffect, useRef } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MagicNoteRichContent } from '../../shared/magic-notes-contracts'
 import { MagicNoteEditor } from './MagicNoteEditor'
@@ -15,6 +16,28 @@ const stylesheet = readFileSync(
 
 describe('MagicNoteEditor', () => {
   afterEach(cleanup)
+
+  it('initializes the toolbar and saved text before a switched note can paint', () => {
+    const samples: { toolbar: boolean; text: string | null }[] = []
+    function Note({ text }: { text: string }): React.JSX.Element {
+      const host = useRef<HTMLDivElement>(null)
+      useLayoutEffect(() => {
+        samples.push({
+          toolbar: Boolean(host.current?.querySelector('.ql-toolbar.ql-snow .ql-picker')),
+          text: host.current?.querySelector('.ql-editor')?.textContent ?? null
+        })
+      }, [text])
+      return <div ref={host}><MagicNoteEditor key={text} ariaLabel="笔记正文"
+        initialContent={{ version: 1, ops: [{ insert: `${text}\n` }] }}
+        onChange={vi.fn()} onError={vi.fn()} /></div>
+    }
+    const view = render(<Note text="First note" />)
+    view.rerender(<Note text="Second note" />)
+    expect(samples).toEqual([
+      { toolbar: true, text: 'First note' },
+      { toolbar: true, text: 'Second note' }
+    ])
+  })
 
   it('establishes the baseline from real Quill normalization and reports later edits separately', () => {
     const onReady = vi.fn()

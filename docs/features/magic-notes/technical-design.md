@@ -198,6 +198,17 @@ save remounts at the returned revision and establishes a new baseline; an unchan
 background revision retains the existing editor and baseline. Aborted canvas
 initialization and file reads for an unmounted text editor cannot write back.
 
+Rich-text editor initialization and read-only Delta updates run in layout effects.
+Quill must finish transforming the toolbar and filling the selected record before
+the browser paints; passive effects expose native selects and empty record shells
+during note switches. Callback refs update in the same layout phase before editor
+initialization so readiness and change notifications use the current callbacks.
+Regression tests inspect the child DOM from a parent layout effect on mount and
+on switching records, before passive effects can hide an incomplete first frame.
+Changing the composer type queues focus for its new editor. Discarding that draft
+or unmounting the workspace cancels the queued frame, so a late focus event cannot
+reopen the composer after cancellation.
+
 Rich text tables remain native Quill table Delta operations. Insertion stores the active editor
 range while the shared table-size dialog is open, rejects invalid dimensions before changing the
 Delta, and refuses insertion when that range is already a table cell. Row, column, and whole-table

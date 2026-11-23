@@ -1,5 +1,5 @@
 import { act, cleanup, render, screen } from '@testing-library/react'
-import { createRef } from 'react'
+import { createRef, useLayoutEffect, useRef } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MagicNoteContent } from './MagicNoteContent'
 import type { MagicCanvasContentHandle } from './MagicCanvasContent'
@@ -12,6 +12,20 @@ vi.mock('./magic-canvas/canvas-note.mjs', () => ({ mountCanvasNote: core.mount }
 afterEach(cleanup)
 
 describe('MagicNoteContent dispatch', () => {
+  it('fills rich text before paint on mount and when switching content', () => {
+    const samples: (string | null)[] = []
+    function Note({ text }: { text: string }): React.JSX.Element {
+      const host = useRef<HTMLDivElement>(null)
+      useLayoutEffect(() => {
+        samples.push(host.current?.querySelector('.ql-editor')?.textContent ?? null)
+      }, [text])
+      return <div ref={host}><MagicNoteContent content={{ version: 1, ops: [{ insert: `${text}\n` }] }} /></div>
+    }
+    const view = render(<Note text="First note" />)
+    view.rerender(<Note text="Second note" />)
+    expect(samples).toEqual(['First note', 'Second note'])
+  })
+
   it('switches between rich text and a read-only canvas with capture access', async () => {
     const content = createEmptyCanvasContent()
     const images = [{ pageId: content.pages[0]!.id, dataUrl: 'data:image/png;base64,YQ==' }]

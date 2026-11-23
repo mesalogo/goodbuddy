@@ -1043,7 +1043,18 @@ function MagicNotesWorkspaceView({
     [applyDetail, clearDraftAnalysis]
   )
 
+  const composerTypeFocusFrameRef = useRef<number | undefined>(undefined)
+  useEffect(() => () => {
+    if (composerTypeFocusFrameRef.current !== undefined) {
+      cancelAnimationFrame(composerTypeFocusFrameRef.current)
+    }
+  }, [])
+
   const discardComposerDraft = useCallback((): void => {
+    if (composerTypeFocusFrameRef.current !== undefined) {
+      cancelAnimationFrame(composerTypeFocusFrameRef.current)
+      composerTypeFocusFrameRef.current = undefined
+    }
     clearDraftAnalysis()
     composerContentRef.current = undefined
     setComposerKey((current) => current + 1)
@@ -1174,7 +1185,8 @@ function MagicNotesWorkspaceView({
         setComposerOpen(true)
         setEntryType(target.value)
         // The composer remounts with the new type; move focus into the new editor.
-        requestAnimationFrame(() => {
+        composerTypeFocusFrameRef.current = requestAnimationFrame(() => {
+          composerTypeFocusFrameRef.current = undefined
           if (target.value === 'canvas' && composerCanvasRef.current) { composerCanvasRef.current.focus(); return }
           composerRef.current?.querySelector<HTMLElement>('.ql-editor, [data-testid="magic-note-editor"]')?.focus({ preventScroll: true })
         })
