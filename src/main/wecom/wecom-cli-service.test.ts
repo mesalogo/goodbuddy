@@ -76,6 +76,101 @@ describe('wecomCommandCategory', () => {
 })
 
 describe('WecomCliService', () => {
+  it('automatically reauthorizes concurrent expired reads once and retries each read', async () => {
+    let renewed = false
+    const { instance, calls } = service((args) => {
+      if (args[0] === 'auth') {
+        if (args[1] === 'init') renewed = true
+        return { stdout: 'Status: authorized' }
+      }
+      return renewed ? { stdout: '{"files":[]}' } : { exitCode: 1, stdout: '{"errcode":850003,"errmsg":"authorization expired"}' }
+    }, { resolveAppEnabled: async () => true, resolveChannelCredentials: async () => ({ botId: 'saved-bot', secret: 'saved-secret' }) })
+    await instance.getSnapshot()
+    await expect(Promise.all([instance.listView('disk'), instance.listView('disk')])).resolves.toEqual([[], []])
+    expect(calls.filter(call => call.args[0] === 'auth' && call.args[1] === 'init')).toHaveLength(1)
+    expect(calls.filter(call => call.args[0] === 'disk')).toHaveLength(4)
+    expect((await instance.getSnapshot()).authorization.state).toBe('authorized')
+  })
+
+  it('recovers authorization for writes without replaying the write', async () => {
+    const { instance, calls } = service(args => args[0] === 'auth'
+      ? { stdout: 'Status: authorized' }
+      : { exitCode: 1, stdout: '{"errcode":850003}' }, {
+      resolveAppEnabled: async () => true,
+      resolveChannelCredentials: async () => ({ botId: 'bot', secret: 'secret' })
+    })
+    await expect(instance.run(['doc', 'create'])).rejects.toThrow('授权已自动恢复')
+    expect(calls.filter(call => call.args[0] === 'doc')).toHaveLength(1)
+    expect((await instance.getSnapshot()).authorization.state).toBe('authorized')
+  })
+
+  it('stops after one retry if the service still rejects the new authorization', async () => {
+    const { instance, calls } = service(args => args[0] === 'auth'
+      ? { stdout: 'Status: authorized' }
+      : { exitCode: 1, stdout: '{"errcode":850003}' }, {
+      resolveChannelCredentials: async () => ({ botId: 'bot', secret: 'secret' })
+    })
+    await expect(instance.run(['doc', 'search'])).rejects.toThrow('重新授权后仍不可用')
+    expect(calls.filter(call => call.args[0] === 'doc')).toHaveLength(2)
+    expect(calls.filter(call => call.args[1] === 'init')).toHaveLength(1)
+    expect((await instance.getSnapshot()).authorization.state).toBe('unauthorized')
+  })
+
+  it('reports failed recovery without leaking the saved secret or replaying the read', async () => {
+    const { instance, calls } = service(args => args[0] !== 'auth'
+      ? { exitCode: 1, stdout: '{"errcode":850003}' }
+      : args[1] === 'init'
+        ? { exitCode: 1, stdout: '{"errmsg":"invalid saved-secret"}' }
+        : { stdout: 'Status: authorized' }, {
+      resolveChannelCredentials: async () => ({ botId: 'bot', secret: 'saved-secret' })
+    })
+    await expect(instance.run(['doc', 'search'])).rejects.toThrow('自动重新授权失败：invalid ***')
+    expect(calls.filter(call => call.args[0] === 'doc')).toHaveLength(1)
+    expect((await instance.getSnapshot()).authorization.state).toBe('unauthorized')
+  })
+
+  it('does not retry a cancelled read after shared authorization recovery', async () => {
+    const controller = new AbortController()
+    const { instance, calls } = service(args => {
+      if (args[0] === 'auth') {
+        if (args[1] === 'init') controller.abort(new Error('cancelled'))
+        return { stdout: 'Status: authorized' }
+      }
+      return { exitCode: 1, stdout: '{"errcode":850003}' }
+    }, { resolveChannelCredentials: async () => ({ botId: 'bot', secret: 'secret' }) })
+    await expect(instance.run(['doc', 'search'], { signal: controller.signal })).rejects.toThrow('cancelled')
+    expect(calls.filter(call => call.args[0] === 'doc')).toHaveLength(1)
+  })
+
+  it.each([
+    { exitCode: 1, stdout: JSON.stringify({ error: { message: 'authorization expired, hint: [123], more info at https://open.work.weixin.qq.com/devtool/query?e=850003' } }) },
+    { stdout: JSON.stringify({ errcode: 850003, errmsg: 'authorization expired' }) },
+    { exitCode: 1, stderr: 'authorization expired' }
+  ])('invalidates locally cached authorization on expiry and permits explicit reauthorization: %j', async (failure) => {
+    let expired = true
+    const { instance, calls } = service((args) => args[0] === 'auth'
+      ? { stdout: 'Status: authorized\nBot ID: bot-1' }
+      : expired ? failure : { stdout: '{"files":[]}' }, { resolveAppEnabled: async () => true })
+    expect((await instance.getSnapshot()).authorization.state).toBe('authorized')
+    await expect(instance.listView('disk')).rejects.toThrow('企业微信授权已过期（850003）')
+    expect((await instance.getSnapshot()).authorization.state).toBe('unauthorized')
+    expect(await instance.getEnabledCategories()).toEqual([])
+    expect(calls.filter((call) => call.args[0] === 'disk')).toHaveLength(1)
+    expired = false
+    await instance.authorizeManually({ botId: 'bot-1', secret: 'secret' })
+    expect((await instance.getSnapshot()).authorization.state).toBe('authorized')
+    await expect(instance.listView('disk')).resolves.toEqual([])
+  })
+
+  it('does not mistake document text or unrelated failures for expired authorization', async () => {
+    const { instance } = service((args) => args[0] === 'auth'
+      ? { stdout: 'Status: authorized' }
+      : { stdout: '{"content":"authorization expired"}' })
+    await instance.getSnapshot()
+    await instance.run(['doc', 'get'])
+    expect((await instance.getSnapshot()).authorization.state).toBe('authorized')
+  })
+
   it('defaults to disabled tools with mail and messages off, and persists updates', async () => {
     const { instance } = service(() => ({ stdout: 'Status: unauthorized' }))
     const snapshot = await instance.getSnapshot()

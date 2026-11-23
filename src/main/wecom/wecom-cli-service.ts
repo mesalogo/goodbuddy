@@ -136,6 +136,8 @@ type RunOptions = {
   signal?: AbortSignal
   cwd?: string
   timeoutMs?: number
+  /** Registration already holds the authorization lock and is using a new bot. */
+  skipAuthorizationRecovery?: boolean
 }
 
 /** Owns the bundled wecom-cli, its isolated credentials and tool preferences. Works offline. */
@@ -148,6 +150,8 @@ export class WecomCliService {
   private settings?: WecomToolSettings
   private serial: Promise<unknown> = Promise.resolve()
   private revision = 0
+  private authorizationGeneration = 0
+  private authorizationRecovery?: Promise<void>
 
   constructor(private readonly options: WecomCliServiceOptions) {}
 
@@ -269,7 +273,78 @@ export class WecomCliService {
     await mkdir(this.configDirectory, { recursive: true })
     const cwd = options.cwd ?? this.downloadsDirectory
     await mkdir(cwd, { recursive: true })
-    return this.spawnBounded(binary, args, cwd, this.processEnvironment(), options)
+    const generation = this.authorizationGeneration
+    const execute = (): Promise<WecomCliResult> => this.spawnBounded(binary, args, cwd, this.processEnvironment(), options)
+    let result = await execute()
+    if (WecomCliService.authorizationExpired(result)) {
+      if (args[0] !== 'auth' && !options.skipAuthorizationRecovery) {
+        options.signal?.throwIfAborted()
+        await this.recoverAuthorization(generation)
+        options.signal?.throwIfAborted()
+        // Only known read commands are replayed. In particular, uploads and
+        // creates must never run twice merely because authorization expired.
+        const flagIndex = args.findIndex(arg => arg.startsWith('--'))
+        const command = args.slice(0, flagIndex < 0 ? args.length : flagIndex).join(' ')
+        const retryable = ['identity whoami', 'doc search', 'doc contents get', 'disk files list', 'disk files search', 'disk files get'].includes(command)
+        if (!retryable) throw new Error('企业微信授权已自动恢复。为避免重复写入，本次操作未自动重试，请重新执行。')
+        result = await execute()
+        if (!WecomCliService.authorizationExpired(result)) return result
+      }
+      this.authorization = { state: 'unauthorized' }
+      await this.emit()
+      throw new Error('企业微信授权已过期（850003），重新授权后仍不可用。请在“应用中心 › 企业微信 › 应用设置 › 连接”页重新扫码。')
+    }
+    return result
+  }
+
+  private async recoverAuthorization(generation: number): Promise<void> {
+    // An older in-flight request may fail after another request has recovered.
+    if (generation !== this.authorizationGeneration) return
+    if (!this.authorizationRecovery) {
+      this.authorizationRecovery = this.exclusive(async () => {
+        if (generation !== this.authorizationGeneration) return
+        let secret: string | undefined
+        try {
+          if (this.options.resolveAppEnabled && !await this.options.resolveAppEnabled()) {
+            throw new Error('企业微信应用已关闭')
+          }
+          const credentials = await this.options.resolveChannelCredentials?.()
+          if (!credentials) throw new Error('没有已保存的机器人凭据')
+          secret = credentials.secret
+          await this.signIn(credentials)
+          if (this.authorization.state !== 'authorized') throw new Error('企业微信未确认授权成功')
+          await this.emit()
+        } catch (error) {
+          this.authorization = { state: 'unauthorized' }
+          await this.emit()
+          const reason = error instanceof Error ? error.message : String(error)
+          // The original error can contain the bot Secret; do not retain it as a cause.
+          // eslint-disable-next-line preserve-caught-error
+          throw new Error(`企业微信授权已过期（850003），自动重新授权失败：${secret ? reason.split(secret).join('***') : reason}。请在企业微信应用设置的“工具”页重试授权，或在“连接”页重新扫码。`)
+        }
+      })
+    }
+    const recovery = this.authorizationRecovery
+    try { await recovery } finally {
+      if (this.authorizationRecovery === recovery) this.authorizationRecovery = undefined
+    }
+  }
+
+  private static authorizationExpired(result: WecomCliResult): boolean {
+    for (const candidate of [result.stdout, result.stderr]) {
+      try {
+        const value = JSON.parse(candidate) as {
+          errcode?: unknown; errmsg?: unknown; error?: { code?: unknown; message?: unknown }
+        } | null
+        if (!value || typeof value !== 'object') continue
+        if (String(value.errcode ?? value.error?.code) === '850003') return true
+        const message = value.errmsg ?? value.error?.message
+        if (typeof message === 'string' && /\bauthorization expired\b/iu.test(message)) return true
+      } catch {
+        if (result.exitCode !== 0 && /\bauthorization expired\b/iu.test(candidate)) return true
+      }
+    }
+    return false
   }
 
   private spawnBounded(
@@ -364,6 +439,7 @@ export class WecomCliService {
       throw error
     }
     await this.refreshAuthorization()
+    if (this.authorization.state === 'authorized') this.authorizationGeneration += 1
   }
 
   authorizeManually(credentials: WecomManualCredentials): Promise<WecomSnapshot> {
@@ -451,7 +527,7 @@ export class WecomCliService {
         return
       }
       // The authorizer becomes the only allowed sender, like the Feishu scan.
-      const userId = await this.run(['identity', 'whoami'], { timeoutMs: 15_000 })
+      const userId = await this.run(['identity', 'whoami'], { timeoutMs: 15_000, skipAuthorizationRecovery: true })
         .then(result => result.exitCode === 0 ? wecomWhoamiUserId(result.stdout) : undefined)
         .catch(() => undefined)
       if (!this.options.saveRegisteredBot) {
