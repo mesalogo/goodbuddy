@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useTranslation } from 'react-i18next'
+import i18n from './i18n'
 import { X } from 'lucide-react'
 import type { InferenceAction, InferenceService, InferenceTask, LocalInferenceSnapshot } from '../../shared/local-inference-contracts'
 import { PageHeader } from './WorkspacePrimitives'
@@ -7,17 +9,12 @@ import { activateModalFocus, trapTabFocus } from './dialog-focus'
 import { getOcrInferenceState, loadOcrInference, releaseOcrInference } from './document-ocr-bridge'
 import './local-inference.css'
 
-const stateLabels: Record<string, string> = {
-  idle: '未加载 / 按需运行', running: '运行中', starting: '启动中', stopping: '停止中',
-  stopped: '已停止', error: '异常', unavailable: '不可用', unknown: '未知',
-  cancelling: '等待取消确认', completed: '已完成', cancelled: '已取消', failed: '失败'
-}
-const actionLabels = { start: '启动服务', stop: '停止服务', restart: '重启服务', load: '加载模型', release: '释放模型' }
 type Control = { service: InferenceService; action: InferenceAction['action'] | 'load' | 'release'; tasks: InferenceTask[] }
 
 function ImpactConfirmation({ control, busy, onClose, onConfirm }: {
   control: Control; busy: boolean; onClose: () => void; onConfirm: () => void
 }): React.JSX.Element {
+  const { t } = useTranslation('app')
   const cancel = useRef<HTMLButtonElement>(null)
   useLayoutEffect(() => activateModalFocus(() => cancel.current, () => document.querySelector<HTMLElement>('.local-inference-modal')), [])
   return createPortal(<div className="custom-task-dialog"><section className="custom-task-dialog__surface local-inference-confirm" role="dialog" aria-modal="true" aria-labelledby="inference-confirm-title" aria-describedby="inference-confirm-description" tabIndex={-1} onKeyDown={(event) => {
@@ -25,12 +22,12 @@ function ImpactConfirmation({ control, busy, onClose, onConfirm }: {
     trapTabFocus(event, event.currentTarget)
     if (event.key === 'Escape') { event.preventDefault(); if (!busy) onClose() }
   }}><div className="custom-task-dialog__content">
-    <h2 id="inference-confirm-title">{actionLabels[control.action]}：{control.service.name}</h2>
-    <p id="inference-confirm-description">此操作影响整个执行服务。被中断的任务不会在服务重新启动后自动重放。</p>
-    {control.tasks.length ? <ul>{control.tasks.map((task) => <li key={task.id}>{task.source} · {new Date(task.startedAt).toLocaleTimeString()} · {stateLabels[task.state]}</li>)}</ul> : <p>当前没有已登记的活动任务。执行前将再次核对。</p>}
+    <h2 id="inference-confirm-title">{t('localInference.confirmTitle', { action: t(`localInference.actions.${control.action}`), service: control.service.name })}</h2>
+    <p id="inference-confirm-description">{t('localInference.confirmDescription')}</p>
+    {control.tasks.length ? <ul>{control.tasks.map((task) => <li key={task.id}>{task.source} · {new Date(task.startedAt).toLocaleTimeString()} · {t(`localInference.states.${task.state}`)}</li>)}</ul> : <p>{t('localInference.noActiveTasks')}</p>}
   </div><div className="custom-task-dialog__actions">
-      <button ref={cancel} type="button" className="secondary-button" disabled={busy} onClick={onClose}>保留运行状态</button>
-      <button type="button" className="danger-button" disabled={busy} onClick={onConfirm}>{busy ? '操作中…' : `确认${actionLabels[control.action]}`}</button>
+      <button ref={cancel} type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('localInference.keepRunning')}</button>
+      <button type="button" className="danger-button" disabled={busy} onClick={onConfirm}>{busy ? t('localInference.working') : t('localInference.confirm', { action: t(`localInference.actions.${control.action}`) })}</button>
     </div>
   </section></div>, document.body)
 }
@@ -38,6 +35,7 @@ function ImpactConfirmation({ control, busy, onClose, onConfirm }: {
 export default function LocalInferencePage({ onClose, enabled = true, restoreFocus }: {
   onClose: () => void; enabled?: boolean; restoreFocus?: () => HTMLElement | null
 }): React.JSX.Element {
+  const { t } = useTranslation('app')
   const close = useRef<HTMLButtonElement>(null)
   const restoreFocusRef = useRef(restoreFocus)
   useLayoutEffect(() => activateModalFocus(() => close.current, () => restoreFocusRef.current?.() ?? null), [])
@@ -59,7 +57,7 @@ export default function LocalInferencePage({ onClose, enabled = true, restoreFoc
       inFlight = true
       setRefreshing(true)
       try {
-        if (!window.goodbuddy.localInference) throw new Error('本机推理管理接口不可用，请重启应用后重试')
+        if (!window.goodbuddy.localInference) throw new Error(i18n.t('app:localInference.apiUnavailable'))
         const next = await window.goodbuddy.localInference.getSnapshot()
         if (alive) { setSnapshot(next); setOcr(getOcrInferenceState()); setError('') }
       } catch (reason) {
@@ -111,7 +109,7 @@ export default function LocalInferencePage({ onClose, enabled = true, restoreFoc
     else setControl(selected)
   }
 
-  return createPortal(<div className="custom-task-dialog"><section className="custom-task-dialog__surface local-inference-modal" role="dialog" aria-modal="true" aria-label="本机推理监控" tabIndex={-1} onKeyDown={(event) => {
+  return createPortal(<div className="custom-task-dialog"><section className="custom-task-dialog__surface local-inference-modal" role="dialog" aria-modal="true" aria-label={t('localInference.title')} tabIndex={-1} onKeyDown={(event) => {
     if (event.target instanceof Element && event.target.closest('[aria-modal="true"]') !== event.currentTarget) return
     trapTabFocus(event, event.currentTarget)
     if (event.key === 'Escape') {
@@ -121,35 +119,39 @@ export default function LocalInferencePage({ onClose, enabled = true, restoreFoc
     }
   }}>
     <div className="custom-task-dialog__header">
-    <PageHeader headingId="local-inference-title" title="本机推理监控"
-      help={enabled ? '每 5 秒刷新 · CPU 100% = 一个逻辑核心' : undefined}
-      actions={<button ref={close} type="button" className="icon-button" aria-label="关闭本机推理监控" title="关闭本机推理监控" disabled={busy || Boolean(control)} onClick={() => { if (!operation.current && !control) onClose() }}><X size={20} aria-hidden="true" /></button>} />
+    <PageHeader headingId="local-inference-title" title={t('localInference.title')}
+      help={enabled ? t('localInference.help') : undefined}
+      actions={<button ref={close} type="button" className="icon-button" aria-label={t('localInference.close')} title={t('localInference.close')} disabled={busy || Boolean(control)} onClick={() => { if (!operation.current && !control) onClose() }}><X size={20} aria-hidden="true" /></button>} />
     </div>
     <div className="local-inference-modal__body">
-    {!enabled && <div className="local-inference-actions"><strong>应用已关闭</strong></div>}
+    {!enabled && <div className="local-inference-actions"><strong>{t('applications.disabledPage')}</strong></div>}
     <div className="local-inference-workspace" hidden={!enabled} inert={!enabled}>
     <div className="local-inference-toolbar">
-    <div className="local-inference-actions"><button className="secondary-button" type="button" disabled={busy} onClick={() => void window.goodbuddy.localInference.openSettings().catch((reason: unknown) => setOperationError(String(reason)))}>模型与连接设置</button><button className="secondary-button" type="button" disabled={refreshing || busy} onClick={() => setReload((value) => value + 1)}>刷新状态</button></div>
+    <div className="local-inference-actions"><button className="secondary-button" type="button" disabled={busy} onClick={() => void window.goodbuddy.localInference.openSettings().catch((reason: unknown) => setOperationError(String(reason)))}>{t('localInference.openSettings')}</button><button className="secondary-button" type="button" disabled={refreshing || busy} onClick={() => setReload((value) => value + 1)}>{t('localInference.refresh')}</button></div>
     </div>
-    {error && <div className="local-inference-feedback" role="alert"><p>{snapshot ? '状态刷新失败；以下为上次成功读取的状态，操作已禁用。' : '无法读取本机推理状态。'} {error}</p><button type="button" className="secondary-button" onClick={() => setReload((value) => value + 1)}>重试</button></div>}
-    {!snapshot && !error && <p role="status">正在读取服务状态…</p>}
-    {operationError && !control && <div className="local-inference-feedback" role="alert">{operationError}<button type="button" className="secondary-button" onClick={() => setOperationError('')}>关闭提示</button></div>}
-    {snapshot && <section aria-label="本机推理服务" className="local-inference-content">
-        {services?.length === 0 && <p role="status">暂无本机推理服务</p>}
+    {error && <div className="local-inference-feedback" role="alert"><p>{snapshot ? t('localInference.stale') : t('localInference.loadFailed')} {error}</p><button type="button" className="secondary-button" onClick={() => setReload((value) => value + 1)}>{t('localInference.retry')}</button></div>}
+    {!snapshot && !error && <p role="status">{t('localInference.loading')}</p>}
+    {operationError && !control && <div className="local-inference-feedback" role="alert">{operationError}<button type="button" className="secondary-button" onClick={() => setOperationError('')}>{t('localInference.dismissError')}</button></div>}
+    {snapshot && <section aria-label={t('localInference.servicesLabel')} className="local-inference-content">
+        {services?.length === 0 && <p role="status">{t('localInference.noServices')}</p>}
         {services?.map((service) => <article className="local-inference-row" key={service.id}>
-          <div><div className="local-inference-row__heading"><h2>{service.name}</h2><span className="local-inference-state">{service.id === 'asr' && service.state === 'unknown' ? '按需运行（状态未知）' : stateLabels[service.state]}</span></div>
+          <div><div className="local-inference-row__heading"><h2>{service.name}</h2><span className="local-inference-state">{service.id === 'asr' && service.state === 'unknown' ? t('localInference.onDemandUnknown') : t(`localInference.states.${service.state}`)}</span></div>
             <p className="local-inference-metadata">{service.engine}{service.model ? ` · ${service.model}` : ''}</p>
             <p className="local-inference-metadata">
               {service.resources?.scope === 'service-process'
-                ? `服务进程 PID ${service.resources.pid} · CPU ${service.resources.cpuPercent === undefined ? service.resources.cpuUnavailableReason : `${service.resources.cpuPercent.toFixed(1)}%`} · 工作集 ${service.resources.workingSetBytes === undefined ? service.resources.memoryUnavailableReason : `${(service.resources.workingSetBytes / 1024 / 1024).toFixed(1)} MiB`}`
-                : `CPU / 内存：${service.resources?.reason ?? '暂不可用'}`}
+                ? t('localInference.processResources', {
+                    pid: service.resources.pid,
+                    cpu: service.resources.cpuPercent === undefined ? service.resources.cpuUnavailableReason : `${service.resources.cpuPercent.toFixed(1)}%`,
+                    memory: service.resources.workingSetBytes === undefined ? service.resources.memoryUnavailableReason : `${(service.resources.workingSetBytes / 1024 / 1024).toFixed(1)} MiB`
+                  })
+                : t('localInference.cpuMemory', { value: service.resources?.reason ?? t('localInference.unavailableValue') })}
             </p>
             {service.error && <p className="local-inference-error">{service.error}</p>}
           </div>
           <div className="local-inference-actions">
-            {service.id === 'ocr' && <button className="secondary-button" type="button" disabled={busy} onClick={() => void window.goodbuddy.localInference.openSettings('document-parsing').catch((reason: unknown) => setOperationError(String(reason)))}>文档解析设置</button>}
-            {service.actions.map((action) => <button type="button" className="secondary-button" key={action} disabled={busy || refreshing || Boolean(error)} onClick={() => selectAction(service, action)}>{actionLabels[action]}</button>)}
-            {service.id === 'ocr' && <button type="button" className="secondary-button" disabled={busy || refreshing || Boolean(error) || ocr.busy || service.state === 'unavailable'} onClick={() => selectAction(service, ocr.loaded ? 'release' : 'load')}>{ocr.loaded ? '释放模型' : '加载模型'}</button>}
+            {service.id === 'ocr' && <button className="secondary-button" type="button" disabled={busy} onClick={() => void window.goodbuddy.localInference.openSettings('document-parsing').catch((reason: unknown) => setOperationError(String(reason)))}>{t('localInference.documentParsingSettings')}</button>}
+            {service.actions.map((action) => <button type="button" className="secondary-button" key={action} disabled={busy || refreshing || Boolean(error)} onClick={() => selectAction(service, action)}>{t(`localInference.actions.${action}`)}</button>)}
+            {service.id === 'ocr' && <button type="button" className="secondary-button" disabled={busy || refreshing || Boolean(error) || ocr.busy || service.state === 'unavailable'} onClick={() => selectAction(service, ocr.loaded ? 'release' : 'load')}>{t(ocr.loaded ? 'localInference.actions.release' : 'localInference.actions.load')}</button>}
           </div>
         </article>)}
     </section>}

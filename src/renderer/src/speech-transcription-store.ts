@@ -1,5 +1,6 @@
 import type { SpeechTranscriptionInput } from '../../shared/speech-model-contracts'
 import { speechTranscriptionProgressSchema } from '../../shared/speech-settings-contracts'
+import i18n from './i18n'
 
 type Snapshot = { requestId: string; owner: string; text: string } | null
 let snapshot: Snapshot = null
@@ -21,8 +22,8 @@ export const speechTranscriptionStore = {
 
 export async function transcribeSpeechWithProgress(input: SpeechTranscriptionInput, owner: string) {
   const api = window.goodbuddy.speech
-  if (!api) throw new Error('语音识别服务不可用')
-  if (snapshot) throw new Error('已有语音识别正在运行，请稍后重试')
+  if (!api) throw new Error(i18n.t('app:composer.voice.serviceUnavailable'))
+  if (snapshot) throw new Error(i18n.t('app:composer.voice.alreadyRunning'))
   publish({ requestId: input.requestId, owner, text: '' })
   let frame: number | undefined
   let pending: string | undefined

@@ -117,6 +117,15 @@ export const heartbeat = {
     legendLabel: 'Graph legend', eventImpact: 'Event impact', playback: 'Browse events', previousStage: 'Previous event', nextStage: 'Next event',
     navigation: 'Supervisor views', recap: 'Work review', graph: 'Story graph', settings: 'Settings',
     viewInGraph: 'View in graph',
+    card: {
+      regionLabel: 'Supervisor feedback', title: 'Supervisor feedback',
+      loadFailed: 'Failed to load the Supervisor feedback', noSource: 'The Supervisor result has no locatable source', sourceUnavailable: 'Source unavailable', continueFailed: 'Failed to continue the discussion',
+      pinTarget: 'Pin supervision target', unpinTarget: 'Unpin supervision target', refresh: 'Refresh Supervisor review', pinnedPrefix: 'Pinned · ',
+      conversationTarget: 'Conversation: {{title}}', taskTarget: 'Task: {{title}}', unnamedConversation: 'Untitled conversation', unnamedTask: 'Untitled task',
+      empty: 'No Supervisor review yet', noSummary: 'The Supervisor review has no summary',
+      globalScope: 'Global review', projectScope: 'Projects: {{projects}}', listSeparator: ', ',
+      viewSource: 'View source', noConversationTitle: 'There is no current conversation to continue in', source: 'Source'
+    },
     unavailable: 'Supervisor service is unavailable', loading: 'Loading Supervisor review', scope: 'Review scope', period: 'Time range', days: '{{count}} days',
     sourcesHint: 'Choose a scope and period for a new review. The selected result and its covered period appear below.', latest: 'Supervision result', openItems: 'Open items', history: 'Review history',
     newReview: 'New review', summary: 'Work summary', changes: 'Changes', runningHint: 'A new review is running. The existing result remains available to read.',

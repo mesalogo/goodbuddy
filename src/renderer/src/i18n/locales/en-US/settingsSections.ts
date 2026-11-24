@@ -1034,6 +1034,9 @@ export const settingsSections = {
     errors: {
       serviceUnavailable:
         'Version checks are not available in this version',
+      restartNotReady: 'Conversations are still loading. Restart for the update later.',
+      restartBusy: 'Tasks are still running. Finish them before restarting for the update.',
+      restartUnsaved: 'There are unsaved edits or input drafts. Save or handle them before restarting for the update.',
       readSettingsFailed: 'Could not load application settings',
       saveSettingsFailed: 'Could not save update settings',
       saveSourceFailed: 'Could not save the update source',

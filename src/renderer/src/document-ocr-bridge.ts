@@ -3,6 +3,7 @@ import type {
   DocumentOcrRequest,
   DocumentOcrResult
 } from '../../shared/document-parsing-contracts'
+import i18n from './i18n'
 
 type WorkerOutput =
   | { type: 'ready' }
@@ -34,6 +35,10 @@ let queuedRequestCount = 0
 let idleTimer: number | undefined
 const workerIdleTimeoutMs = 60_000
 
+function ocrError(key: 'idleReleased' | 'parseFailed' | 'pageTimeout' | 'modelSwitched' | 'serviceUnavailable' | 'loadTimeout' | 'workerError' | 'modelMismatch' | 'initFailed' | 'loadBusy' | 'releaseBusy' | 'released' | 'cancelled' | 'closed'): string {
+  return i18n.t(`settings:documentParsing.ocrErrors.${key}`)
+}
+
 function clearIdleTimer(): void {
   window.clearTimeout(idleTimer)
   idleTimer = undefined
@@ -46,7 +51,7 @@ function scheduleIdleRelease(): void {
   }
   idleTimer = window.setTimeout(() => {
     if (queuedRequestCount === 0 && !activeRequestId && pending.size === 0) {
-      terminateWorker(new Error('本地 OCR 空闲资源已释放'))
+      terminateWorker(new Error(ocrError('idleReleased')))
     }
   }, workerIdleTimeoutMs)
 }
@@ -54,7 +59,7 @@ function scheduleIdleRelease(): void {
 function safeError(error: unknown): string {
   return error instanceof Error
     ? error.message.slice(0, 1_000)
-    : '本地 OCR 解析失败'
+    : ocrError('parseFailed')
 }
 
 function terminateWorker(error: Error): void {
@@ -83,8 +88,8 @@ function armPageTimeout(
   window.clearTimeout(request.timer)
   request.timer = window.setTimeout(() => {
     pending.delete(requestId)
-    terminateWorker(new Error('单页 OCR 解析超时'))
-    request.reject(new Error('单页 OCR 解析超时'))
+    terminateWorker(new Error(ocrError('pageTimeout')))
+    request.reject(new Error(ocrError('pageTimeout')))
   }, request.timeoutMs)
 }
 
@@ -94,11 +99,11 @@ async function ensureWorker(modelId: string): Promise<Worker> {
     return worker
   }
   if (worker) {
-    terminateWorker(new Error('本地 OCR 模型已切换'))
+    terminateWorker(new Error(ocrError('modelSwitched')))
   }
   const api = window.goodbuddy.documentParsing
   if (!api) {
-    throw new Error('文档解析服务不可用')
+    throw new Error(ocrError('serviceUnavailable'))
   }
   worker = new Worker(
     new URL('./document-ocr-worker.ts', import.meta.url),
@@ -113,7 +118,7 @@ async function ensureWorker(modelId: string): Promise<Worker> {
   void ready.catch(() => undefined)
   // A worker that never becomes ready must not leave manual loading locked forever.
   startupTimer = window.setTimeout(() => {
-    workerError = '本地 OCR 模型加载超时，请重试'
+    workerError = ocrError('loadTimeout')
     terminateWorker(new Error(workerError))
   }, 120_000)
   worker.addEventListener(
@@ -160,15 +165,15 @@ async function ensureWorker(modelId: string): Promise<Worker> {
     }
   )
   worker.addEventListener('error', (event) => {
-    workerError = event.message || '本地 OCR Worker 异常'
+    workerError = event.message || ocrError('workerError')
     terminateWorker(
-      new Error(event.message || '本地 OCR Worker 异常')
+      new Error(event.message || ocrError('workerError'))
     )
   })
   try {
     const assets = await api.getOcrAssets(modelId)
     if (assets.modelId !== modelId) {
-      throw new Error('本地 OCR 模型与请求不匹配')
+      throw new Error(ocrError('modelMismatch'))
     }
     workerModelId = modelId
     worker.postMessage(
@@ -183,7 +188,7 @@ async function ensureWorker(modelId: string): Promise<Worker> {
   } catch (error) {
     workerError = safeError(error)
     terminateWorker(
-      error instanceof Error ? error : new Error('本地 OCR 初始化失败')
+      error instanceof Error ? error : new Error(ocrError('initFailed'))
     )
     throw error
   }
@@ -206,11 +211,11 @@ export function getOcrInferenceState(): {
 }
 
 export async function loadOcrInference(): Promise<void> {
-  if (getOcrInferenceState().busy) throw new Error('OCR 正在处理任务，请等待完成后再加载')
+  if (getOcrInferenceState().busy) throw new Error(ocrError('loadBusy'))
   managementLoading = true
   try {
     const snapshot = await window.goodbuddy.documentParsing?.getSnapshot()
-    if (!snapshot) throw new Error('文档解析服务不可用')
+    if (!snapshot) throw new Error(ocrError('serviceUnavailable'))
     if (!snapshot.status.localOcr.available) throw new Error(snapshot.status.localOcr.detail)
     await ensureWorker(snapshot.settings.localOcrModelId)
   } finally {
@@ -220,8 +225,8 @@ export async function loadOcrInference(): Promise<void> {
 }
 
 export function releaseOcrInference(): void {
-  if (getOcrInferenceState().busy) throw new Error('OCR 仍有活动或排队任务，无法释放共享 Worker；请等待任务结束')
-  terminateWorker(new Error('用户已释放 OCR 模型'))
+  if (getOcrInferenceState().busy) throw new Error(ocrError('releaseBusy'))
+  terminateWorker(new Error(ocrError('released')))
 }
 
 async function recognize(
@@ -229,7 +234,7 @@ async function recognize(
 ): Promise<DocumentOcrResult> {
   const activeWorker = await ensureWorker(request.modelId)
   if (cancelledRequestIds.has(request.requestId)) {
-    throw new Error('本地 OCR 解析已取消')
+    throw new Error(ocrError('cancelled'))
   }
   const timeoutMs = request.pageTimeoutSeconds * 1_000
   return new Promise<DocumentOcrResult>((resolve, reject) => {
@@ -288,7 +293,7 @@ export function installDocumentOcrBridge(): () => void {
   const removeCancelListener = api.onOcrCancel((requestId) => {
     cancelledRequestIds.add(requestId)
     if (activeRequestId === requestId) {
-      terminateWorker(new Error('本地 OCR 解析已取消'))
+      terminateWorker(new Error(ocrError('cancelled')))
     }
   })
   return () => {
@@ -296,6 +301,6 @@ export function installDocumentOcrBridge(): () => void {
     removeCancelListener()
     cancelledRequestIds.clear()
     activeRequestId = undefined
-    terminateWorker(new Error('本地 OCR 服务已关闭'))
+    terminateWorker(new Error(ocrError('closed')))
   }
 }

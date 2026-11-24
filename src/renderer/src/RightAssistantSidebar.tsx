@@ -29,6 +29,7 @@ import {
   memo
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import i18n from './i18n'
 import type {
   AssistantSchedule,
   AssistantTask,
@@ -268,7 +269,7 @@ function SupervisionCardContent({
     void window.goodbuddy.supervision.overview({ target: JSON.parse(targetKey) as SupervisionTarget }).then((items) => {
       if (current) setResult(items[0])
     }).catch((error: unknown) => {
-      if (current) setMessage(error instanceof Error ? error.message : '监督反馈读取失败')
+      if (current) setMessage(error instanceof Error ? error.message : i18n.t('heartbeat:supervisor.card.loadFailed'))
     })
     return () => { current = false; mounted.current = false }
   }, [targetKey, refresh])
@@ -278,12 +279,12 @@ function SupervisionCardContent({
     busy.current = true
     setLoading(true); setMessage('')
     try {
-        if (!sourceId) throw new Error('监督结果没有可定位来源')
+        if (!sourceId) throw new Error(t('supervisor.card.noSource'))
         const context = await window.goodbuddy.supervision.sourceContext(sourceId)
       if (!mounted.current) return
       setSource(context)
     } catch (error) {
-      if (mounted.current) setMessage(error instanceof Error ? error.message : '来源不可用')
+      if (mounted.current) setMessage(error instanceof Error ? error.message : t('supervisor.card.sourceUnavailable'))
     } finally { busy.current = false; if (mounted.current) setLoading(false) }
   }
 
@@ -293,12 +294,12 @@ function SupervisionCardContent({
     setLoading(true); setMessage('')
     try {
       const sourceId = String(result.sourceId ?? '')
-      if (!sourceId) throw new Error('监督结果没有可定位来源')
+      if (!sourceId) throw new Error(t('supervisor.card.noSource'))
       const preview = await window.goodbuddy.supervision.continueContext({ sourceId, resultId: result.id })
       if (!mounted.current) return
       if (typeof preview.prompt !== 'string' || !preview.prompt.trim()) throw new Error(t('supervisor.discussion.empty'))
       setDraft(preview.prompt)
-    } catch (error) { if (mounted.current) setMessage(error instanceof Error ? error.message : '继续讨论失败') }
+    } catch (error) { if (mounted.current) setMessage(error instanceof Error ? error.message : t('supervisor.card.continueFailed')) }
     finally { busy.current = false; if (mounted.current) setLoading(false) }
   }
 
@@ -310,33 +311,33 @@ function SupervisionCardContent({
       await onContinue(draft, activeConversationId)
       if (!mounted.current) return
       setDraft(undefined)
-    } catch (error) { if (mounted.current) setMessage(error instanceof Error ? error.message : '继续讨论失败') }
+    } catch (error) { if (mounted.current) setMessage(error instanceof Error ? error.message : t('supervisor.card.continueFailed')) }
     finally { busy.current = false; if (mounted.current) setLoading(false) }
   }
 
-  return <section className="assistant-sidebar__section supervision-card" aria-label="监督反馈">
+  return <section className="assistant-sidebar__section supervision-card" aria-label={t('supervisor.card.regionLabel')}>
     <div className="supervision-card__header">
-      <h3>监督反馈</h3>
+      <h3>{t('supervisor.card.title')}</h3>
       <div className="supervision-card__actions">
-        {onTogglePinned && <button type="button" className={`icon-button${pinned ? ' icon-button--active' : ''}`} aria-label={pinned ? '取消固定监督目标' : '固定监督目标'} title={pinned ? '取消固定监督目标' : '固定监督目标'} aria-pressed={pinned} disabled={!target} onClick={onTogglePinned}><Pin aria-hidden="true" size={14} /></button>}
-        <button type="button" className="icon-button" aria-label="刷新监督回顾" title="刷新监督回顾" disabled={!target || loading} onClick={() => { setResult(undefined); setSource(undefined); setDraft(undefined); setMessage(''); setRefresh((value) => value + 1) }}><RefreshCw aria-hidden="true" size={14} /></button>
+        {onTogglePinned && <button type="button" className={`icon-button${pinned ? ' icon-button--active' : ''}`} aria-label={pinned ? t('supervisor.card.unpinTarget') : t('supervisor.card.pinTarget')} title={pinned ? t('supervisor.card.unpinTarget') : t('supervisor.card.pinTarget')} aria-pressed={pinned} disabled={!target} onClick={onTogglePinned}><Pin aria-hidden="true" size={14} /></button>}
+        <button type="button" className="icon-button" aria-label={t('supervisor.card.refresh')} title={t('supervisor.card.refresh')} disabled={!target || loading} onClick={() => { setResult(undefined); setSource(undefined); setDraft(undefined); setMessage(''); setRefresh((value) => value + 1) }}><RefreshCw aria-hidden="true" size={14} /></button>
       </div>
     </div>
-    {target && <p className="supervision-card__target" title={target.type === 'conversation' ? target.conversationId : target.taskId}>{pinned ? '已固定 · ' : ''}{target.type === 'conversation' ? `会话：${conversationTitle?.trim() || '未命名会话'}` : `任务：${taskTitle?.trim() || '未命名任务'}`}</p>}
-    {!result ? <p className="assistant-sidebar__empty">{message || '暂无监督回顾'}</p> : <>
-      <p>{result.summary || '监督回顾没有摘要'}</p>
-      <p>{result.scope.kind === 'global' ? '全局回顾' : `项目范围：${result.scope.projectIds.join('、')}`} · {new Date(result.timeRange.from).toLocaleString()} – {new Date(result.timeRange.to).toLocaleString()}</p>
+    {target && <p className="supervision-card__target" title={target.type === 'conversation' ? target.conversationId : target.taskId}>{pinned ? t('supervisor.card.pinnedPrefix') : ''}{target.type === 'conversation' ? t('supervisor.card.conversationTarget', { title: conversationTitle?.trim() || t('supervisor.card.unnamedConversation') }) : t('supervisor.card.taskTarget', { title: taskTitle?.trim() || t('supervisor.card.unnamedTask') })}</p>}
+    {!result ? <p className="assistant-sidebar__empty">{message || t('supervisor.card.empty')}</p> : <>
+      <p>{result.summary || t('supervisor.card.noSummary')}</p>
+      <p>{result.scope.kind === 'global' ? t('supervisor.card.globalScope') : t('supervisor.card.projectScope', { projects: result.scope.projectIds.join(t('supervisor.card.listSeparator')) })} · {new Date(result.timeRange.from).toLocaleString()} – {new Date(result.timeRange.to).toLocaleString()}</p>
       {result.createdAt && <small>{new Date(result.createdAt).toLocaleString()}</small>}
       <div className="supervision-card__actions">
         {onOpenSupervisionGraph && <button type="button" className="secondary-button" onClick={() => onOpenSupervisionGraph(result.id)}>{t('supervisor.viewInGraph')}</button>}
-        <button type="button" className="secondary-button" disabled={loading} onClick={() => void openSource(String((result as Record<string, unknown>).sourceId ?? ''))}>查看来源</button>
-        <button type="button" className="primary-button" disabled={loading || !activeConversationId || !onContinue || draft !== undefined} title={!activeConversationId ? '没有当前会话，无法继续讨论' : undefined} onClick={() => void continueDiscussion()}>{t('supervisor.discussion.start')}</button>
+        <button type="button" className="secondary-button" disabled={loading} onClick={() => void openSource(String((result as Record<string, unknown>).sourceId ?? ''))}>{t('supervisor.card.viewSource')}</button>
+        <button type="button" className="primary-button" disabled={loading || !activeConversationId || !onContinue || draft !== undefined} title={!activeConversationId ? t('supervisor.card.noConversationTitle') : undefined} onClick={() => void continueDiscussion()}>{t('supervisor.discussion.start')}</button>
       </div>
-      {source && <div className="supervision-card__source"><strong>{String(source.title ?? '来源')}</strong><p>{String(source.content ?? source.error ?? '')}</p>{source.error !== undefined && <small>{String(source.error)}</small>}
+      {source && <div className="supervision-card__source"><strong>{String(source.title ?? t('supervisor.card.source'))}</strong><p>{String(source.content ?? source.error ?? '')}</p>{source.error !== undefined && <small>{String(source.error)}</small>}
         {source.contextType === 'conversation' && Boolean(source.conversationId) && onOpenConversation && <button type="button" className="secondary-button" disabled={loading} onClick={() => onOpenConversation(String(source.conversationId))}>{t('supervisor.openConversation')}</button>}
       </div>}
       {draft !== undefined && <div className="supervision-discussion-editor">
-        <p className="supervision-discussion-editor__target" title={activeConversationId}>{t('supervisor.discussion.target', { title: conversationTitle?.trim() || '未命名会话' })}</p>
+        <p className="supervision-discussion-editor__target" title={activeConversationId}>{t('supervisor.discussion.target', { title: conversationTitle?.trim() || t('supervisor.card.unnamedConversation') })}</p>
         <label className="field"><span>{t('supervisor.discussion.message')}</span><textarea rows={10} value={draft} disabled={loading} onChange={(event) => setDraft(event.target.value)} /></label>
         <footer className="custom-task-dialog__actions">
           <button type="button" className="secondary-button" disabled={loading} onClick={() => { setDraft(undefined); setMessage('') }}>{t('supervisor.cancel')}</button>
@@ -2022,7 +2023,7 @@ function RightAssistantSidebarView({
           </p>
         ) : null}
         {instance.appId === 'notes' && notesPanel}
-        {instance.appId === 'document' && <Suspense fallback={<p role="status">正在加载文档面板…</p>}><OfficePanel instanceId={instance.id} conversationId={activeConversationId} onOpened={session => {
+        {instance.appId === 'document' && <Suspense fallback={<p role="status">{t('office.loading')}</p>}><OfficePanel instanceId={instance.id} conversationId={activeConversationId} onOpened={session => {
           setWorkbarInstances(current => current.map(item => item.id === session.instanceId
             ? { ...item, title: session.document.name } : item))
           setActiveWorkbarInstanceId(session.instanceId)
@@ -2354,7 +2355,7 @@ function RightAssistantSidebarView({
                   <button className="secondary-button" type="button" onClick={() => officeStore.requestOpen(
                     { kind: 'workspace', projectId: workspaceProjectId, path: currentWorkspacePreview.path },
                     currentWorkspacePreview.path.split(/[\\/]/).pop() ?? currentWorkspacePreview.path
-                  )}>在线编辑（ShareServer）</button>
+                  )}>{t('office.editOnline')}</button>
                 )}
                 {currentWorkspacePreview.state === 'ready' && (
                   <button className="secondary-button" disabled={workspacePreviewRefreshing || workspacePreviewLoadingMore} type="button" onClick={() => openWorkspaceFile(currentWorkspacePreview.path, true)}>

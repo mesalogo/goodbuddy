@@ -267,6 +267,7 @@ export const workspace = {
     },
     terminal: {
       loading: '正在加载终端…',
+      retry: '重试',
       ariaLabel: '用户终端：{{title}}',
       location: {
         local: '本机',
@@ -541,6 +542,24 @@ export const workspace = {
     readingWorkspace: '正在读取工作区…',
     rootTruncated: '根目录项目超过 500 项，仅显示前 500 项。',
     empty: '工作区为空。'
+  },
+  office: {
+    panelLabel: '在线文档', loading: '正在加载文档面板…', editOnline: '在线编辑（ShareServer）', editInDocumentTab: '在文档页签中编辑',
+    opening: '正在打开文档', openingNamed: '正在打开 {{name}}',
+    emptyHint: '选择 Office 文件，使用已配置的 ShareServer 编辑。',
+    shortcutHint: 'Ctrl/Cmd+S 保存回文件，Ctrl/Cmd+Shift+S 另存为。旧格式转换和附件首次保存将选择新文件。',
+    pick: '选择 Office 文件并编辑', retryOpen: '重试打开',
+    closeTitle: '关闭文档', saveFailedTitle: '保存到源文件失败',
+    saveAndClose: '保存到源文件并关闭', retrySave: '重试保存', saveAsAndClose: '另存为并关闭', saveAs: '另存为',
+    discardAndClose: '不写回源文件并关闭', continueEditing: '继续编辑',
+    updateRequired: '请更新 GoodBuddy 后重试', switchedTab: '已切换到此文件的现有编辑页签。',
+    saving: '正在等待服务器保存并写入文件…', saved: '版本 {{revision}} 已保存到文件', saveAsCancelled: '已取消另存为',
+    sent: '已发送到当前对话。回复完成后获取修改结果；应用前会核对原选区。',
+    reviewReply: '请检查修改结果，再应用到原选区。',
+    stillWaiting: '原会话仍在等待或生成回复，可在对话中查看进度或取消。',
+    applied: '已替换原选区，可撤销；按 Ctrl/Cmd+S 保存回文件。',
+    serverRequired: '请先在“设备共享”中保存具备 Office 能力的 ShareServer 地址。',
+    updateRequiredForSharing: '请更新 GoodBuddy 后配置 ShareServer 连接'
   },
   question: {
     task: '任务：{{title}}',

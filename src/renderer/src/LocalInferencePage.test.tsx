@@ -5,6 +5,7 @@ import type { LocalInferenceSnapshot } from '../../shared/local-inference-contra
 import * as ocrBridge from './document-ocr-bridge'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { changeUiLocale } from './i18n'
 
 const styles = readFileSync(join(process.cwd(), 'src/renderer/src/local-inference.css'), 'utf8')
 
@@ -24,6 +25,20 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('LocalInferencePage', () => {
+  it('shows English labels when the UI language is English', async () => {
+    await changeUiLocale('en-US')
+    try {
+      render(<LocalInferencePage onClose={vi.fn()} />)
+      expect(await screen.findByRole('button', { name: 'Stop service' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Model and connection settings' })).toBeInTheDocument()
+      expect(screen.getByText('Running')).toBeInTheDocument()
+      expect(screen.getByText('CPU / memory: Unavailable')).toBeInTheDocument()
+    } finally {
+      cleanup()
+      await changeUiLocale('zh-CN')
+    }
+  })
+
   it('shows services directly with truthful resource availability and no task history or external endpoints', async () => {
     const name = 'A very long inference source and model service name '.repeat(8).trim()
     api.getSnapshot.mockResolvedValue({

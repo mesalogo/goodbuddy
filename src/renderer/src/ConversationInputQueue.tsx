@@ -93,8 +93,8 @@ export const ConversationInputQueue = memo(
                   {item.error && <small className="knowledge-inline-error" role="alert">{item.error}</small>}
                 </span>
                 <span className="conversation-input-queue__actions">
-                  {item.source === 'user' && item.hasAttachments && <button type="button" aria-label={`查看入队附件：${item.label}`} title="查看附件" onClick={() => setViewing(item.id)}><Paperclip aria-hidden="true" size={13} /><span>查看附件</span></button>}
-                  {onRestore && item.source === 'user' && <button type="button" disabled={pendingAction !== undefined} aria-label={`恢复到草稿：${item.label}`} title="恢复到草稿" onClick={() => void runAction(item.id, 'restore', () => onRestore(item.id))}><Undo2 aria-hidden="true" size={13} /><span>恢复到草稿</span></button>}
+                  {item.source === 'user' && item.hasAttachments && <button type="button" aria-label={t('composer.queue.viewAttachmentsNamed', { label: item.label })} title={t('composer.queue.viewAttachments')} onClick={() => setViewing(item.id)}><Paperclip aria-hidden="true" size={13} /><span>{t('composer.queue.viewAttachments')}</span></button>}
+                  {onRestore && item.source === 'user' && <button type="button" disabled={pendingAction !== undefined} aria-label={t('composer.queue.restoreToDraftNamed', { label: item.label })} title={t('composer.queue.restoreToDraft')} onClick={() => void runAction(item.id, 'restore', () => onRestore(item.id))}><Undo2 aria-hidden="true" size={13} /><span>{t('composer.queue.restoreToDraft')}</span></button>}
                   <button
                     aria-label={t(
                       running

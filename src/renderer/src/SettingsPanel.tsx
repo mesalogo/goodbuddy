@@ -1668,7 +1668,7 @@ function SettingsPanelView({
         tone: 'success',
         message: testingModel
           ? modelProfiles.find((profile) => profile.id === profileId)?.protocol === 'system-one'
-            ? `System One 决策模型连接测试成功：${status.label}`
+            ? t('notifications.systemOneTestSucceeded', { label: status.label })
             : t('notifications.modelGenerationTestSucceeded', {
                 label: status.label
               })
@@ -3159,10 +3159,10 @@ function SettingsPanelView({
                             <span>{t('model.profile.defaultBadge')}</span>
                           )}
                           {profile.protocol === 'system-one' && (
-                            <span>决策模型</span>
+                            <span>{t('model.profile.decisionModelBadge')}</span>
                           )}
                           {roleSelectionModelProfileId === profile.id && (
-                            <span title="自动选择会话角色">角色选择</span>
+                            <span title={t('model.profile.roleSelectionBadgeTitle')}>{t('model.profile.roleSelectionBadge')}</span>
                           )}
                           {profile.protocol === 'openai-images-generations' && profile.allowConversationInvocation && (
                             <span>{t('conversationImages.callable')}</span>
@@ -3405,18 +3405,18 @@ function SettingsPanelView({
                         {t('model.profile.imageProtocol')}
                       </option>
                       <option value="system-one">
-                        System One 决策模型
+                        {t('model.profile.systemOneProtocol')}
                       </option>
                     </select>
                   </label>
                   {profile.protocol === 'system-one' && (
                     <label className="toggle-row">
-                      <span>用作角色选择模型<small>启用角色路由后生效</small></span>
+                      <span>{t('model.profile.useForRoleSelection')}<small>{t('model.profile.useForRoleSelectionHint')}</small></span>
                       <input
                         type="checkbox"
                         role="switch"
                         checked={roleSelectionModelProfileId === profile.id}
-                        aria-label="用作角色选择模型"
+                        aria-label={t('model.profile.useForRoleSelection')}
                         onChange={(event) =>
                           setRoleSelectionModelProfileId(
                             event.currentTarget.checked ? profile.id : null

@@ -158,6 +158,7 @@ export const settings = {
   notifications: {
     settingsSaved: 'Settings saved',
     connectionSucceeded: 'Connected: {{label}}',
+    systemOneTestSucceeded: 'System One decision model connection test succeeded: {{label}}',
     modelGenerationTestSucceeded:
       'Real generation test passed: {{label}}',
     documentParsingSaved: 'Document parsing settings saved',
@@ -684,6 +685,216 @@ export const settings = {
         mixed: 'Native parsing and OCR'
       },
       close: 'Close result'
+    },
+    result: {
+      tabsLabel: 'Parse result',
+      loading: 'Loading parse result',
+      loadFailed: 'Failed to load the parse result',
+      reload: 'Reload',
+      completeness: {
+        complete: 'Parsed',
+        partial: 'Partially parsed',
+        'images-only': 'Images only, no text to send'
+      },
+      openOriginal: 'Open original file',
+      originalUnavailable: 'Original file unavailable',
+      textTab: 'Text',
+      imagesTab: 'Images ({{total}})',
+      detailsTab: 'Details',
+      imageCounts: '{{saved}} saved · {{missing}} not saved',
+      noImages:
+        'No images were extracted from this result. The native parser may extract text only.',
+      slideImageTitle: 'Slide {{page}} · Image {{index}}',
+      pageImageTitle: 'Page {{page}} · Image {{index}}',
+      imageOnPage: 'Image on page {{page}}',
+      imageNotSaved: 'Image on page {{page}} was not saved',
+      viewInImagesTab: 'Image on page {{page}} · View in images',
+      imageUnavailable: 'Image asset unavailable',
+      loadingImage: 'Loading image',
+      imageLoadFailed: 'Failed to load the image',
+      retryImage: 'Retry loading the image',
+      originalLoadFailed: 'Failed to load the original image',
+      viewLargeImage: 'View full-size image: {{location}}',
+      locateInText: '{{location}} · View in text',
+      selectImage: 'Select image on page {{page}} of {{file}}',
+      inDraft: 'Already in this conversation draft',
+      removeFromDraft: 'Remove from draft',
+      removeFailed: 'Failed to remove',
+      parsedAt: 'Parsed at',
+      duration: 'Duration',
+      seconds: '{{value}} s',
+      confidence: 'Confidence',
+      notProvided: 'Not provided',
+      confidenceItem: '{{locator}}: {{value}}',
+      itemSeparator: '; ',
+      restructure: 'Cross-page restructuring',
+      restructureChanged: 'Changes returned. Check the source mapping warnings.',
+      restructureUnchanged: 'No changes observed',
+      restructureNotRequested: 'Not requested',
+      savedSettingsNote:
+        'The configuration saved at parse time is shown below. Omitted advanced options use the service defaults, and their actual values were not provided.',
+      parseWarnings: 'Parse warnings',
+      addToDraft: 'Add to conversation draft',
+      selectConversation: 'Select a conversation to add',
+      projectUnavailable: 'Project unavailable',
+      noProject: 'No project',
+      selectionSummary: '{{pending}} to add · {{attached}} already in draft',
+      imagesAdded: 'Images added to the conversation draft: {{title}}',
+      addImagesFailed: 'Failed to add images',
+      adding: 'Adding',
+      addSelected: 'Add selected images',
+      conversationsLoadFailed: 'Failed to load conversations',
+      draftLoadFailed: 'Failed to load the draft',
+      createConversationFailed: 'Failed to create the conversation',
+      newTargetConversation: 'New target conversation',
+      goToConversation: 'Go to conversation'
+    },
+    preview: {
+      trigger: 'View parse result',
+      triggerNamed: 'View parse result: {{name}}',
+      dialogLabel: 'Parse result: {{name}}',
+      close: 'Close parse preview'
+    },
+    attachmentStatus: {
+      complete: 'Parsed',
+      partial: 'Partially parsed. Check the warnings.',
+      'images-only': 'Images only, no text to send',
+      textMode: 'Sends extracted text only. The original image is kept.',
+      imageMode: 'Image input'
+    },
+    attachmentActions: {
+      more: 'More attachment actions',
+      moreNamed: 'More attachment actions: {{name}}',
+      menuLabel: 'Attachment actions: {{name}}',
+      readingSource: 'Reading the saved parsing source',
+      sourceHttp: 'Parsing source: HTTP PaddleOCR-VL (remote service)',
+      sourceLocal: 'Parsing source: Local OCR',
+      sourceReadFailed:
+        'Failed to read the source. Actions still use the saved parsing settings.',
+      openOriginal: 'Open original file: {{name}}',
+      editInDocumentTab: 'Edit in document tab',
+      extractText: 'Extract image text: {{name}}',
+      reparse: 'Reparse with current settings: {{name}}',
+      sendOriginal: 'Send the original image instead: {{name}}',
+      copyAndExtract: 'Add to current draft and extract text: {{name}}',
+      copyAndReparse: 'Add to current draft and reparse: {{name}}',
+      copiedToDraft:
+        'Parsed with current settings and added to the target conversation draft',
+      openSettings: 'Open document parsing settings',
+      processing: 'Processing attachment',
+      cancelParsing: 'Cancel parsing',
+      actionFailed: 'Attachment action failed'
+    },
+    queuedAttachments: {
+      dialogLabel: 'Attachments at enqueue time',
+      help:
+        'This shows the content at enqueue time. To change the attachments, restore the whole input to the draft first.',
+      close: 'Close attachment preview',
+      loadFailed: 'Failed to load queued attachments',
+      loading: 'Loading attachments',
+      empty: 'This input has no attachments.',
+      viewImage: 'View image {{name}}'
+    },
+    pendingImports: {
+      regionLabel: 'Unfinished file parsing',
+      loadFailed: 'Failed to load parsing records',
+      interrupted: 'Parsing interrupted',
+      failed: 'Parsing failed',
+      retryHint:
+        'The original file is saved. Retry manually with the current settings.',
+      retry: 'Retry with current settings',
+      retryFailed: 'Retry failed',
+      dismiss: 'Remove record and staged original',
+      dismissFailed: 'Failed to remove the record',
+      cancelParsing: 'Cancel parsing'
+    },
+    capabilityNotice: {
+      checking: 'Checking image input support of the current model and Runtime',
+      unconfirmed:
+        'Image input support is not confirmed yet. It is checked again before sending.'
+    },
+    test: {
+      run: 'Test parsing',
+      running: 'Testing parsing',
+      menuLabel: 'Choose a test scenario',
+      fileRunning: 'Parsing the test file',
+      cancel: 'Cancel parsing'
+    },
+    httpStatus: {
+      configured: 'Configured',
+      notConfigured: 'Not configured',
+      detail:
+        'Remote OCR. Test parsing with a real file. This is independent of local model installation.'
+    },
+    ocrErrors: {
+      idleReleased: 'Idle local OCR resources were released',
+      parseFailed: 'Local OCR parsing failed',
+      pageTimeout: 'Local OCR timed out on a page',
+      modelSwitched: 'The local OCR model was switched',
+      serviceUnavailable: 'Document parsing service unavailable',
+      loadTimeout: 'Timed out loading the local OCR model. Try again.',
+      workerError: 'Local OCR worker error',
+      modelMismatch: 'The local OCR model does not match the request',
+      initFailed: 'Local OCR initialization failed',
+      loadBusy: 'OCR is still processing a task. Wait for it to finish before loading.',
+      releaseBusy:
+        'OCR still has active or queued tasks, so the shared worker cannot be released. Wait for the tasks to finish.',
+      released: 'The OCR model was released by the user',
+      cancelled: 'Local OCR parsing was cancelled',
+      closed: 'The local OCR service was closed'
+    },
+    httpOcr: {
+      title: 'HTTP PaddleOCR-VL',
+      help:
+        'Pages or images that need OCR are sent to this service. Fast text mode does not upload automatically. Explicit image text extraction still uses this service.',
+      serviceUrl: 'Service URL',
+      authentication: 'Authentication',
+      authNone: 'None',
+      authBearer: 'Bearer API Key',
+      credentialSaved: 'Credential saved. Leave blank to keep it.',
+      credentialMissing: 'No credential configured',
+      clearOnSave: 'Clear credential on save',
+      checkOk:
+        'The service is reachable. Test parsing with a real file. Checked at: {{time}}',
+      checkFailed: 'Connection check failed',
+      checking: 'Checking connection',
+      check: 'Check connection',
+      advancedTitle: 'HTTP advanced settings',
+      advancedNote:
+        'Advanced capabilities depend on the service deployment. A declared API field does not mean the model is installed or the result has been verified.',
+      contentFilter: 'Content filter',
+      restoreDefaults: 'Restore defaults',
+      filterHelp:
+        'Choose the content to keep directly. Editing switches to custom filtering.',
+      keepLabel: 'Keep {{label}}',
+      contentLabels: {
+        header: 'Header text', header_image: 'Header image', footer: 'Footer text',
+        footer_image: 'Footer image', number: 'Page number', footnote: 'Footnote', aside_text: 'Aside text'
+      },
+      booleanOptions: {
+        useDocOrientationClassify: 'Orientation classification', useDocUnwarping: 'Page dewarping',
+        useLayoutDetection: 'Layout detection', useChartRecognition: 'Chart recognition',
+        useSealRecognition: 'Seal recognition', useOcrForImageBlock: 'OCR for image blocks',
+        prettifyMarkdown: 'Prettify Markdown', showFormulaNumber: 'Show formula numbers',
+        formatBlockContent: 'Format block content', mergeLayoutBlocks: 'Merge layout blocks', layoutNms: 'Layout non-maximum suppression'
+      },
+      optionDefault: 'Service default',
+      optionOn: 'On',
+      optionOff: 'Off',
+      timeout: 'HTTP request timeout (s)',
+      generationTitle: 'Layout and generation parameters',
+      generationNote:
+        'Leave blank to use the service default. The actual bounds and effects of API fields must be tested against your deployment.',
+      numericOptions: {
+        layoutThreshold: 'Layout detection threshold', layoutUnclipRatio: 'Layout unclip ratio',
+        repetitionPenalty: 'Repetition penalty', temperature: 'Sampling temperature', topP: 'Top P',
+        minPixels: 'Minimum pixels', maxPixels: 'Maximum pixels', maxNewTokens: 'Maximum output tokens'
+      },
+      textOptions: { promptLabel: 'Prompt label', layoutMergeBboxesMode: 'Bounding box merge mode' },
+      layoutShape: 'Layout shape',
+      restructureOptions: { mergeTables: 'Merge cross-page tables', relevelTitles: 'Adjust heading levels' },
+      restructureNote:
+        'Cross-page restructuring adds requests. Merge results are not verified on the current deployment yet. When a source cannot be mapped, it reports the page as unfinished and keeps per-page results.'
     }
   },
   model: {
@@ -738,6 +949,10 @@ export const settings = {
       protocolAriaLabel: 'API protocol for {{name}}',
       openAiCompatibleProtocol: 'OpenAI-compatible Chat Completions',
       imageProtocol: 'OpenAI Images Generations (image generation)',
+      systemOneProtocol: 'System One decision model',
+      decisionModelBadge: 'Decision model',
+      roleSelectionBadge: 'Role selection', roleSelectionBadgeTitle: 'Selects the conversation role automatically',
+      useForRoleSelection: 'Use for role selection', useForRoleSelectionHint: 'Takes effect after role routing is enabled',
       authentication: 'Authentication',
       authenticationAriaLabel: 'Authentication for {{name}}',
       supportsImageInput: 'Supports image input',

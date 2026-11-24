@@ -1,5 +1,6 @@
 import { mountCanvasNote } from './canvas-note.mjs'
 import { toCoreContent, type MagicNoteCanvasContent } from './model'
+import i18n from '../i18n'
 
 /** Capture the committed version independently of the editor's next draft. */
 export async function captureSavedPages(content: MagicNoteCanvasContent, pageLimit: number | undefined, includeImages: boolean | undefined, signal: AbortSignal) {
@@ -16,7 +17,7 @@ export async function captureSavedPages(content: MagicNoteCanvasContent, pageLim
       disabled: true, signal,
       async readPdf({ assetId }) {
         const asset = content.assets.find(item => item.id === assetId)
-        if (!asset) throw new Error('PDF 底版资源不可用')
+        if (!asset) throw new Error(i18n.t('magicNotes:canvas.pdfAssetUnavailable'))
         return Uint8Array.from(atob(asset.dataUrl.slice(asset.dataUrl.indexOf(',') + 1)), character => character.charCodeAt(0))
       }
     })

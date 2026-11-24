@@ -758,7 +758,7 @@ export const Composer = memo(function Composer({
                         )}
                   </small>
                 </span>
-                <button type="button" className="icon-button attachment-action" aria-label="取消文件导入" title="取消文件导入" data-tooltip="取消文件导入" onClick={() => void window.goodbuddy.context.cancelImport(fileSelectionProgress?.operationId)}><X size={16} aria-hidden="true" /></button>
+                <button type="button" className="icon-button attachment-action" aria-label={t("composer.attachmentProgress.cancelImport")} title={t("composer.attachmentProgress.cancelImport")} data-tooltip={t("composer.attachmentProgress.cancelImport")} onClick={() => void window.goodbuddy.context.cancelImport(fileSelectionProgress?.operationId)}><X size={16} aria-hidden="true" /></button>
                 <progress
                   aria-label={t(
                     "composer.attachmentProgress.progressLabel",
@@ -791,7 +791,7 @@ export const Composer = memo(function Composer({
                 options={assistantExpertOptions}
                 statusLabel={
                   !selectedExpertId && roleSelectionModelLabel
-                    ? `自动 · ${roleSelectionModelLabel}`
+                    ? t("composer.experts.autoWithModel", { model: roleSelectionModelLabel })
                     : undefined
                 }
                 value={selectedExpertId}

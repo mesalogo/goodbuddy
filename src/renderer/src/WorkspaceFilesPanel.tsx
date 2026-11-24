@@ -730,7 +730,7 @@ export function WorkspaceFilesPanel({
       {onOpenEntry && <button role="menuitem" type="button" onClick={() => { closeMenu(true); openEntry(menu.entry) }}><ExternalLink size={14} />{t('management.defaultOpen')}</button>}
       {projectId && menu.entry.type === 'file' && isOfficeFile(menu.entry.name) && <button role="menuitem" type="button" onClick={() => {
         officeStore.requestOpen({ kind: 'workspace', projectId, path: menu.entry.path }, menu.entry.name); closeMenu(true)
-      }}><FileText size={14} />在文档页签中编辑</button>}
+      }}><FileText size={14} />{t('office.editInDocumentTab')}</button>}
       <div role="separator" />
       <button role="menuitem" type="button" className="danger-ghost" onClick={() => { closeMenu(true); setDialog({ kind: 'delete', path: menu.entry.path }) }}><Trash2 size={14} />{t('management.delete')}</button>
     </div>, document.body)}

@@ -171,7 +171,7 @@ describe("Composer render boundary", () => {
     const { props, rerender } = setup();
     props.roleSelectionModelLabel = "d3";
     rerender(<Composer {...props} />);
-    expect(screen.getByText("自动 · d3")).toBeInTheDocument();
+    expect(screen.getByText("Auto · d3")).toBeInTheDocument();
   });
 
   it("keeps the picker marker static and leaves the per-reply result to the message header", () => {
@@ -189,7 +189,7 @@ describe("Composer render boundary", () => {
           }
         : item)));
     rerender(<Composer {...props} />);
-    expect(screen.getByText("自动 · d3")).toBeInTheDocument();
+    expect(screen.getByText("Auto · d3")).toBeInTheDocument();
     expect(screen.queryByText(/自动选择：/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/文档专家/u)).not.toBeInTheDocument();
   });

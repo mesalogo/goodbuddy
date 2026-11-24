@@ -94,6 +94,30 @@ export const app = {
       obsidian: 'Read, search, and manage notes in local Obsidian vaults.'
     }
   },
+  localInference: {
+    title: 'Local Inference Monitor', close: 'Close the Local Inference Monitor',
+    help: 'Refreshes every 5 s · CPU 100% = one logical core',
+    openSettings: 'Model and connection settings', refresh: 'Refresh status',
+    stale: 'Failed to refresh the status. The last successful snapshot is shown and actions are disabled.',
+    loadFailed: 'Failed to read the local inference status.', retry: 'Retry',
+    loading: 'Reading service status…', dismissError: 'Dismiss',
+    servicesLabel: 'Local inference services', noServices: 'No local inference services',
+    documentParsingSettings: 'Document parsing settings',
+    states: {
+      idle: 'Not loaded / on demand', running: 'Running', starting: 'Starting', stopping: 'Stopping', stopped: 'Stopped',
+      error: 'Error', unavailable: 'Unavailable', unknown: 'Unknown', cancelling: 'Waiting for cancellation',
+      completed: 'Completed', cancelled: 'Cancelled', failed: 'Failed'
+    },
+    onDemandUnknown: 'On demand (status unknown)',
+    actions: { start: 'Start service', stop: 'Stop service', restart: 'Restart service', load: 'Load model', release: 'Release model' },
+    confirmTitle: '{{action}}: {{service}}',
+    confirmDescription: 'This action affects the whole execution service. Interrupted tasks are not replayed after the service restarts.',
+    noActiveTasks: 'No active tasks are registered. They are checked again before execution.',
+    keepRunning: 'Keep running', working: 'Working…', confirm: 'Confirm {{action}}',
+    apiUnavailable: 'The local inference management API is unavailable. Restart the app and try again.',
+    processResources: 'Service process PID {{pid}} · CPU {{cpu}} · Working set {{memory}}',
+    cpuMemory: 'CPU / memory: {{value}}', unavailableValue: 'Unavailable'
+  },
   remoteHosts: {
     title: 'Hosts',
     description: 'Connect SSH hosts, install remote execution environments, and manage Agent packages. Local Skills and MCP servers are not applied to remote hosts.',
@@ -410,7 +434,8 @@ export const app = {
       label: 'Attachments',
       region: 'Message attachments',
       exportHeading: 'Attachments:',
-      exportItem: '- {{name}} ({{size}})'
+      exportItem: '- {{name}} ({{size}})',
+      openOriginal: 'Open original file: {{name}}'
     },
     exportSpeaker: '{{speaker}}:\n{{content}}',
     images: {
@@ -644,7 +669,8 @@ export const app = {
       fileCount: 'File {{current}} of {{total}}',
       progressLabel: 'Attachment reading and parsing progress',
       waitBeforeSending:
-        'Attachments are still being parsed. Wait for them to finish before sending.'
+        'Attachments are still being parsed. Wait for them to finish before sending.',
+      cancelImport: 'Cancel file import'
     },
     removeAttachment: 'Remove {{name}}',
     settings: 'Conversation settings',
@@ -679,6 +705,8 @@ export const app = {
     queueMessageTitle: 'Send after the current response finishes',
     queue: {
       ariaLabel: 'Conversation send queue',
+      viewAttachments: 'View attachments', viewAttachmentsNamed: 'View queued attachments: {{label}}',
+      restoreToDraft: 'Restore to draft', restoreToDraftNamed: 'Restore to draft: {{label}}',
       scheduledTask: 'Scheduled task',
       message: 'Message',
       interrupt: 'Interrupt and run',
@@ -724,6 +752,13 @@ export const app = {
     },
     experts: {
       general: 'General assistant',
+      expertAuto: '{{name}} · Auto · {{model}}',
+      autoWithModel: 'Auto · {{model}}',
+      keywordRouting: 'Keyword',
+      selecting: 'Selecting a role… · {{model}}',
+      generalKeywordMissed: 'General assistant · Auto · No keyword match',
+      generalUncertain: 'General assistant · Auto selection not used (low confidence) · {{model}}',
+      generalSelectionFailed: 'General assistant · Auto selection failed · {{model}}',
       generalDescription: 'Default single assistant',
       team: 'Expert team (parallel)',
       teamDescription: 'Multiple experts collaborate in parallel',
@@ -732,6 +767,8 @@ export const app = {
     voice: {
       stopRecording: 'Stop recording',
       cancel: 'Cancel speech recognition',
+      serviceUnavailable: 'Speech recognition service unavailable',
+      alreadyRunning: 'Another speech recognition is running. Try again shortly.',
       input: 'Voice input',
       stopAndRecognize: 'Stop recording and recognize speech',
       description: 'Convert speech to editable text before sending',
@@ -873,6 +910,11 @@ export const app = {
     memoryReadFailed: 'Failed to read long-term memory',
     schedulesReadFailed: 'Failed to read scheduled tasks',
     taskHistoryReadFailed: 'Failed to read task history',
+    attachmentDraftReadFailed: 'Failed to load the attachment draft',
+    attachmentDraftSaveFailed: 'Failed to save the attachment draft',
+    attachmentTargetNotEditable: 'The target conversation for attachments cannot be edited',
+    noLocalProject: 'No local project available',
+    projectCannotCreateConversation: 'This project cannot create conversations. Select a regular project first.',
     resultHistoryReadFailed: 'Failed to read result history',
     knowledgeReadFailed: 'Failed to read the local knowledge base',
     selectProject: 'Select a project first',

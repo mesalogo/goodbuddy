@@ -970,6 +970,9 @@ export const settingsSections = {
     label: '更新设置',
     errors: {
       serviceUnavailable: '当前版本未提供版本检查服务',
+      restartNotReady: '会话尚未加载完成，请稍后重启更新',
+      restartBusy: '仍有任务正在进行，请完成后重启更新',
+      restartUnsaved: '仍有未保存的编辑或输入草稿，请先保存或处理后再重启更新',
       readSettingsFailed: '读取应用设置失败',
       saveSettingsFailed: '保存更新设置失败',
       saveSourceFailed: '保存检查更新源失败',

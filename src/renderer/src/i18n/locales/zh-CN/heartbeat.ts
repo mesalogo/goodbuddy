@@ -114,6 +114,15 @@ export const heartbeat = {
     legendLabel: '图谱图例', eventImpact: '事件影响', playback: '事件浏览', previousStage: '上一事件', nextStage: '下一事件',
     navigation: '监督者视图', recap: '工作回顾', graph: '故事线图谱', settings: '设置',
     viewInGraph: '在图谱中查看',
+    card: {
+      regionLabel: '监督反馈', title: '监督反馈',
+      loadFailed: '监督反馈读取失败', noSource: '监督结果没有可定位来源', sourceUnavailable: '来源不可用', continueFailed: '继续讨论失败',
+      pinTarget: '固定监督目标', unpinTarget: '取消固定监督目标', refresh: '刷新监督回顾', pinnedPrefix: '已固定 · ',
+      conversationTarget: '会话：{{title}}', taskTarget: '任务：{{title}}', unnamedConversation: '未命名会话', unnamedTask: '未命名任务',
+      empty: '暂无监督回顾', noSummary: '监督回顾没有摘要',
+      globalScope: '全局回顾', projectScope: '项目范围：{{projects}}', listSeparator: '、',
+      viewSource: '查看来源', noConversationTitle: '没有当前会话，无法继续讨论', source: '来源'
+    },
     unavailable: '监督者服务暂不可用', loading: '正在读取监督回顾', scope: '关注范围', period: '时间范围', days: '{{count}} 天',
     sourcesHint: '选择范围和时间发起新回顾；下方显示所选结果及其覆盖区间。', latest: '监督结果', openItems: '未解决事项', history: '历史结果',
     newReview: '新回顾', summary: '工作总结', changes: '本次变化', runningHint: '新回顾正在整理，已有结果仍可阅读。',

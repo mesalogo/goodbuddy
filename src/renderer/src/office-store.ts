@@ -1,5 +1,6 @@
 import type { OfficeCloseChoice, OfficeInteraction, OfficeSession, OfficeSource } from '../../shared/office-contracts'
 import { shareServerConnection } from './shareserver-connection-store'
+import i18n from './i18n'
 
 type State = { interaction?: OfficeInteraction; session?: OfficeSession; source?: OfficeSource; name?: string; busy: boolean; error?: string; message?: string; selectedText?: string; reply?: string; aiPending?: boolean }
 const empty: State = { busy: false }
@@ -38,14 +39,14 @@ export const officeStore = {
     if (officeStore.get(instanceId).session) return officeStore.get(instanceId).session!
     update(instanceId, { busy: true, error: undefined, message: undefined })
     try {
-      if (!window.goodbuddy.office) throw new Error('请更新 GoodBuddy 后重试')
+      if (!window.goodbuddy.office) throw new Error(i18n.t('workspace:office.updateRequired'))
       serverUrl ??= await shareServerConnection.resolve()
       const session = await window.goodbuddy.office.open({ instanceId, serverUrl, source: officeStore.get(instanceId).source })
       if (session?.instanceId === instanceId) update(instanceId, { session, message: undefined })
       else if (session) {
         requested = { instanceId: session.instanceId, name: session.document.name }
         update(session.instanceId, { session })
-        update(instanceId, { message: '已切换到此文件的现有编辑页签。' })
+        update(instanceId, { message: i18n.t('workspace:office.switchedTab') })
       }
       else update(instanceId, { message: undefined })
       return session
@@ -53,10 +54,10 @@ export const officeStore = {
     finally { update(instanceId, { busy: false }) }
   },
   async save(instanceId: string, saveAs: boolean): Promise<void> {
-    update(instanceId, { busy: true, error: undefined, message: '正在等待服务器保存并写入文件…' })
+    update(instanceId, { busy: true, error: undefined, message: i18n.t('workspace:office.saving') })
     try {
       const session = await window.goodbuddy.office!.save({ instanceId, saveAs })
-      update(instanceId, { ...(session ? { session } : {}), message: session ? `版本 ${session.document.revision} 已保存到文件` : '已取消另存为' })
+      update(instanceId, { ...(session ? { session } : {}), message: session ? i18n.t('workspace:office.saved', { revision: session.document.revision }) : i18n.t('workspace:office.saveAsCancelled') })
       if (session) update(instanceId, { interaction: undefined })
     } catch (error) { update(instanceId, { error: String(error), message: undefined }) }
     finally { update(instanceId, { busy: false }) }
@@ -66,7 +67,7 @@ export const officeStore = {
     try {
       const result = await window.goodbuddy.office!.ask({ instanceId, conversationId, instruction })
       update(instanceId, { selectedText: result.selectedText, reply: undefined, aiPending: true,
-        message: '已发送到当前对话。回复完成后获取修改结果；应用前会核对原选区。' })
+        message: i18n.t('workspace:office.sent') })
     } catch (error) { update(instanceId, { error: String(error) }) }
     finally { update(instanceId, { busy: false }) }
   },
@@ -75,8 +76,8 @@ export const officeStore = {
     try {
       const result = await window.goodbuddy.office!.result({ instanceId })
       if (result.state === 'error') throw new Error(result.text)
-      update(instanceId, result.state === 'complete' ? { reply: result.text, aiPending: false, message: '请检查修改结果，再应用到原选区。' }
-        : { message: '原会话仍在等待或生成回复，可在对话中查看进度或取消。' })
+      update(instanceId, result.state === 'complete' ? { reply: result.text, aiPending: false, message: i18n.t('workspace:office.reviewReply') }
+        : { message: i18n.t('workspace:office.stillWaiting') })
     } catch (error) { update(instanceId, { error: String(error) }) }
     finally { update(instanceId, { busy: false }) }
   },
@@ -87,7 +88,7 @@ export const officeStore = {
     update(instanceId, { busy: true, error: undefined })
     try {
       await window.goodbuddy.office!.apply({ instanceId, text })
-      update(instanceId, { reply: undefined, selectedText: undefined, message: '已替换原选区，可撤销；按 Ctrl/Cmd+S 保存回文件。' })
+      update(instanceId, { reply: undefined, selectedText: undefined, message: i18n.t('workspace:office.applied') })
     } catch (error) { update(instanceId, { error: String(error) }) }
     finally { update(instanceId, { busy: false }) }
   },
