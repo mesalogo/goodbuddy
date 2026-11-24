@@ -673,6 +673,15 @@ describe('ChatTimeline', () => {
     expect(rule).not.toContain('contain-intrinsic')
   })
 
+  it('shrinks the user bubble to its content and keeps the maximum width', () => {
+    const rule = stylesheet.match(/\.message--user \.message__body\s*\{([^}]*)\}/u)?.[1]
+
+    expect(rule).toBeDefined()
+    expect(rule).toContain('width: fit-content')
+    expect(rule).toContain('max-width: min(78%, 720px)')
+    expect(rule).toContain('align-self: flex-end')
+  })
+
   it.each(['assistant', 'user'] as const)('places the %s avatar outside the header and body', (role) => {
     const messages: Message[] = [
       {

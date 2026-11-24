@@ -853,9 +853,18 @@ describe('WorkspacePrimitives', () => {
 
   it.each([
     [':root', 'light'],
-    [":root[data-theme='dark']", 'dark']
+    [":root[data-theme='dark']", 'dark'],
+    [":root[data-layout='workbench']", 'workbench light'],
+    [":root[data-layout='workbench'][data-theme='dark']", 'workbench dark']
   ])('keeps shared %s semantic tokens contrast-safe', (selector) => {
-    const tokens = themeTokens(selector)
+    // Workbench token blocks only override part of the foundation theme; merge to
+    // resolve the effective values.
+    const tokens = selector.includes("[data-layout='workbench']")
+      ? {
+          ...themeTokens(selector.includes('dark') ? ":root[data-theme='dark']" : ':root'),
+          ...themeTokens(selector)
+        }
+      : themeTokens(selector)
     const textPairs = [
       ['text-muted', 'surface-raised'],
       ['accent', 'accent-subtle'],

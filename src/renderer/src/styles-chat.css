@@ -1365,7 +1365,8 @@
 }
 
 .message--user .message__body {
-  width: min(78%, 720px);
+  width: fit-content;
+  max-width: min(78%, 720px);
   align-self: flex-end;
 }
 
