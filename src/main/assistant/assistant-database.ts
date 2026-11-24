@@ -18,6 +18,7 @@ import {
   conversationAnsweredQuestionSchema,
   conversationMessageSchema,
   conversationSnapshotSchema,
+  conversationSetOrderSchema,
   conversationSetPinnedSchema,
   expertCreateSchema,
   HEARTBEAT_RETENTION_DAYS_MAX,
@@ -53,6 +54,7 @@ import type {
   ConversationToolActivity,
   ConversationMessage,
   ConversationSnapshot,
+  ConversationSetOrderInput,
   ConversationSetPinnedInput,
   ExpertCreateInput,
   ExpertUpdateInput,
@@ -139,7 +141,7 @@ import {
   SUBAGENT_PROGRESS_STORAGE_SCHEMA_VERSION
 } from './subagent-progress-storage'
 
-export const ASSISTANT_DATABASE_SCHEMA_VERSION = 66
+export const ASSISTANT_DATABASE_SCHEMA_VERSION = 67
 const feishuChannelConstraint = "channel IN ('weixin', 'wecom', 'dingtalk', 'telegram', 'feishu')"
 
 function withoutHistoricalWorkMode(value: unknown): unknown {
@@ -281,6 +283,7 @@ type ConversationRow = {
   branch_source_conversation_id: string | null
   branch_source_title: string | null
   pinned: number
+  manual_order: number
   updated_at: string
 }
 
@@ -1353,6 +1356,7 @@ function toConversationSnapshot(
       : {}),
     title: conversation.title,
     pinned: conversation.pinned === 1,
+    manualOrder: conversation.manual_order,
     updatedAt: Date.parse(conversation.updated_at),
     // Startup recovery is the only authority for interruption: it persists
     // the terminal state once. Deriving it while reading would also hit
@@ -3216,10 +3220,10 @@ export class AssistantDatabase {
                 external_account_id, external_conversation_id,
                 conversation_type, account_display,
                 branch_source_conversation_id, branch_source_title,
-                pinned, updated_at
+                pinned, manual_order, updated_at
          FROM conversations
          WHERE status = 'active'
-         ORDER BY pinned DESC, updated_at DESC`
+         ORDER BY pinned DESC, manual_order ASC, manual_order > 0 DESC, updated_at DESC`
       )
       .all() as ConversationRow[]
   }
@@ -3317,7 +3321,7 @@ export class AssistantDatabase {
                 external_account_id, external_conversation_id,
                 conversation_type, account_display,
                 branch_source_conversation_id, branch_source_title,
-                pinned, updated_at
+                pinned, manual_order, updated_at
          FROM conversations
          WHERE id = ? AND status = 'active'`
       )
@@ -3340,6 +3344,16 @@ export class AssistantDatabase {
       )
       .all(conversationId) as MessageRow[]
     return toConversationSnapshot(conversation, messages)
+  }
+
+  setConversationOrder(input: ConversationSetOrderInput): void {
+    const { conversationId, order } = conversationSetOrderSchema.parse(input)
+    const result = this.requireDatabase().prepare(
+      `UPDATE conversations SET manual_order = ? WHERE id = ? AND status = 'active'`
+    ).run(order, conversationId)
+    if (result.changes !== 1) {
+      throw new Error('对话不存在')
+    }
   }
 
   setConversationPinned(input: ConversationSetPinnedInput): void {
@@ -12428,6 +12442,26 @@ export class AssistantDatabase {
       } finally {
         database.exec('PRAGMA writable_schema = RESET')
         database.enableDefensive(true)
+      }
+    }
+    if (version.user_version < 67) {
+      // Idempotent: schema-35/41 downgrade tests re-add columns the current
+      // CREATE already has, so a duplicate here means the column exists.
+      const hasManualOrder = database.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('conversations') WHERE name = 'manual_order'").get() as { n: number }
+      if (hasManualOrder.n === 0) {
+        database.exec('BEGIN IMMEDIATE')
+        try {
+          database.exec(`
+            ALTER TABLE conversations ADD COLUMN manual_order INTEGER NOT NULL DEFAULT 0;
+            PRAGMA user_version = 67;
+            COMMIT;
+          `)
+        } catch (error) {
+          database.exec('ROLLBACK')
+          throw error
+        }
+      } else {
+        database.exec('PRAGMA user_version = 67')
       }
     }
   }

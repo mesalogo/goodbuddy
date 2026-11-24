@@ -27,4 +27,11 @@ describe("conversation display order", () => {
     expect(sortConversationsForDisplay([b, a]).map(item => item.id)).toEqual(["a", "b"]);
     expect(sortConversationsForDisplay([{ ...a, updatedAt: 40 }, b]).map(item => item.id)).toEqual(["a", "b"]);
   });
+
+  it("keeps manually placed conversations ahead of recency within a pin group", () => {
+    const pinned = (id: string, manualOrder: number, updatedAt: number) =>
+      ({ id, title: id, pinned: true, manualOrder, updatedAt, messages: [] }) as unknown as Conversation;
+    const conversations = [pinned("recent", 0, 100), pinned("placed", 2, 10), pinned("other", 1, 50)];
+    expect(sortConversationsForDisplay(conversations).map((item) => item.id)).toEqual(["other", "placed", "recent"]);
+  });
 });

@@ -271,6 +271,7 @@ export const ipcChannels = {
   conversationsSearch: 'conversations:search',
   conversationsSaveLocal: 'conversations:save-local',
   conversationsSetPinned: 'conversations:set-pinned',
+  conversationsSetOrder: 'conversations:set-order',
   conversationsSetStoryGraph: 'conversations:set-story-graph',
   conversationsBranchLocal: 'conversations:branch-local',
   conversationsDeleteLocal: 'conversations:delete-local',

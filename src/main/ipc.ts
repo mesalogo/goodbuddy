@@ -149,6 +149,7 @@ import {
   conversationBranchInputSchema,
   conversationListRequestSchema,
   conversationSearchRequestSchema,
+  conversationSetOrderSchema,
   conversationSetPinnedSchema,
   conversationSetStoryGraphSchema,
   type ConversationSnapshot,
@@ -6513,6 +6514,17 @@ export function registerIpcHandlers(
         await contextManager.assets?.reference(save.header.id, 'message', message.id, conversationMessageResourceIds(message), conversationMessageOutputHandles(message))
       }
       await assistantDatabase.saveLocalConversations(batch)
+    }
+  )
+
+  registerHandler(
+    ipcChannels.conversationsSetOrder,
+    async (event, input: unknown) => {
+      assertTrustedSender(event, window)
+      await assistantDatabase.setConversationOrder(
+        conversationSetOrderSchema.parse(input)
+      )
+      publishConversationChange()
     }
   )
 
