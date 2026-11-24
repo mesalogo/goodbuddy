@@ -1,3 +1,4 @@
+import { CONVERSATION_NOT_FOUND_CODE, MAGIC_NOTE_NOT_FOUND_CODE } from '../../shared/error-codes'
 import { createHash, randomUUID } from 'node:crypto'
 import { reviewScope, type ReviewBatch } from './review-checkpoint'
 import { magicNoteCanvasAnalysisText } from '../../shared/magic-note-canvas-text'
@@ -3323,7 +3324,7 @@ export class AssistantDatabase {
       )
       .get(conversationId) as ConversationRow | undefined
     if (!conversation) {
-      throw new Error('对话不存在')
+      throw Object.assign(new Error('对话不存在'), { code: CONVERSATION_NOT_FOUND_CODE })
     }
     const messages = database
       .prepare(
@@ -3348,7 +3349,7 @@ export class AssistantDatabase {
       `UPDATE conversations SET pinned = ? WHERE id = ? AND status = 'active'`
     ).run(pinned ? 1 : 0, conversationId)
     if (result.changes !== 1) {
-      throw new Error('对话不存在')
+      throw Object.assign(new Error('对话不存在'), { code: CONVERSATION_NOT_FOUND_CODE })
     }
   }
 
@@ -3365,7 +3366,7 @@ export class AssistantDatabase {
        SET context_state_json = json_set(COALESCE(context_state_json, '{}'), '$.storyGraphEnabled', json(?))
        WHERE id = ? AND status = 'active'`
     ).run(JSON.stringify(enabled), conversationId)
-    if (result.changes !== 1) throw new Error('对话不存在')
+    if (result.changes !== 1) throw Object.assign(new Error('对话不存在'), { code: CONVERSATION_NOT_FOUND_CODE })
   }
 
   /**
@@ -4355,7 +4356,7 @@ export class AssistantDatabase {
       )
       .get(noteId) as MagicNoteRow | undefined
     if (!row) {
-      throw new Error('笔记不存在')
+      throw Object.assign(new Error('笔记不存在'), { code: MAGIC_NOTE_NOT_FOUND_CODE })
     }
     const entryRows = database
       .prepare(
@@ -4386,7 +4387,7 @@ export class AssistantDatabase {
       | { id: string; project_id: string | null; title: string }
       | undefined
     if (!row) {
-      throw new Error('笔记不存在')
+      throw Object.assign(new Error('笔记不存在'), { code: MAGIC_NOTE_NOT_FOUND_CODE })
     }
     return {
       id: row.id,
@@ -4517,7 +4518,7 @@ export class AssistantDatabase {
         .prepare('DELETE FROM magic_notes WHERE id = ?')
         .run(noteId)
       if (result.changes !== 1) {
-        throw new Error('笔记不存在')
+        throw Object.assign(new Error('笔记不存在'), { code: MAGIC_NOTE_NOT_FOUND_CODE })
       }
       database.exec('COMMIT')
     } catch (error) {
@@ -4552,7 +4553,7 @@ export class AssistantDatabase {
         )
         .run(now, input.noteId)
       if (noteResult.changes !== 1) {
-        throw new Error('笔记不存在')
+        throw Object.assign(new Error('笔记不存在'), { code: MAGIC_NOTE_NOT_FOUND_CODE })
       }
       const pointer = this.writeMagicNoteBody(input.noteId, entryId, input.content, 0, now)
       database
@@ -9872,7 +9873,7 @@ export class AssistantDatabase {
       .prepare('SELECT id FROM magic_notes WHERE id = ?')
       .get(noteId) as { id: string } | undefined
     if (!note) {
-      throw new Error('笔记不存在')
+      throw Object.assign(new Error('笔记不存在'), { code: MAGIC_NOTE_NOT_FOUND_CODE })
     }
     const items = magicNoteChecklistItems(content)
     const existing = database

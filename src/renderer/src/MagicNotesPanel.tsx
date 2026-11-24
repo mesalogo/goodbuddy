@@ -1,3 +1,4 @@
+import { isNotFoundError, MAGIC_NOTE_NOT_FOUND_CODE } from '../../shared/error-codes'
 import { ArrowLeft, ExternalLink, Pin, Plus } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -62,7 +63,7 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
       void Promise.all([
         window.goodbuddy.magicNotes.search({ query, limit: 100 }),
         selectedNoteId ? window.goodbuddy.magicNotes.get(selectedNoteId).catch(reason => {
-          if (reason instanceof Error && reason.message.includes('笔记不存在')) {
+          if (isNotFoundError(reason, MAGIC_NOTE_NOT_FOUND_CODE)) {
             if (current) {
               setSelectedNoteId(''); setDetail(undefined); setSaveError(t('capture.deletedTarget'))
               setDraft(value => value?.targetId === selectedNoteId ? { ...value, targetId: '' } : value)
@@ -127,7 +128,7 @@ export function MagicNotesPanel({ state, active, commentMode, commentFormat = 'c
           .catch(reason => onNotify({ tone: 'error', message: t('canvas.savedAnalysisFailed', { error: reason instanceof Error ? reason.message : t('errors.operationFailed') }) }))
       }
     } catch (reason) {
-      setSaveError(reason instanceof Error && reason.message.includes('笔记不存在') ? t('capture.deletedTarget') : reason instanceof Error ? reason.message : t('errors.operationFailed'))
+      setSaveError(isNotFoundError(reason, MAGIC_NOTE_NOT_FOUND_CODE) ? t('capture.deletedTarget') : reason instanceof Error ? reason.message : t('errors.operationFailed'))
     } finally { submitting.current = false; setSaving(false) }
   }
   const openWorkspace = async (entryId?: string): Promise<void> => {

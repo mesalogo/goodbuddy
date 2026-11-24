@@ -1,3 +1,4 @@
+import { DEFAULT_CONVERSATION_TITLE } from './conversation-defaults'
 import type { ConversationListSnapshot } from "../../shared/assistant-contracts";
 import type { Message } from "./ChatTimeline";
 
@@ -41,7 +42,7 @@ export function sortConversationsForDisplay(conversations: readonly Conversation
 
 export function isUnusedConversation(conversation: Conversation): boolean {
   return (
-    conversation.title === "新对话" &&
+    conversation.title === DEFAULT_CONVERSATION_TITLE &&
     (conversation.messageSummary?.count ?? conversation.messages.length) === 1 &&
     (conversation.messageSummary?.firstRole ?? conversation.messages[0]?.role) === "assistant"
   );

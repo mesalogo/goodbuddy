@@ -1,3 +1,5 @@
+import { DEFAULT_CONVERSATION_TITLE } from "./conversation-defaults";
+import { CONVERSATION_NOT_FOUND_CODE, isNotFoundError } from "../../shared/error-codes";
 import { directoryStorageKey, readDirectories } from './conversation-directories';
 import { resolveWorkspaceLink } from './workspace-link';
 import { MagicNotesPanel } from './MagicNotesPanel';
@@ -696,7 +698,7 @@ function createConversation(
     runtimeSelection,
     knowledgeLibraryIds: [],
     knowledgeRetrievalMode: "auto",
-    title: "新对话",
+    title: DEFAULT_CONVERSATION_TITLE,
     updatedAt: now,
     messages: [
       {
@@ -5327,7 +5329,7 @@ function App(): React.JSX.Element {
           ? {
               ...conversation,
               title:
-                conversation.title === "新对话"
+                conversation.title === DEFAULT_CONVERSATION_TITLE
                   ? prompt.slice(0, 24)
                   : conversation.title,
               updatedAt: Date.now(),
@@ -5416,7 +5418,7 @@ function App(): React.JSX.Element {
       const saveOrigin = conversationPersistence.enqueue(async () => {
         const origin = {
           ...conversationSnapshot,
-          title: conversationSnapshot.title === "新对话" ? prompt.slice(0, 24) : conversationSnapshot.title,
+          title: conversationSnapshot.title === DEFAULT_CONVERSATION_TITLE ? prompt.slice(0, 24) : conversationSnapshot.title,
           updatedAt: assistantMessage.createdAt,
           messages: [...historySnapshot, userMessage, assistantMessage],
         };
@@ -5479,7 +5481,7 @@ function App(): React.JSX.Element {
             ? {
                 ...conversation,
                 title:
-                  conversationSnapshot.title === "新对话" &&
+                  conversationSnapshot.title === DEFAULT_CONVERSATION_TITLE &&
                   conversation.title === prompt.slice(0, 24)
                     ? conversationSnapshot.title
                     : conversation.title,
@@ -6066,7 +6068,7 @@ function App(): React.JSX.Element {
     let snapshot;
     try { snapshot = await window.goodbuddy.conversations.get(source.conversationId); }
     catch (reason) {
-      if (reason instanceof Error && /对话不存在(?:$|["'])/u.test(reason.message)) return 'missing';
+      if (isNotFoundError(reason, CONVERSATION_NOT_FOUND_CODE)) return 'missing';
       throw reason;
     }
     requestWorkspaceLeave('chat', () => {
