@@ -104,7 +104,6 @@ import {
 import {
   runtimeModelDetail,
   runtimeModelLabel,
-  runtimeProviderLabel,
 } from "./runtime-selection";
 import type {
   ActivityHistoryFilter,
@@ -959,12 +958,7 @@ function runtimeChoiceLabel(
   if (!resolved || !settings) {
     return status?.label ?? "Runtime";
   }
-  return `${runtimeProviderLabel(resolved.provider, t)} · ${runtimeModelLabel(
-    resolved.provider,
-    resolved.model,
-    settings,
-    t,
-  )}`;
+  return runtimeModelLabel(resolved.provider, resolved.model, settings, t);
 }
 
 const imageDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,/u;

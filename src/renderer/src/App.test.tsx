@@ -9070,7 +9070,7 @@ describe("App", () => {
 
     // A saved direct-model conversation remains selected on a remote project.
     const runtimeButton = await screen.findByRole("button", {
-      name: /直连模型 · 默认模型/u,
+      name: /默认模型/u,
     });
     fireEvent.click(runtimeButton);
     const runtimeMenu = screen.getByRole("menu", {
@@ -9096,7 +9096,7 @@ describe("App", () => {
     fireEvent.click(screen.getByText("旧 Continue 会话").closest("button")!);
     expect(
       await screen.findByRole("button", {
-        name: /Continue ·/u,
+        name: /默认模型/u,
       }),
     ).toBeInTheDocument();
   });
@@ -11215,8 +11215,8 @@ describe("App", () => {
         detail: "Ready",
       });
     render(<App />);
-
-    await screen.findByRole("button", { name: /^OpenCode ·/u });
+    render(<App />);
+    await screen.findByRole("button", { name: /^默认模型/u });
     pickRuntime("直连模型");
 
     await waitFor(() => {
@@ -11411,7 +11411,7 @@ describe("App", () => {
     render(<App />);
 
     const runtimeButton = await screen.findByRole("button", {
-      name: "直连模型 · 默认模型(sonnet-5)",
+      name: "默认模型(sonnet-5)",
     });
     fireEvent.click(runtimeButton);
     const { providers, models } = runtimeMenuColumns();
@@ -11460,7 +11460,7 @@ describe("App", () => {
 
       const notification = screen.getByRole("status");
       expect(notification).toHaveTextContent(
-        "当前对话已切换到 OpenCode · 默认模型",
+        "当前对话已切换到 默认模型",
       );
       expect(
         screen.queryByRole("button", {
@@ -11474,12 +11474,12 @@ describe("App", () => {
       });
       expect(screen.getAllByRole("status")).toHaveLength(1);
       expect(screen.getByRole("status")).toHaveTextContent(
-        "当前对话已切换到 Continue · 默认模型",
+        "当前对话已切换到 默认模型",
       );
 
       act(() => vi.advanceTimersByTime(2_999));
       expect(screen.getByRole("status")).toHaveTextContent(
-        "当前对话已切换到 Continue · 默认模型",
+        "当前对话已切换到 默认模型",
       );
       act(() => vi.advanceTimersByTime(1));
       expect(
@@ -11560,7 +11560,7 @@ describe("App", () => {
       }),
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: /^OpenCode · 第二模型/u }));
+    fireEvent.click(await screen.findByRole("button", { name: /^第二模型/u }));
     const reopened = runtimeMenuColumns();
     expect(
       within(reopened.models).getByRole("menuitemradio", { name: /^第二模型 · qwen3/u }),
@@ -11636,7 +11636,7 @@ describe("App", () => {
       }),
     );
     expect(
-      await screen.findByRole("button", { name: /^Continue · 自有配置/u }),
+      await screen.findByRole("button", { name: /^自有配置/u }),
     ).toBeInTheDocument();
   });
 
@@ -12012,7 +12012,7 @@ describe("App", () => {
 
     expect(
       // Legacy Auto now reads as "follow the project" and resolves to the direct model.
-      await screen.findByRole("button", { name: /^直连模型 · 默认模型/u }),
+      await screen.findByRole("button", { name: /^默认模型/u }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/本次调用 9\.0K/u)).not.toBeInTheDocument();
     expect(screen.queryByText(/压缩线/u)).not.toBeInTheDocument();
@@ -12080,7 +12080,7 @@ describe("App", () => {
 
     expect(await screen.findByText("旧消息")).toBeInTheDocument();
     // The deleted model falls back visibly; the saved choice is kept until the user replaces it.
-    fireEvent.click(await screen.findByRole("button", { name: /^直连模型 · 默认模型/u }));
+    fireEvent.click(await screen.findByRole("button", { name: /^默认模型/u }));
     expect(within(runtimeMenuColumns().menu).getByRole("status")).toHaveTextContent(
       "所选模型连接已删除，已回退到 默认模型",
     );
@@ -12560,7 +12560,7 @@ describe("App", () => {
     );
     expect(
       screen.getByRole("button", {
-        name: /OpenCode · 默认模型/u,
+        name: /默认模型/u,
       }),
     ).toBeInTheDocument();
   });
