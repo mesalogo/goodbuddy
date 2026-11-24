@@ -1,3 +1,4 @@
+import { CONVERSATION_NOT_FOUND_CODE, withIpcNotFound } from '../shared/error-codes'
 import { startScheduleRunLimit } from './assistant/schedule-run-limit'
 import { registerKnowledgeIpcHandlers } from './knowledge/knowledge-ipc'
 import type { DesktopUpdateService } from './desktop-update-service'
@@ -6496,7 +6497,10 @@ export function registerIpcHandlers(
   })
   registerHandler(ipcChannels.conversationsGet, async (event, input: unknown) => {
     assertTrustedSender(event, window)
-    return projectConversationRequests([await assistantDatabase.getConversation(assistantIdSchema.parse(input))])[0]
+    const conversationId = assistantIdSchema.parse(input)
+    return withIpcNotFound(CONVERSATION_NOT_FOUND_CODE, async () =>
+      projectConversationRequests([await assistantDatabase.getConversation(conversationId)])[0]!
+    )
   })
   registerHandler(ipcChannels.conversationsSearch, async (event, input: unknown) => {
     assertTrustedSender(event, window)

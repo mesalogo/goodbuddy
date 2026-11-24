@@ -1,4 +1,5 @@
 import type { BrowserWindow, ipcMain } from 'electron'
+import { MAGIC_NOTE_NOT_FOUND_CODE, withIpcNotFound } from '../../shared/error-codes'
 import { ipcChannels } from '../../shared/ipc-channels'
 import {
   magicNoteCreateSchema,
@@ -76,7 +77,7 @@ export function registerMagicNotesIpcHandlers(
   registerHandler(ipcChannels.magicNotesGet, (event, input: unknown) => {
     assertTrustedSender(event, window)
     const { noteId } = magicNoteDeleteSchema.parse(input)
-    return assistantDatabase.getMagicNote(noteId)
+    return withIpcNotFound(MAGIC_NOTE_NOT_FOUND_CODE, () => assistantDatabase.getMagicNote(noteId))
   })
 
   registerHandler(ipcChannels.magicNotesCreate, async (event, input: unknown) => {
@@ -103,13 +104,14 @@ export function registerMagicNotesIpcHandlers(
     async (event, input: unknown) => {
       assertTrustedSender(event, window)
       const parsed = magicNoteEntryCreateSchema.parse(input)
-      return assistantDatabase.createMagicNoteEntry({
+      const source = await resolveMagicNoteSource(parsed.source)
+      return withIpcNotFound(MAGIC_NOTE_NOT_FOUND_CODE, () => assistantDatabase.createMagicNoteEntry({
         noteId: parsed.noteId,
         content: parsed.content,
         ...(parsed.knownEntries ? { knownEntries: parsed.knownEntries } : {}),
-        source: await resolveMagicNoteSource(parsed.source),
+        source,
         plainText: '' // The storage owner validates bytes and derives text once.
-      })
+      }))
     }
   )
 

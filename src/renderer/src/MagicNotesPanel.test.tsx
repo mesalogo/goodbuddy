@@ -189,7 +189,7 @@ describe('compact notes', () => {
     fireEvent.click(screen.getByText('Capture'))
     fireEvent.click(await screen.findByRole('button', { name: /Release decisions/ }))
     await waitFor(() => expect(get).toHaveBeenCalled())
-    get.mockRejectedValue(Object.assign(new Error('笔记不存在'), { code: 'magic-note-not-found' }))
+    get.mockRejectedValue({ ok: false, code: 'magic-note-not-found' })
     search.mockResolvedValue([])
     act(() => onChanged())
     await waitFor(() => expect(screen.getByRole('button', { name: 'Add to note' })).toBeDisabled())

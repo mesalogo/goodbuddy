@@ -15665,9 +15665,7 @@ describe("App", () => {
     fireEvent.click(notesPanel.getByRole('button', { name: '查看来源消息' }))
     expect(await screen.findByText('原消息已不存在')).toBeVisible()
     await waitFor(() => expect(notesPanel.getByRole('button', { name: '返回原会话' })).toBeEnabled())
-    vi.mocked(api.conversations.get).mockRejectedValue(
-        Object.assign(new Error('对话不存在'), { code: 'conversation-not-found' }),
-      )
+    vi.mocked(api.conversations.get).mockRejectedValue({ ok: false, code: 'conversation-not-found' })
     fireEvent.click(notesPanel.getByRole('button', { name: '返回原会话' }))
     expect(await notesPanel.findByRole('button', { name: '原会话已不存在' })).toBeDisabled()
     expect(notesPanel.getByText('Saved text')).toBeVisible()
