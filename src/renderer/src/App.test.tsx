@@ -3245,6 +3245,35 @@ describe("App", () => {
     expect(route).not.toHaveAttribute("hidden");
   });
 
+  it("opens conversation search, toggles the sidebar and opens settings from global shortcuts", async () => {
+    render(<App />);
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    expect(await screen.findByLabelText("搜索对话")).toHaveFocus();
+    fireEvent.keyDown(document, { key: "b", metaKey: true });
+    expect(screen.getByRole("button", { name: "切换侧栏" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    fireEvent.keyDown(document, { key: ",", ctrlKey: true });
+    expect(
+      await screen.findByRole("heading", { name: "设置中心" }),
+    ).toBeVisible();
+  });
+
+  it("ignores the new global shortcuts while typing in the composer", async () => {
+    render(<App />);
+    const composer = await screen.findByLabelText("向 GoodBuddy 提问");
+    fireEvent.keyDown(composer, { key: "k", ctrlKey: true });
+    expect(
+      screen.queryByPlaceholderText("搜索标题或消息"),
+    ).not.toBeInTheDocument();
+    fireEvent.keyDown(composer, { key: "b", ctrlKey: true });
+    expect(screen.getByRole("button", { name: "切换侧栏" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
   it("shows the conversation column only on the chat page in the workbench layout", async () => {
     localStorage.setItem("goodbuddy.interface-layout", "workbench");
     try {
