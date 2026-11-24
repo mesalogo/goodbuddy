@@ -51,6 +51,21 @@ function scheduleIdleRelease(): void {
   }, workerIdleTimeoutMs)
 }
 
+
+// Coded warnings from the worker carry a JSON payload; turn them back into
+// the localized string main persists and the preview shows.
+function translateWarning(warning: string): string {
+  try {
+    const parsed = JSON.parse(warning)
+    if (parsed && typeof parsed === 'object' && parsed.code === 'ocr-page-no-text') {
+      return typeof parsed.pageNumber === 'number'
+        ? `第 ${parsed.pageNumber} 页未识别到文字`
+        : '图片中未识别到文字'
+    }
+  } catch { /* not a coded warning */ }
+  return warning
+}
+
 function safeError(error: unknown): string {
   return error instanceof Error
     ? error.message.slice(0, 1_000)
@@ -153,7 +168,7 @@ async function ensureWorker(modelId: string): Promise<Worker> {
       window.clearTimeout(request.timer)
       pending.delete(requestId)
       if (output.type === 'result') {
-        request.resolve(output.result)
+        request.resolve({ ...output.result, warnings: output.result.warnings.map(translateWarning) })
       } else {
         request.reject(new Error(output.error))
       }
