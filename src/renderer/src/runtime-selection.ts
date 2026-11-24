@@ -34,13 +34,15 @@ export function runtimeModelLabel(
   if (model.kind === 'runtime-config') {
     const detail =
       provider === 'deepseek-harness' ? harnessPlatformModelName(settings) : undefined
-    const label = t('runtimeSelection.runtimeConfigShort')
+    const label = t('runtimeSelection.runtimeConfigShortCompact')
     return detail ? `${label} · ${detail}` : label
   }
   const profile = settings.modelProfiles.find(
     (candidate) => candidate.id === model.profileId
   )
-  return profile?.name ?? t('runtimeSelection.missingProfile')
+  // A deleted model keeps its provider prefix so the user sees the broken
+  // reference still points at that provider.
+  return profile?.name ?? `${runtimeProviderLabel(provider, t)} · ${t('runtimeSelection.missingProfile')}`
 }
 
 export function runtimeModelDetail(

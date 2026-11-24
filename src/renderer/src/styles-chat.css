@@ -3404,6 +3404,7 @@
 
 .composer-picker--chip > .model-button {
   width: auto;
+  min-width: 0;
   max-width: 220px;
   height: 24px;
   padding: 0 var(--space-2);
@@ -3432,7 +3433,9 @@
 
 .composer-picker--runtime > .model-button,
 .composer-picker--runtime-action > .model-button {
-  width: 220px;
+  width: auto;
+  min-width: 220px;
+  max-width: 320px;
 }
 
 .composer-picker__menu {

@@ -44,6 +44,13 @@ describe('renderer runtime labels', () => {
       .toBe('自有配置 · deepseek-chat')
   })
 
+  it('keeps the provider prefix when the saved model was deleted', async () => {
+    await i18n.changeLanguage('zh-CN')
+    const t = i18n.getFixedT('zh-CN', 'app')
+    expect(runtimeModelLabel('continue', { kind: 'profile', profileId: '00000000-0000-4000-8000-000000000099' }, settings, t))
+      .toBe('Continue · 已删除的模型')
+  })
+
   it('explains why a saved choice was not used', async () => {
     const t = i18n.getFixedT('en-US', 'app')
     const resolved = resolveRuntimeChoice(settings, {
