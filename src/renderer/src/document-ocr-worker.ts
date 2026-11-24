@@ -224,7 +224,7 @@ async function recognizePdf(
           }
           sections.push(section)
         } else if (warnings.length < maximumDocumentParsingWarnings) {
-          warnings.push(`第 ${pageNumber} 页未识别到文字`)
+          warnings.push(JSON.stringify({ code: 'ocr-page-no-text', pageNumber }))
         }
       } finally {
         page.cleanup()
@@ -255,7 +255,7 @@ async function recognize(request: DocumentOcrRequest): Promise<DocumentOcrResult
     requestId: request.requestId,
     sections: section ? [section] : [],
     pageCount: 1,
-    warnings: section ? [] : ['图片中未识别到文字']
+    warnings: section ? [] : [JSON.stringify({ code: 'ocr-page-no-text' })]
   }
 }
 
