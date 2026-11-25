@@ -143,6 +143,7 @@ export const app = {
   },
   navigation: {
     settings: 'Settings',
+    settingsWithShortcut: 'Settings ({{shortcut}})',
     label: 'Main navigation',
     chat: 'Chat',
     magicNotes: 'Magic Notes',
@@ -161,6 +162,7 @@ export const app = {
     label: 'Main sidebar',
     newConversation: 'New conversation',
     searchLabel: 'Search conversations',
+    searchWithShortcut: 'Search conversations ({{shortcut}})',
     closeSearch: 'Close and clear search',
     searchPlaceholder: 'Search titles or messages',
     recent: 'Recent conversations',
@@ -168,6 +170,7 @@ export const app = {
     loading: 'Loading',
     close: 'Close sidebar',
     toggle: 'Toggle sidebar',
+    toggleWithShortcut: 'Toggle sidebar ({{shortcut}})',
     resizeAriaLabel: 'Resize main sidebar',
     resizeValue: 'Main sidebar, {{width}} pixels'
   },

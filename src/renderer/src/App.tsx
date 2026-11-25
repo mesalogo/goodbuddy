@@ -228,6 +228,7 @@ import { restoreProject } from "./restore-project";
 import { useStableHandlers } from "./stable-derived-value";
 import { useUnviewedCompletions } from "./use-unviewed-completions";
 import { useExecutionStats } from "./use-execution-stats";
+import { useGlobalShortcuts } from "./use-global-shortcuts";
 import {
   RightAssistantSidebar,
   type AssistantSidebarTab,
@@ -4302,23 +4303,15 @@ function App(): React.JSX.Element {
     [startNewConversation],
   );
 
-  useEffect(() => {
-    const handleNewConversationShortcut = (event: KeyboardEvent): void => {
-      if (
-        event.key.toLocaleLowerCase() !== "n" ||
-        (!event.ctrlKey && !event.metaKey) ||
-        event.altKey ||
-        event.shiftKey
-      ) {
-        return;
-      }
-      event.preventDefault();
-      startNewConversation(activeProjectIdRef.current || undefined);
-    };
-    document.addEventListener("keydown", handleNewConversationShortcut);
-    return () =>
-      document.removeEventListener("keydown", handleNewConversationShortcut);
-  }, [startNewConversation]);
+  const { searchLabel: searchShortcutLabel, sidebarLabel: sidebarShortcutLabel, settingsLabel: settingsShortcutLabel } =
+    useGlobalShortcuts({
+      platform: shortcutPlatform,
+      newConversation: () => startNewConversation(activeProjectIdRef.current || undefined),
+      openConversationSearch: () => setSearchOpen(true),
+      toggleSidebar: () => setSidebarOpen((open) => !open),
+      openSettings: () => setView("settings"),
+      conversationColumnAvailable,
+    });
 
   const commitProjectSelection = (
     selected: AssistantProject,
@@ -6951,7 +6944,7 @@ function App(): React.JSX.Element {
       <button
         className="nav-item"
         aria-label={t('navigation.settings')}
-        title={t('navigation.settings')}
+        title={t('navigation.settingsWithShortcut', { shortcut: settingsShortcutLabel })}
         type="button"
         onFocus={() => preloadWorkspaceRouteOnIntent("settings")}
         onClick={(event) => {
@@ -7155,7 +7148,7 @@ function App(): React.JSX.Element {
                 className="icon-button sidebar-search-trigger"
                 aria-label={t("sidebar.searchLabel")}
                 aria-expanded={false}
-                title={t("sidebar.searchLabel")}
+                title={t("sidebar.searchWithShortcut", { shortcut: searchShortcutLabel })}
                 onClick={() => setSearchOpen(true)}
                 type="button"
               >
@@ -7265,6 +7258,7 @@ function App(): React.JSX.Element {
               className="icon-button sidebar-toggle"
               type="button"
               aria-label={t("sidebar.toggle")}
+              title={t("sidebar.toggleWithShortcut", { shortcut: sidebarShortcutLabel })}
               aria-controls="primary-sidebar"
               aria-expanded={sidebarOpen}
               onClick={() => setSidebarOpen((open) => !open)}

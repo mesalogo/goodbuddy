@@ -140,6 +140,7 @@ export const app = {
   },
   navigation: {
     settings: '设置',
+    settingsWithShortcut: '设置（{{shortcut}}）',
     label: '主导航',
     chat: '对话',
     magicNotes: '魔法笔记',
@@ -158,6 +159,7 @@ export const app = {
     label: '主侧栏',
     newConversation: '新建对话',
     searchLabel: '搜索对话',
+    searchWithShortcut: '搜索对话（{{shortcut}}）',
     closeSearch: '关闭并清除搜索',
     searchPlaceholder: '搜索标题或消息',
     recent: '最近会话',
@@ -165,6 +167,7 @@ export const app = {
     loading: '加载中',
     close: '关闭侧栏',
     toggle: '切换侧栏',
+    toggleWithShortcut: '切换侧栏（{{shortcut}}）',
     resizeAriaLabel: '调整主侧栏宽度',
     resizeValue: '主侧栏 {{width}} 像素'
   },
