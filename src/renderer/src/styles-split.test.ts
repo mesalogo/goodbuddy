@@ -177,4 +177,21 @@ describe('split stylesheet declarations and import order', () => {
     expect(declarations('.sidebar-search:focus-within').outline).toBe('2px solid var(--accent)')
     expect(declarations('.sidebar-search input:focus-visible')).toEqual({ outline: '0' })
   })
+
+  it('keeps every text size at or above the caption token except the three compact marks', () => {
+    const final = new Map<string, string>()
+    for (const rule of rules) {
+      if (rule.parent?.type !== 'root') continue
+      rule.walkDecls('font-size', (decl) => {
+        for (const selector of rule.selectors) final.set(selector, decl.value)
+      })
+    }
+    const below = [...final].filter(([, size]) => {
+      const px = /^(\d+(?:\.\d+)?)px$/.exec(size)
+      return px !== null && Number(px[1]) < 11
+    })
+    expect(below.map(([selector]) => selector)).toEqual([
+      '.chat-minimap__day', '.activity-track__node', '.activity-track__node > small'
+    ])
+  })
 })

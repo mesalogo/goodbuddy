@@ -166,7 +166,7 @@ textarea.field-control {
   margin: 0;
   background: var(--warning-subtle);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.55;
 }
 
@@ -174,7 +174,7 @@ textarea.field-control {
 .settings-empty {
   margin: 0;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 1.55;
 }
 
@@ -342,7 +342,7 @@ textarea.field-control {
   align-items: center;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 10px;
+  font-size: var(--font-caption);
   gap: 8px;
 }
 
@@ -365,7 +365,7 @@ textarea.field-control {
 .settings-section--danger p {
   margin: 5px 0 0;
   color: var(--text-secondary);
-  font-size: 9px;
+  font-size: var(--font-caption);
   line-height: 1.55;
 }
 
@@ -468,7 +468,7 @@ textarea.field-control {
 
 .page-tabs__tab--active { border-color: var(--border-control); background: var(--accent-subtle); color: var(--accent); }
 
-.page-tabs__count { display: grid; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px; background: var(--danger); color: var(--text-on-accent); font-size: 9px; place-items: center; }
+.page-tabs__count { display: grid; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px; background: var(--danger); color: var(--text-on-accent); font-size: var(--font-caption); place-items: center; }
 
 .page-tabs__icon { display: grid; place-items: center; }
 

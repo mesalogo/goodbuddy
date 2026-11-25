@@ -462,7 +462,7 @@
   border-radius: 999px;
   background: var(--accent-subtle);
   color: var(--accent);
-  font-size: 10px;
+  font-size: var(--font-caption);
   font-weight: 600;
   gap: 4px;
 }
@@ -3882,7 +3882,7 @@
   background: var(--surface-subtle);
   color: var(--text-secondary);
   font-family: var(--font-family-mono);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .composer-context-meter {
@@ -4216,7 +4216,7 @@
   padding: 12px 10px;
   margin: 0;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .message-sources {
@@ -4228,7 +4228,7 @@
   margin-top: 9px;
   background: var(--accent-subtle);
   color: var(--accent);
-  font-size: 9px;
+  font-size: var(--font-caption);
   gap: 6px;
 }
 
@@ -4238,7 +4238,7 @@
   border-radius: 8px;
   margin-top: 7px;
   background: var(--surface-subtle);
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .message-citations summary {
@@ -4280,7 +4280,7 @@
   background: var(--danger-subtle);
   color: var(--danger);
   cursor: pointer;
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .context-chip__thumbnail {
