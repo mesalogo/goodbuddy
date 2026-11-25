@@ -14,7 +14,7 @@ export const assistantStorageMethods = [
   'createProject', 'updateProject', 'createSshProject', 'updateSshProject', 'listProjectsReferencingSshHost',
   'listSshHostProjectReferences', 'deleteProjectsReferencingSshHost', 'setProjectArchived',
   'deleteProject', 'listConversations', 'listConversationSummaries', 'searchConversations',
-  'getConversation', 'setConversationPinned', 'isConversationStoryGraphEnabled',
+  'getConversation', 'setConversationPinned', 'setConversationOrder', 'isConversationStoryGraphEnabled',
   'setConversationStoryGraphEnabled', 'repairConversationRuntimeSelections',
   'saveLocalConversations', 'branchLocalConversation',
   'deleteLocalConversation', 'getOrCreateRemoteConversation', 'appendConversationMessage',

@@ -77,6 +77,7 @@ export type ConversationListRowHandlers = {
   toggleTasks: (conversationId: string) => void;
   select: (conversationId: string) => void;
   toggleActions: (conversationId: string) => void;
+  openActions: (conversationId: string) => void;
   registerActionTrigger: (conversationId: string, element: HTMLButtonElement | null) => void;
   closeActions: (conversationId: string) => void;
   pin: (conversation: Conversation) => void;
@@ -88,6 +89,7 @@ export type ConversationListRowHandlers = {
   cancelDelete: () => void;
   confirmDelete: (conversationId: string) => void;
   requestDelete: (conversationId: string) => void;
+  move: (conversationId: string, beforeConversationId: string | null) => void;
   saveTitle: (conversationId: string, title: string, restoreFocus?: boolean) => void;
   cancelRename: (conversationId: string, restoreFocus?: boolean) => void;
   openTask: (task: AssistantTask) => void;
@@ -211,6 +213,27 @@ const ConversationListRow = memo(function ConversationListRow({
       data-conversation-window-row={conversation.id}
       ref={rowRef}
       role="listitem"
+      draggable={!editing}
+      onDragStart={(event) => {
+        event.dataTransfer.setData("text/goodbuddy-conversation", conversation.id);
+        event.dataTransfer.effectAllowed = "move";
+      }}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("text/goodbuddy-conversation")) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }
+      }}
+      onDrop={(event) => {
+        const draggedId = event.dataTransfer.getData("text/goodbuddy-conversation");
+        if (!draggedId || draggedId === conversation.id) return;
+        event.preventDefault();
+        handlers.move(draggedId, conversation.id);
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        handlers.openActions(conversation.id);
+      }}
     >
       <div className="conversation-row">
         {conversationTasks.length > 0 && (

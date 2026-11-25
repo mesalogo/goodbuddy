@@ -142,7 +142,7 @@ import type {
 } from "./ChatTimeline";
 import type { ChatScrollSnapshot } from "./ChatHistoryPane";
 import { usePaneOrder } from "./pane-order";
-import { getConversationDisplayTitle, isUnusedConversation, type Conversation } from "./chat-conversation";
+import { getConversationDisplayTitle, isUnusedConversation, sortConversationsForDisplay, type Conversation } from "./chat-conversation";
 import {
   ConversationListView,
   ConversationStoreEffects,
@@ -4626,6 +4626,14 @@ function App(): React.JSX.Element {
     }
   };
 
+  const setConversationOrder = async (conversationId: string, order: number): Promise<void> => {
+    try {
+      await window.goodbuddy.conversations.setOrder({ conversationId, order });
+    } catch {
+      notify({ tone: "error", message: t("notices.conversationPinFailed") });
+    }
+  };
+
   const deleteConversation = async (conversationId: string): Promise<void> => {
     if (deletingConversationId) {
       return;
@@ -6309,6 +6317,24 @@ function App(): React.JSX.Element {
         setConversationActionsId((current) =>
           current === conversationId ? "" : conversationId,
         );
+      },
+      openActions: (conversationId) => {
+        setRenamingConversationId("");
+        setConfirmingConversationId("");
+        setConversationActionsId(conversationId);
+      },
+      move: (conversationId, beforeConversationId) => {
+        const conversations = conversationStore.getState();
+        const moved = conversations.find((item) => item.id === conversationId);
+        if (!moved) return;
+        const group = conversations.filter((item) => Boolean(item.pinned) === Boolean(moved.pinned));
+        const without = sortConversationsForDisplay(group).filter((item) => item.id !== conversationId);
+        const beforeIndex = beforeConversationId ? without.findIndex((item) => item.id === beforeConversationId) : without.length;
+        const position = beforeIndex < 0 ? without.length : beforeIndex;
+        without.splice(position, 0, moved);
+        const updates = new Map(without.map((item, index): [string, number] => [item.id, index + 1]));
+        setConversations(conversations.map((item) => updates.has(item.id) ? { ...item, manualOrder: updates.get(item.id) } : item));
+        without.forEach((item) => { if (item.manualOrder !== updates.get(item.id)) void setConversationOrder(item.id, updates.get(item.id)!); });
       },
       // Ref callbacks run during commit, before the latest handlers are
       // published, so this only touches the lifetime-stable trigger map.

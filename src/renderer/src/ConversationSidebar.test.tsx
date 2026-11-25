@@ -117,10 +117,10 @@ function makeConversations(count: number): Conversation[] {
 }
 
 const handlers: ConversationListRowHandlers = {
-  toggleTasks: vi.fn(), select: vi.fn(), toggleActions: vi.fn(), registerActionTrigger: vi.fn(),
+  toggleTasks: vi.fn(), select: vi.fn(), toggleActions: vi.fn(), openActions: vi.fn(), registerActionTrigger: vi.fn(),
   closeActions: vi.fn(), pin: vi.fn(), branch: vi.fn(), startRename: vi.fn(), copy: vi.fn(),
   exportConversation: vi.fn(), saveToNote: vi.fn(), cancelDelete: vi.fn(), confirmDelete: vi.fn(), requestDelete: vi.fn(),
-  saveTitle: vi.fn(), cancelRename: vi.fn(), openTask: vi.fn(), viewAllTasks: vi.fn(),
+  saveTitle: vi.fn(), cancelRename: vi.fn(), openTask: vi.fn(), viewAllTasks: vi.fn(), move: vi.fn(),
 }
 
 type SidebarProps = ComponentProps<typeof ConversationSidebar>

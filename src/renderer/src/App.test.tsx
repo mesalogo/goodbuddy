@@ -597,6 +597,7 @@ const api: DesktopApi & RuntimeNativeClientApi = {
     search: vi.fn(async () => []),
     saveLocal: vi.fn(async () => {}),
     setPinned: vi.fn(async () => {}),
+    setOrder: vi.fn(async () => {}),
     setStoryGraph: vi.fn(async () => {}),
     branchLocal: vi.fn(async (input) => ({
       id: crypto.randomUUID(),

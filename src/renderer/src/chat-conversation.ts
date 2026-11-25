@@ -35,6 +35,10 @@ export function sortConversationsForDisplay(conversations: readonly Conversation
     return { conversation, time: conversationActivityTime(conversation) };
   }).sort((left, right) =>
     Number(Boolean(right.conversation.pinned)) - Number(Boolean(left.conversation.pinned)) ||
+    // Within a pin group, a conversation the user placed manually (manualOrder > 0)
+    // keeps that spot; the rest follow recency.
+    (Number(Boolean(right.conversation.manualOrder)) - Number(Boolean(left.conversation.manualOrder))) ||
+    (left.conversation.manualOrder ?? 0) - (right.conversation.manualOrder ?? 0) ||
     right.time - left.time || left.conversation.id.localeCompare(right.conversation.id),
   ).map(item => item.conversation);
 }

@@ -781,6 +781,8 @@ export const conversationSnapshotSchema = z
     title: z.string().trim().min(1).max(200),
     // Absent in older snapshots means unpinned; written only via setPinned.
     pinned: z.boolean().optional(),
+    // Lower sorts first within the pin group; 0 means "follow recency".
+    manualOrder: z.number().int().min(0).optional(),
     updatedAt: z.number().int().nonnegative(),
     // Main-only live projection. Never part of a saved conversation header.
     activeRequest: z.object({
@@ -816,6 +818,13 @@ export const conversationSetPinnedSchema = z.object({
   conversationId: assistantIdSchema,
   pinned: z.boolean()
 }).strict()
+
+export const conversationSetOrderSchema = z.object({
+  conversationId: assistantIdSchema,
+  order: z.number().int().min(0)
+}).strict()
+
+export type ConversationSetOrderInput = z.infer<typeof conversationSetOrderSchema>
 
 export const conversationSetStoryGraphSchema = z.object({
   conversationId: assistantIdSchema,

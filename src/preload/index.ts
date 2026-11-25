@@ -1235,6 +1235,9 @@ const desktopApi: DesktopApi = {
     setPinned: async (input) => {
       await ipcRenderer.invoke(ipcChannels.conversationsSetPinned, input)
     },
+    setOrder: async (input) => {
+      await ipcRenderer.invoke(ipcChannels.conversationsSetOrder, input)
+    },
     setStoryGraph: async (input) => {
       await ipcRenderer.invoke(ipcChannels.conversationsSetStoryGraph, input)
     },

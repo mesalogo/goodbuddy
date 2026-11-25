@@ -61,6 +61,7 @@ import {
   type LiveAgentQuestion,
   type ConversationAttachment,
   type ConversationBranchInput,
+  type ConversationSetOrderInput,
   type ConversationSetPinnedInput,
   type ConversationQueueItem,
   type ConversationContextCompressionState,
@@ -2160,6 +2161,7 @@ export type DesktopApi = {
     search: (query: string, conversationIds?: string[]) => Promise<string[]>
     saveLocal: (batch: LocalConversationSaveBatch) => Promise<void>
     setPinned: (input: ConversationSetPinnedInput) => Promise<void>
+    setOrder: (input: ConversationSetOrderInput) => Promise<void>
     setStoryGraph: (input: { conversationId: string; enabled: boolean }) => Promise<void>
     branchLocal: (
       input: ConversationBranchInput
