@@ -60,9 +60,7 @@ current limitations.
 
 ## Product tour
 
-### Knowledge bases and graphs
-
-### Magic Notes and Smart Heartbeat
+### Magic Notes and Supervisor (Smart Heartbeat)
 
 Magic Notes displays a continuous record stream, with a narrow left index and
 independent right AI comments. Both panes can collapse; thumbnails scroll to a
