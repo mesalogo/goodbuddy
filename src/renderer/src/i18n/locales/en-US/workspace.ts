@@ -274,6 +274,7 @@ export const workspace = {
     },
     terminal: {
       loading: 'Loading terminal…',
+      retry: 'Retry',
       ariaLabel: 'User terminal: {{title}}',
       location: {
         local: 'Local',
@@ -554,6 +555,24 @@ export const workspace = {
     rootTruncated:
       'The root folder has more than 500 items. Only the first 500 are shown.',
     empty: 'The workspace is empty.'
+  },
+  office: {
+    panelLabel: 'Online document', loading: 'Loading the document panel…', editOnline: 'Edit online (ShareServer)', editInDocumentTab: 'Edit in document tab',
+    opening: 'Opening document', openingNamed: 'Opening {{name}}',
+    emptyHint: 'Choose an Office file to edit with the configured ShareServer.',
+    shortcutHint: 'Ctrl/Cmd+S saves back to the file. Ctrl/Cmd+Shift+S saves as a new file. Legacy format conversion and the first save of an attachment choose a new file.',
+    pick: 'Choose an Office file to edit', retryOpen: 'Retry opening',
+    closeTitle: 'Close document', saveFailedTitle: 'Failed to save to the source file',
+    saveAndClose: 'Save to source file and close', retrySave: 'Retry saving', saveAsAndClose: 'Save as and close', saveAs: 'Save as',
+    discardAndClose: 'Close without saving to the source file', continueEditing: 'Continue editing',
+    updateRequired: 'Update GoodBuddy and try again', switchedTab: 'Switched to the existing editing tab for this file.',
+    saving: 'Waiting for the server to save and write the file…', saved: 'Version {{revision}} saved to the file', saveAsCancelled: 'Save as cancelled',
+    sent: 'Sent to the current conversation. Fetch the revision after the reply completes. The original selection is verified before applying.',
+    reviewReply: 'Review the revision before applying it to the original selection.',
+    stillWaiting: 'The conversation is still waiting for or generating a reply. Check progress or cancel it in the conversation.',
+    applied: 'The original selection was replaced. You can undo. Press Ctrl/Cmd+S to save back to the file.',
+    serverRequired: 'Save a ShareServer URL with Office support under Device sharing first.',
+    updateRequiredForSharing: 'Update GoodBuddy before configuring the ShareServer connection'
   },
   question: {
     task: 'Task: {{title}}',

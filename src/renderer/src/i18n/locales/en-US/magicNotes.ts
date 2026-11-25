@@ -21,6 +21,9 @@ export const magicNotes = {
     savedAnalysisFailed: 'Entry saved, but automatic analysis failed: {{error}}. You can analyze it again later.',
     entryType: 'New entry type', text: 'Text', canvas: 'Canvas', edit: 'Expand canvas editor',
     analyzeDraft: 'Analyze canvas draft', notReady: 'Canvas is not ready. Try again shortly.',
+    notLoaded: 'Canvas is not loaded yet', loadFailed: 'Failed to load the canvas',
+    pdfAssetUnavailable: 'PDF background asset unavailable', imageAssetUnavailable: 'Image asset unavailable: {{id}}',
+    imageAssetName: 'Canvas image', editorLabel: 'Paged canvas editor',
     discardDescription: 'Switching will discard unsaved text, canvas changes, and attachments.',
     inputMode: { text: 'Text only', images: 'Image analysis', 'canvas-images': 'Canvas image analysis', 'text-fallback': 'Text only (canvas images not used)' }
   },

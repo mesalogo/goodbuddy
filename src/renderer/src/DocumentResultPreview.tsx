@@ -1,4 +1,6 @@
 import { memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import i18n from './i18n'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import DOMPurify from 'dompurify'
@@ -11,12 +13,13 @@ import { DocumentConversationContext } from './DocumentConversationContext'
 function ResultImage({ resultId, image, onLocate, label }: {
   resultId: string; image: DocumentResult['images'][number]; onLocate?: () => void; label?: string
 }): React.JSX.Element {
+  const { t } = useTranslation('settings')
   const conversationContext = useContext(DocumentConversationContext)
   const [url, setUrl] = useState('')
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
   const element = useRef<HTMLDivElement>(null)
-  const location = label ?? image.locator ?? `第 ${image.pageNumber} 页图片`
+  const location = label ?? image.locator ?? t('documentParsing.result.imageOnPage', { page: image.pageNumber })
   useEffect(() => {
     let active = true
     const observer = new IntersectionObserver((entries) => {
@@ -24,29 +27,30 @@ function ResultImage({ resultId, image, onLocate, label }: {
       observer.disconnect()
       void window.goodbuddy.documentParsing!.readResultImage(resultId, image.id, true).then(
         (value) => { if (active) { setUrl(value); setError('') } },
-        (reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : '图片读取失败') }
+        (reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : i18n.t('settings:documentParsing.result.imageLoadFailed')) }
       )
     })
     if (element.current) observer.observe(element.current)
     return () => { active = false; observer.disconnect() }
   }, [resultId, image.id, retry])
   return <div ref={element} className="document-result-image">
-    {url ? <button type="button" className="message-image-button" aria-label={`查看大图：${location}`} onClick={(event) => {
+    {url ? <button type="button" className="message-image-button" aria-label={t('documentParsing.result.viewLargeImage', { location })} onClick={(event) => {
       const trigger = event.currentTarget
       void window.goodbuddy.documentParsing!.readResultImage(resultId, image.id).then((original) => conversationContext?.openImage(original, location, trigger),
-        (reason: unknown) => setError(reason instanceof Error ? reason.message : '原图读取失败'))
+        (reason: unknown) => setError(reason instanceof Error ? reason.message : t('documentParsing.result.originalLoadFailed')))
     }}>
       <img src={url} alt={location} loading="lazy" />
-    </button> : <p role="status">{error || '正在读取图片'}</p>}
-    {error && <button type="button" className="secondary-button" onClick={() => setRetry((value) => value + 1)}>重试读取图片</button>}
+    </button> : <p role="status">{error || t('documentParsing.result.loadingImage')}</p>}
+    {error && <button type="button" className="secondary-button" onClick={() => setRetry((value) => value + 1)}>{t('documentParsing.result.retryImage')}</button>}
     <small>{image.width} × {image.height} · {image.mimeType} · {(image.size / 1024).toFixed(1)} KiB</small>
-    {onLocate && <button type="button" className="secondary-button" onClick={onLocate}>{location} · 查看正文位置</button>}
+    {onLocate && <button type="button" className="secondary-button" onClick={onLocate}>{t('documentParsing.result.locateInText', { location })}</button>}
   </div>
 }
 
 const SectionContent = memo(function SectionContent({ content, result, onImage }: {
   content: string; result: DocumentResult; onImage: (id: string) => void
 }): React.JSX.Element {
+  const { t } = useTranslation('settings')
   const pieces = useMemo(() => content.split(/(<table\b[\s\S]*?<\/table>)/giu), [content])
   const images = useMemo(() => new Map(result.images.map((image) => [image.id, image])), [result.images])
   return <div className="markdown-body">{pieces.map((piece, index) => /^<table\b/iu.test(piece)
@@ -59,11 +63,12 @@ const SectionContent = memo(function SectionContent({ content, result, onImage }
       components={{ p: ({ children }) => <div>{children}</div>, img: ({ src }) => {
         const id = typeof src === 'string' ? src.slice(6) : ''
         const image = images.get(id)
-        return image ? <><ResultImage resultId={result.id} image={image} /><button type="button" className="secondary-button" onClick={() => onImage(id)}>第 {image.pageNumber} 页图片 · 在图片中查看</button></> : <span>图片资源不可用</span>
+        return image ? <><ResultImage resultId={result.id} image={image} /><button type="button" className="secondary-button" onClick={() => onImage(id)}>{t('documentParsing.result.viewInImagesTab', { page: image.pageNumber })}</button></> : <span>{t('documentParsing.result.imageUnavailable')}</span>
       } }}>{piece.replace(/<\/?(?:div|p|span|h[1-6])\b[^>]*>/giu, '\n').replace(/<br\s*\/?\s*>/giu, '\n\n')}</ReactMarkdown>)}</div>
 })
 
 export function DocumentResultPreview({ resultId, allowAddImages = false, conversationId, showOpenOriginal = true, imageActionsInImagesTab = false }: { resultId: string; allowAddImages?: boolean; conversationId?: string; showOpenOriginal?: boolean; imageActionsInImagesTab?: boolean }): React.JSX.Element {
+  const { t } = useTranslation('settings')
   const conversationContext = useContext(DocumentConversationContext)
   const [result, setResult] = useState<DocumentResult>()
   const [error, setError] = useState('')
@@ -95,14 +100,14 @@ export function DocumentResultPreview({ resultId, allowAddImages = false, conver
         setConversations(value.filter((item) => !item.remote))
         setProjectNames(Object.fromEntries(projects.map((project) => [project.id, project.name])))
       }
-    }).catch((reason: unknown) => { if (active) setAddError(reason instanceof Error ? reason.message : '会话读取失败') })
+    }).catch((reason: unknown) => { if (active) setAddError(reason instanceof Error ? reason.message : i18n.t('settings:documentParsing.result.conversationsLoadFailed')) })
     return () => { active = false }
   }, [allowAddImages])
   useEffect(() => {
     if (!allowAddImages || !target) return
     let active = true
     void window.goodbuddy.context.getDraft(target).then((value) => { if (active) setDraft(value) })
-      .catch((reason: unknown) => { if (active) setAddError(reason instanceof Error ? reason.message : '草稿读取失败') })
+      .catch((reason: unknown) => { if (active) setAddError(reason instanceof Error ? reason.message : i18n.t('settings:documentParsing.result.draftLoadFailed')) })
     const unsubscribe = window.goodbuddy.context.onDraftChanged((conversationId, items) => {
       if (conversationId === target) setDraft(items)
     })
@@ -117,7 +122,7 @@ export function DocumentResultPreview({ resultId, allowAddImages = false, conver
     let active = true
     void window.goodbuddy.documentParsing!.getResult(resultId).then(
       (value) => { if (active) { setResult(value); setError('') } },
-      (reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : '解析结果读取失败') }
+      (reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : i18n.t('settings:documentParsing.result.loadFailed')) }
     )
     return () => { active = false }
   }, [resultId, retry])
@@ -128,73 +133,73 @@ export function DocumentResultPreview({ resultId, allowAddImages = false, conver
     target?.focus()
     focusTarget.current = undefined
   }, [tab])
-  if (error) return <div role="alert"><p>{error}</p><button type="button" className="secondary-button" onClick={() => setRetry((value) => value + 1)}>重新读取</button></div>
-  if (!result) return <p role="status">正在读取解析结果</p>
+  if (error) return <div role="alert"><p>{error}</p><button type="button" className="secondary-button" onClick={() => setRetry((value) => value + 1)}>{t('documentParsing.result.reload')}</button></div>
+  if (!result) return <p role="status">{t('documentParsing.result.loading')}</p>
   return <div className="document-result-preview">
-    <div className="document-result-actions"><strong>{({ complete: '解析完成', partial: '部分解析', 'images-only': '仅图片，无可发送正文' })[result.completeness]}</strong>
+    <div className="document-result-actions"><strong>{t(`documentParsing.result.completeness.${result.completeness}`)}</strong>
       {showOpenOriginal && <button type="button" className="secondary-button" onClick={() => {
         setActionError('')
-        void window.goodbuddy.documentParsing!.openResultOriginal(result.id).catch((reason: unknown) => setActionError(reason instanceof Error ? reason.message : '原文件不可用'))
-      }}>打开原文件</button>}</div>
+        void window.goodbuddy.documentParsing!.openResultOriginal(result.id).catch((reason: unknown) => setActionError(reason instanceof Error ? reason.message : t('documentParsing.result.originalUnavailable')))
+      }}>{t('documentParsing.result.openOriginal')}</button>}</div>
     {actionError && <p role="alert">{actionError}</p>}
-    <PageTabs ariaLabel="解析结果" idPrefix={prefix} variant="segmented" value={tab} onChange={setTab}
-      tabs={[{ id: 'text', label: '正文' }, { id: 'images', label: `图片（${result.images.length}）` }, { id: 'details', label: '详情' }]} />
+    <PageTabs ariaLabel={t('documentParsing.result.tabsLabel')} idPrefix={prefix} variant="segmented" value={tab} onChange={setTab}
+      tabs={[{ id: 'text', label: t('documentParsing.result.textTab') }, { id: 'images', label: t('documentParsing.result.imagesTab', { total: result.images.length }) }, { id: 'details', label: t('documentParsing.result.detailsTab') }]} />
     <section className="document-result-panel" role="tabpanel" id={`${prefix}-panel-${tab}`} aria-labelledby={`${prefix}-tab-${tab}`}>
       {tab === 'text' && result.sections.map((section, index) => <article key={index}>
         <h3 tabIndex={-1} id={`${prefix}-section-${index}`}>{section.locator}</h3>
         <SectionContent content={section.content} result={result} onImage={showImage} />
       </article>)}
-      {tab === 'images' && <><p>已保存 {result.images.length} 张 · 未保存 {result.missingImages.length} 张</p>
-        {!result.images.length && <p>此结果没有提取图片；原生解析器可能只提取文字。</p>}
+      {tab === 'images' && <><p>{t('documentParsing.result.imageCounts', { saved: result.images.length, missing: result.missingImages.length })}</p>
+        {!result.images.length && <p>{t('documentParsing.result.noImages')}</p>}
         <div className="document-result-images">{result.images.map((image, index) => <article key={image.id}>
-          <h3 tabIndex={-1} id={`${prefix}-image-${image.id}`}>{image.locator ?? `${result.sourceFormat === '.pptx' ? '幻灯片' : '页'} ${image.pageNumber} · 图片 ${index + 1}`}</h3>
-          <ResultImage resultId={result.id} image={image} label={image.locator ?? `${result.sourceFormat === '.pptx' ? '幻灯片' : '页'} ${image.pageNumber} · 图片 ${index + 1}`} onLocate={() => { focusTarget.current = `${prefix}-section-${imageSections.get(image.id) ?? 0}`; setTab('text') }} />
-          {allowAddImages && (attached.has(image.id) ? <span>已在此会话草稿 <button type="button" className="secondary-button" disabled={adding} onClick={() => {
+          <h3 tabIndex={-1} id={`${prefix}-image-${image.id}`}>{image.locator ?? t(result.sourceFormat === '.pptx' ? 'documentParsing.result.slideImageTitle' : 'documentParsing.result.pageImageTitle', { page: image.pageNumber, index: index + 1 })}</h3>
+          <ResultImage resultId={result.id} image={image} label={image.locator ?? t(result.sourceFormat === '.pptx' ? 'documentParsing.result.slideImageTitle' : 'documentParsing.result.pageImageTitle', { page: image.pageNumber, index: index + 1 })} onLocate={() => { focusTarget.current = `${prefix}-section-${imageSections.get(image.id) ?? 0}`; setTab('text') }} />
+          {allowAddImages && (attached.has(image.id) ? <span>{t('documentParsing.result.inDraft')} <button type="button" className="secondary-button" disabled={adding} onClick={() => {
             const existing = draft.find((item) => item.provenance?.resultId === resultId && item.provenance.imageId === image.id)!
             const next = draft.filter((item) => item.id !== existing.id)
             setAdding(true)
             void window.goodbuddy.context.saveDraft(target, next.map((item) => item.id)).then(async () => {
               await window.goodbuddy.context.remove(existing.id); setDraft(next)
-            }).catch((reason: unknown) => setAddError(reason instanceof Error ? reason.message : '移除失败')).finally(() => setAdding(false))
-          }}>从草稿移除</button></span> : <label>
+            }).catch((reason: unknown) => setAddError(reason instanceof Error ? reason.message : t('documentParsing.result.removeFailed'))).finally(() => setAdding(false))
+          }}>{t('documentParsing.result.removeFromDraft')}</button></span> : <label>
             <input type="checkbox" checked={selection.includes(image.id)} disabled={adding}
               onChange={(event) => setSelection((current) => event.target.checked ? [...current, image.id] : current.filter((id) => id !== image.id))} />
-            选择 {result.fileName} 第 {image.pageNumber} 页图片
+            {t('documentParsing.result.selectImage', { file: result.fileName, page: image.pageNumber })}
           </label>)}
         </article>)}{result.missingImages.map((image, index) => <article className="settings-warning" key={`missing-${index}`}>
-          <h3>第 {image.pageNumber} 页图片未保存</h3><p>{image.reason}</p>
+          <h3>{t('documentParsing.result.imageNotSaved', { page: image.pageNumber })}</h3><p>{image.reason}</p>
         </article>)}</div></>}
       {tab === 'details' && <>
-        <dl><dt>解析时间</dt><dd>{new Date(result.parsedAt).toLocaleString()}</dd>
-          <dt>耗时</dt><dd>{(result.durationMs / 1000).toFixed(1)} 秒</dd>
-          <dt>置信度</dt><dd>{result.sections.some((section) => section.confidence !== undefined) ? result.sections.map((section) => `${section.locator}: ${section.confidence ?? '未提供'}`).join('；') : '未提供'}</dd>
-          <dt>跨页整理</dt><dd>{result.restructure ? result.restructure.changed ? '返回变化；请核对来源映射警告' : '未观察到变化' : '未请求'}</dd></dl>
-        <p>以下为解析时保存的配置。省略的高级项使用服务默认，实际值未提供。</p>
+        <dl><dt>{t('documentParsing.result.parsedAt')}</dt><dd>{new Date(result.parsedAt).toLocaleString()}</dd>
+          <dt>{t('documentParsing.result.duration')}</dt><dd>{t('documentParsing.result.seconds', { value: (result.durationMs / 1000).toFixed(1) })}</dd>
+          <dt>{t('documentParsing.result.confidence')}</dt><dd>{result.sections.some((section) => section.confidence !== undefined) ? result.sections.map((section) => t('documentParsing.result.confidenceItem', { locator: section.locator, value: section.confidence ?? t('documentParsing.result.notProvided') })).join(t('documentParsing.result.itemSeparator')) : t('documentParsing.result.notProvided')}</dd>
+          <dt>{t('documentParsing.result.restructure')}</dt><dd>{result.restructure ? result.restructure.changed ? t('documentParsing.result.restructureChanged') : t('documentParsing.result.restructureUnchanged') : t('documentParsing.result.restructureNotRequested')}</dd></dl>
+        <p>{t('documentParsing.result.savedSettingsNote')}</p>
         <pre>{JSON.stringify(result.settings, null, 2)}</pre>
       </>}
-      {result.warnings.length > 0 && <div className="settings-warning"><strong>解析警告</strong><ul>{result.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
+      {result.warnings.length > 0 && <div className="settings-warning"><strong>{t('documentParsing.result.parseWarnings')}</strong><ul>{result.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
     </section>
     {allowAddImages && (!imageActionsInImagesTab || tab === 'images') && <div className="document-result-actions">
-      <label className="field"><span>添加到会话草稿</span><select value={target} disabled={adding} onChange={(event) => { setTarget(event.target.value); setDraft([]) }}>
-        <option value="">选择会话后添加</option>{conversations.map((conversation) => <option key={conversation.id} value={conversation.id}>{conversation.projectId ? projectNames[conversation.projectId] ?? '项目不可用' : '未绑定项目'} · {conversation.title}</option>)}
+      <label className="field"><span>{t('documentParsing.result.addToDraft')}</span><select value={target} disabled={adding} onChange={(event) => { setTarget(event.target.value); setDraft([]) }}>
+        <option value="">{t('documentParsing.result.selectConversation')}</option>{conversations.map((conversation) => <option key={conversation.id} value={conversation.id}>{conversation.projectId ? projectNames[conversation.projectId] ?? t('documentParsing.result.projectUnavailable') : t('documentParsing.result.noProject')} · {conversation.title}</option>)}
       </select></label>
-      <span>待添加 {selection.filter((id) => !attached.has(id)).length} 张 · 已在草稿 {attached.size} 张</span>
+      <span>{t('documentParsing.result.selectionSummary', { pending: selection.filter((id) => !attached.has(id)).length, attached: attached.size })}</span>
       <button type="button" className="primary-button" disabled={adding || !target || !selection.some((id) => !attached.has(id))}
         onClick={() => {
           setAdding(true); setAddError('')
           void window.goodbuddy.context.addResultImages(target, resultId, selection.filter((id) => !attached.has(id))).then((value) => {
             setDraft(value); setSelection([])
-            conversationContext?.notify(`图片已添加到会话草稿：${conversations.find((item) => item.id === target)?.title ?? target}`)
-          }, (reason: unknown) => setAddError(reason instanceof Error ? reason.message : '添加图片失败')).finally(() => setAdding(false))
-        }}>{adding ? '正在添加' : '添加所选图片'}</button>
+            conversationContext?.notify(t('documentParsing.result.imagesAdded', { title: conversations.find((item) => item.id === target)?.title ?? target }))
+          }, (reason: unknown) => setAddError(reason instanceof Error ? reason.message : t('documentParsing.result.addImagesFailed'))).finally(() => setAdding(false))
+        }}>{adding ? t('documentParsing.result.adding') : t('documentParsing.result.addSelected')}</button>
       {conversationContext && <button type="button" className="secondary-button" disabled={adding} onClick={() => {
         setAdding(true); setAddError('')
         void conversationContext.create().then((conversation) => {
           setConversations((current) => current.some((item) => item.id === conversation.id) ? current : [...current, { ...conversation, updatedAt: Date.now(), messages: [] }])
           setTarget(conversation.id); setDraft([])
-        }).catch((reason: unknown) => setAddError(reason instanceof Error ? reason.message : '创建会话失败')).finally(() => setAdding(false))
-      }}>新建目标会话</button>}
-      {conversationContext && target && attached.size > 0 && <button type="button" className="secondary-button" onClick={() => conversationContext.navigate(target)}>前往会话</button>}
+        }).catch((reason: unknown) => setAddError(reason instanceof Error ? reason.message : t('documentParsing.result.createConversationFailed'))).finally(() => setAdding(false))
+      }}>{t('documentParsing.result.newTargetConversation')}</button>}
+      {conversationContext && target && attached.size > 0 && <button type="button" className="secondary-button" onClick={() => conversationContext.navigate(target)}>{t('documentParsing.result.goToConversation')}</button>}
       {addError && <p role="alert">{addError}</p>}
     </div>}
   </div>

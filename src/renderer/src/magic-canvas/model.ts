@@ -1,5 +1,6 @@
 import type { MagicNoteCanvasContent } from '../../../shared/magic-notes-contracts'
 import { copyNoteValue } from '../../../shared/magic-note-media'
+import i18n from '../i18n'
 export type { MagicNoteCanvasContent } from '../../../shared/magic-notes-contracts'
 export type CanvasFlow = NonNullable<MagicNoteCanvasContent['flow']>
 export type CanvasAsset = MagicNoteCanvasContent['assets'][number]
@@ -43,7 +44,7 @@ export function toCoreContent(content: MagicNoteCanvasContent): CoreContent {
         if (object.canvasKind !== 'image') return structuredClone(object)
         const asset = content.assets.find((item) => item.id === object.assetId)
         if (!asset && typeof object.src === 'string') return structuredClone(object)
-        if (!asset) throw new Error(`图片资源不可用：${String(object.assetId)}`)
+        if (!asset) throw new Error(i18n.t('magicNotes:canvas.imageAssetUnavailable', { id: String(object.assetId) }))
         const rest = { ...object }
         delete rest.assetId
         return { ...rest, src: asset.dataUrl }
@@ -67,7 +68,7 @@ export function fromCoreContent(core: CoreContent, assets: CanvasAsset[], pdfTex
         if (object.canvasKind !== 'image' || typeof object.src !== 'string') return structuredClone(object)
         let asset = assets.find((item) => item.dataUrl === object.src)
         if (!asset) {
-          asset = { id: crypto.randomUUID(), name: '画布图片', mimeType: object.src.slice(5, object.src.indexOf(';')), dataUrl: object.src }
+          asset = { id: crypto.randomUUID(), name: i18n.t('magicNotes:canvas.imageAssetName'), mimeType: object.src.slice(5, object.src.indexOf(';')), dataUrl: object.src }
           assets.push(asset)
         }
         used.add(asset.id)

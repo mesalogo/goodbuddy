@@ -593,9 +593,9 @@ export function DocumentParsingSettingsSection({
           {!managingModels && <button type="button" className="secondary-button" ref={testButtonRef} disabled={saving || testing || settingsDirty}
             aria-describedby={settingsDirty ? 'document-parsing-unsaved-notice' : undefined}
             aria-haspopup="menu" aria-expanded={testMenuOpen} onClick={() => setTestMenuOpen((open) => !open)}>
-            <FileSearch aria-hidden="true" size={14} />{testing ? '正在测试解析' : '测试解析'}
+            <FileSearch aria-hidden="true" size={14} />{testing ? t('documentParsing.test.running') : t('documentParsing.test.run')}
           </button>}
-          {testMenuOpen && <AnchoredMenu anchorRef={testButtonRef} id="document-test-menu" label="选择测试场景" onClose={() => setTestMenuOpen(false)}>
+          {testMenuOpen && <AnchoredMenu anchorRef={testButtonRef} id="document-test-menu" label={t('documentParsing.test.menuLabel')} onClose={() => setTestMenuOpen(false)}>
             <button type="button" role="menuitem" onClick={() => { setTestMenuOpen(false); void testParsing('chat-attachment') }}>{t('documentParsing.workflows.testChat')}</button>
             <button type="button" role="menuitem" onClick={() => { setTestMenuOpen(false); void testParsing('knowledge-index') }}>{t('documentParsing.workflows.testKnowledge')}</button>
           </AnchoredMenu>}
@@ -605,9 +605,9 @@ export function DocumentParsingSettingsSection({
         error={error}
       />}
       <SettingsWarningList warnings={snapshot.warnings} />
-      {testing && <div role="status" aria-live="polite"><span>正在解析测试文件</span><button type="button" className="secondary-button" onClick={() => {
+      {testing && <div role="status" aria-live="polite"><span>{t('documentParsing.test.fileRunning')}</span><button type="button" className="secondary-button" onClick={() => {
         if (testOperation.current) void window.goodbuddy.documentParsing!.cancelTest(testOperation.current)
-      }}>取消解析</button></div>}
+      }}>{t('documentParsing.test.cancel')}</button></div>}
 
       {!managingModels && <>
       <section
@@ -631,9 +631,9 @@ export function DocumentParsingSettingsSection({
           />
           {snapshot.settings.ocrProvider === 'paddleocr-vl' ? <StatusRow
             available={Boolean(snapshot.settings.httpOcr?.baseUrl)}
-            statusText={snapshot.settings.httpOcr?.baseUrl ? '已配置' : '未配置'}
-            label="HTTP PaddleOCR-VL"
-            detail="远程 OCR；解析能力请使用真实文件测试，与本地模型安装状态无关。"
+            statusText={snapshot.settings.httpOcr?.baseUrl ? t('documentParsing.httpStatus.configured') : t('documentParsing.httpStatus.notConfigured')}
+            label={t('documentParsing.httpOcr.title')}
+            detail={t('documentParsing.httpStatus.detail')}
           /> : <StatusRow
             available={snapshot.status.localOcr.available}
             detail={t(

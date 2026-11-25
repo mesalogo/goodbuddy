@@ -18,6 +18,9 @@ export const magicNotes = {
     savedAnalysisFailed: '记录已保存，但自动分析失败：{{error}}。可稍后重新分析。',
     entryType: '新记录类型', text: '文字', canvas: '画布', edit: '展开编辑画布',
     analyzeDraft: '分析画布草稿', notReady: '画布尚未加载，请稍后重试',
+    notLoaded: '画布尚未加载', loadFailed: '画布加载失败',
+    pdfAssetUnavailable: 'PDF 底版资源不可用', imageAssetUnavailable: '图片资源不可用：{{id}}',
+    imageAssetName: '画布图片', editorLabel: '分页画布编辑器',
     discardDescription: '切换后，当前未保存的文字、画布和附件将被丢弃。',
     inputMode: { text: '仅文字分析', images: '图像分析', 'canvas-images': '画布图像分析', 'text-fallback': '仅文字分析（未使用画布图像）' }
   },

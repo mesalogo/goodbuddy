@@ -1,4 +1,5 @@
 import { hasUnsavedWorkspaceChanges } from './workspace-unsaved-changes'
+import i18n from './i18n'
 
 type RestartReadiness = {
   ready: boolean
@@ -9,12 +10,12 @@ type RestartReadiness = {
 }
 
 export function assertDesktopUpdateRestartReady(input: RestartReadiness): void {
-  if (!input.ready) throw new Error('会话尚未加载完成，请稍后重启更新')
+  if (!input.ready) throw new Error(i18n.t('settingsSections:updates.errors.restartNotReady'))
   if (input.activeRequests || input.knowledgeBusy || input.taskStatuses.some(status => ['queued', 'running', 'waiting_approval'].includes(status))) {
-    throw new Error('仍有任务正在进行，请完成后重启更新')
+    throw new Error(i18n.t('settingsSections:updates.errors.restartBusy'))
   }
   if (input.hasComposerDrafts || hasUnsavedWorkspaceChanges() || !window.dispatchEvent(new Event('beforeunload', { cancelable: true }))) {
-    throw new Error('仍有未保存的编辑或输入草稿，请先保存或处理后再重启更新')
+    throw new Error(i18n.t('settingsSections:updates.errors.restartUnsaved'))
   }
 }
 

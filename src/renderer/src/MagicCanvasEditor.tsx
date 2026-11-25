@@ -1,4 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useLayoutEffect } from 'react'
+import { useTranslation } from 'react-i18next'
+import i18n from './i18n'
 import { mountCanvasNote, type CanvasController } from './magic-canvas/canvas-note.mjs'
 import { createEmptyCanvasContent, fromCoreContent, toCoreContent, type MagicNoteCanvasContent } from './magic-canvas/model'
 import { readFileAsDataUrl } from './file-data-url'
@@ -25,6 +27,7 @@ export type MagicCanvasEditorProps = {
 }
 
 export const MagicCanvasEditor = forwardRef<MagicCanvasEditorHandle, MagicCanvasEditorProps>(function MagicCanvasEditor({ initialContent, onChange, onReady, onError, disabled = false }, ref) {
+  const { t } = useTranslation('magicNotes')
   const host = useRef<HTMLDivElement>(null)
   const controller = useRef<CanvasController | null>(null)
   const initial = useRef(initialContent)
@@ -39,23 +42,23 @@ export const MagicCanvasEditor = forwardRef<MagicCanvasEditorHandle, MagicCanvas
   useImperativeHandle(ref, () => ({
     async flush() {
       await ready.current
-      if (!controller.current || !serialize.current) throw new Error('画布尚未加载')
+      if (!controller.current || !serialize.current) throw new Error(i18n.t('magicNotes:canvas.notLoaded'))
       return serialize.current(await controller.current.flush())
     },
     focus() { controller.current?.focus() },
     async activePage() {
       await ready.current
-      if (!controller.current) throw new Error('画布尚未加载')
+      if (!controller.current) throw new Error(i18n.t('magicNotes:canvas.notLoaded'))
       return controller.current.activePage()
     },
     async pageElement() {
       await ready.current
-      if (!controller.current) throw new Error('画布尚未加载')
+      if (!controller.current) throw new Error(i18n.t('magicNotes:canvas.notLoaded'))
       return controller.current.pageElement()
     },
     async capturePages(pageLimit, includeImages, pageStart) {
       await ready.current
-      if (!controller.current) throw new Error('画布尚未加载')
+      if (!controller.current) throw new Error(i18n.t('magicNotes:canvas.notLoaded'))
       return controller.current.capturePages({ pageLimit, includeImages, pageStart })
     }
   }), [])
@@ -109,7 +112,7 @@ export const MagicCanvasEditor = forwardRef<MagicCanvasEditorHandle, MagicCanvas
         pickPdf,
         async readPdf({ assetId }) {
           const asset = assets.find((candidate) => candidate.id === assetId)
-          if (!asset) throw new Error('PDF 底版资源不可用')
+          if (!asset) throw new Error(i18n.t('magicNotes:canvas.pdfAssetUnavailable'))
           const binary = atob(asset.dataUrl.slice(asset.dataUrl.indexOf(',') + 1))
           return Uint8Array.from(binary, (character) => character.charCodeAt(0))
         },
@@ -138,10 +141,10 @@ export const MagicCanvasEditor = forwardRef<MagicCanvasEditorHandle, MagicCanvas
         instance.setDisabled(disabledRef.current)
       })
       void ready.current.catch((error: unknown) => {
-        if (!abort.signal.aborted) callbacks.current.onError(error instanceof Error ? error.message : '画布加载失败')
+        if (!abort.signal.aborted) callbacks.current.onError(error instanceof Error ? error.message : i18n.t('magicNotes:canvas.loadFailed'))
       })
     } catch (error) {
-      callbacks.current.onError(error instanceof Error ? error.message : '画布加载失败')
+      callbacks.current.onError(error instanceof Error ? error.message : i18n.t('magicNotes:canvas.loadFailed'))
       return () => abort.abort()
     }
     return () => {
@@ -155,5 +158,5 @@ export const MagicCanvasEditor = forwardRef<MagicCanvasEditorHandle, MagicCanvas
 
   useEffect(() => { if (initialized.current) controller.current?.setDisabled(disabled) }, [disabled])
 
-  return <div className="magic-canvas-editor" ref={host} aria-label="分页画布编辑器" />
+  return <div className="magic-canvas-editor" ref={host} aria-label={t('canvas.editorLabel')} />
 })

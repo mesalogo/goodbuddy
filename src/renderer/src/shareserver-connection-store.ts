@@ -1,4 +1,5 @@
 import { officeOriginSchema, type OfficeCapabilities } from '../../shared/office-contracts'
+import i18n from './i18n'
 
 type State = { serverUrl: string; checking: boolean; capabilities?: OfficeCapabilities; error?: string }
 // Device sharing owns the connection. Never reuse the obsolete Office-only override.
@@ -23,7 +24,7 @@ export const shareServerConnection = {
   },
   async resolve(): Promise<string> {
     const value = await shareServerConnection.load()
-    if (!value) throw new Error('请先在“设备共享”中保存具备 Office 能力的 ShareServer 地址。')
+    if (!value) throw new Error(i18n.t('workspace:office.serverRequired'))
     const origin = new URL(officeOriginSchema.parse(value)).origin
     const capabilities = await window.goodbuddy.office!.capabilities({ serverUrl: origin })
     const serverUrl = capabilities.webUrl ?? origin
@@ -38,7 +39,7 @@ export const shareServerConnection = {
       // An explicit connection check must observe the server's current state.
       const capabilities = await window.goodbuddy.office!.capabilities({ serverUrl, fresh: true })
       const sharing = window.goodbuddy.sharing
-      if (!sharing) throw new Error('请更新 GoodBuddy 后配置 ShareServer 连接')
+      if (!sharing) throw new Error(i18n.t('workspace:office.updateRequiredForSharing'))
       const settings = await sharing.getSettings()
       await sharing.saveSettings({ serverUrl, name: settings.name })
       update({ serverUrl, capabilities })

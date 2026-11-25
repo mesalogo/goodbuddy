@@ -816,7 +816,7 @@ export function TerminalPanel({
               disabled={!hasMeasuredSize}
               onClick={() => void reopenSession()}
             >
-              重试
+              {t('sidebar.terminal.retry')}
             </button>
           ) : null}
         </div>

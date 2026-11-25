@@ -1,25 +1,28 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { KeyRound } from 'lucide-react'
 import { InlineHelp } from './InlineHelp'
 import { defaultHttpOcrSettings } from '../../shared/document-parsing-contracts'
 
 type HttpSettings = typeof defaultHttpOcrSettings
-const booleanOptions = {
-  useDocOrientationClassify: '方向分类', useDocUnwarping: '页面去扭曲',
-  useLayoutDetection: '版面检测', useChartRecognition: '图表识别',
-  useSealRecognition: '印章识别', useOcrForImageBlock: '图片块文字识别',
-  prettifyMarkdown: '美化 Markdown', showFormulaNumber: '显示公式编号',
-  formatBlockContent: '格式化块内容', mergeLayoutBlocks: '合并版面块', layoutNms: '版面非极大值抑制'
-} as const
-const labels: Record<string, string> = {
-  header: '页眉文字', header_image: '页眉图片', footer: '页脚文字',
-  footer_image: '页脚图片', number: '页码', footnote: '脚注', aside_text: '侧栏文字'
+const booleanOptionKeys = [
+  'useDocOrientationClassify', 'useDocUnwarping', 'useLayoutDetection', 'useChartRecognition',
+  'useSealRecognition', 'useOcrForImageBlock', 'prettifyMarkdown', 'showFormulaNumber',
+  'formatBlockContent', 'mergeLayoutBlocks', 'layoutNms'
+] as const
+const contentLabelKeys = [
+  'header', 'header_image', 'footer', 'footer_image', 'number', 'footnote', 'aside_text'
+] as const
+const numericOptionKeys = [
+  'layoutThreshold', 'layoutUnclipRatio', 'repetitionPenalty', 'temperature', 'topP',
+  'minPixels', 'maxPixels', 'maxNewTokens'
+] as const
+const textOptionKeys = ['promptLabel', 'layoutMergeBboxesMode'] as const
+const restructureOptionKeys = ['mergeTables', 'relevelTitles'] as const
+
+function isContentLabel(key: string): key is (typeof contentLabelKeys)[number] {
+  return (contentLabelKeys as readonly string[]).includes(key)
 }
-const numericOptions = {
-  layoutThreshold: '版面检测阈值', layoutUnclipRatio: '版面扩展比例',
-  repetitionPenalty: '重复惩罚', temperature: '采样温度', topP: 'Top P',
-  minPixels: '最小像素数', maxPixels: '最大像素数', maxNewTokens: '最大输出 Token'
-} as const
 
 export function HttpOcrSettings({ value, onChange, dirty, credentialConfigured, apiKey, onApiKey,
   clearApiKey, onClearApiKey }: {
@@ -27,101 +30,103 @@ export function HttpOcrSettings({ value, onChange, dirty, credentialConfigured, 
   credentialConfigured: boolean; apiKey: string; onApiKey: (value: string) => void
   clearApiKey: boolean; onClearApiKey: (value: boolean) => void
 }): React.JSX.Element {
+  const { t } = useTranslation('settings')
   const [checking, setChecking] = useState(false)
   const [check, setCheck] = useState('')
   const [error, setError] = useState('')
+  const title = t('documentParsing.httpOcr.title')
   return <section className="settings-section http-ocr-settings">
     <div className="settings-section__title">
       <KeyRound aria-hidden="true" size={17} />
       <span className="inline-help-label">
-        <strong>HTTP PaddleOCR-VL</strong>
-        <InlineHelp label="HTTP PaddleOCR-VL">需要 OCR 的页面或图片将发送到此服务；快速文本模式不自动上传，主动提取图片文字仍使用此服务。</InlineHelp>
+        <strong>{title}</strong>
+        <InlineHelp label={title}>{t('documentParsing.httpOcr.help')}</InlineHelp>
       </span>
     </div>
     <div className="runtime-note model-service-form">
-    <label className="field"><span>服务地址</span><input type="url" value={value.baseUrl}
+    <label className="field"><span>{t('documentParsing.httpOcr.serviceUrl')}</span><input type="url" value={value.baseUrl}
       onChange={(event) => onChange({ ...value, baseUrl: event.target.value })} /></label>
-    <label className="field"><span>认证方式</span><select value={value.authentication}
+    <label className="field"><span>{t('documentParsing.httpOcr.authentication')}</span><select value={value.authentication}
       onChange={(event) => onChange({ ...value, authentication: event.target.value as HttpSettings['authentication'] })}>
-      <option value="none">无需认证</option><option value="bearer">Bearer API Key</option>
+      <option value="none">{t('documentParsing.httpOcr.authNone')}</option><option value="bearer">{t('documentParsing.httpOcr.authBearer')}</option>
     </select></label>
     {value.authentication === 'bearer' && <label className="field"><span>API Key</span>
       <input type="password" autoComplete="off" value={apiKey} onChange={(event) => onApiKey(event.target.value)} />
-      <small>{credentialConfigured ? '已保存凭据；留空保持原值' : '未配置凭据'}</small>
+      <small>{credentialConfigured ? t('documentParsing.httpOcr.credentialSaved') : t('documentParsing.httpOcr.credentialMissing')}</small>
     </label>}
     {credentialConfigured && <label className="inline-help-label"><input type="checkbox" checked={clearApiKey}
-      onChange={(event) => onClearApiKey(event.target.checked)} />保存时清除凭据</label>}
+      onChange={(event) => onClearApiKey(event.target.checked)} />{t('documentParsing.httpOcr.clearOnSave')}</label>}
     <div className="update-settings__actions">
     <button type="button" className="secondary-button" disabled={dirty || checking}
       aria-describedby={dirty ? 'document-parsing-unsaved-notice' : undefined}
       onClick={() => {
         setChecking(true); setError(''); setCheck('')
         void window.goodbuddy.documentParsing!.checkHttp().then((result) => {
-          setCheck(`服务可连接，解析能力需用文件测试。检查时间：${new Date(result.checkedAt).toLocaleString()}`)
-        }, (reason: unknown) => { setError(reason instanceof Error ? reason.message : '连接检查失败') })
+          setCheck(t('documentParsing.httpOcr.checkOk', { time: new Date(result.checkedAt).toLocaleString() }))
+        }, (reason: unknown) => { setError(reason instanceof Error ? reason.message : t('documentParsing.httpOcr.checkFailed')) })
           .finally(() => setChecking(false))
-      }}>{checking ? '正在检查连接' : '检查连接'}</button>
+      }}>{checking ? t('documentParsing.httpOcr.checking') : t('documentParsing.httpOcr.check')}</button>
     </div>
     {check && <p className="settings-notice" role="status">{check}</p>}{error && <p className="settings-warning" role="alert">{error}</p>}
-    <details className="document-parsing-subsection"><summary>HTTP 高级设置</summary>
-      <p>高级能力取决于服务部署；接口声明不代表模型已安装或效果已经实测。</p>
+    <details className="document-parsing-subsection"><summary>{t('documentParsing.httpOcr.advancedTitle')}</summary>
+      <p>{t('documentParsing.httpOcr.advancedNote')}</p>
       <div className="document-parsing-control-header">
-        <strong>内容过滤</strong>
+        <strong>{t('documentParsing.httpOcr.contentFilter')}</strong>
         <button type="button" className="secondary-button" onClick={() => onChange({
           ...value, filterMode: defaultHttpOcrSettings.filterMode, ignoredLabels: []
-        })}>恢复默认</button>
+        })}>{t('documentParsing.httpOcr.restoreDefaults')}</button>
       </div>
-      <small>直接选择需要保留的内容；修改后将使用自定义过滤设置。</small>
+      <small>{t('documentParsing.httpOcr.filterHelp')}</small>
       <div className="document-parsing-filter-list">
-        {[...new Set([...Object.keys(labels), ...value.ignoredLabels])].map((key) => <label className="toggle-row" key={key}>
-          <span>保留{labels[key] ?? key}</span><input type="checkbox" role="switch" checked={!value.ignoredLabels.includes(key)}
+        {[...new Set([...contentLabelKeys, ...value.ignoredLabels])].map((key) => <label className="toggle-row" key={key}>
+          <span>{t('documentParsing.httpOcr.keepLabel', { label: isContentLabel(key) ? t(`documentParsing.httpOcr.contentLabels.${key}`) : key })}</span><input type="checkbox" role="switch" checked={!value.ignoredLabels.includes(key)}
             onChange={(event) => onChange({ ...value, filterMode: 'custom', ignoredLabels: event.target.checked
               ? value.ignoredLabels.filter((label) => label !== key) : [...value.ignoredLabels, key] })} />
         </label>)}
       </div>
       <div className="document-parsing-grid">
-        {Object.entries(booleanOptions).map(([key, label]) => <label className="field" key={key}><span>{label}</span>
-          <select value={String(value.options[key as keyof typeof booleanOptions] ?? 'default')}
+        {booleanOptionKeys.map((key) => <label className="field" key={key}><span>{t(`documentParsing.httpOcr.booleanOptions.${key}`)}</span>
+          <select value={String(value.options[key] ?? 'default')}
             onChange={(event) => {
               const options = { ...value.options }
-              if (event.target.value === 'default') delete options[key as keyof typeof booleanOptions]
-              else options[key as keyof typeof booleanOptions] = event.target.value === 'true'
+              if (event.target.value === 'default') delete options[key]
+              else options[key] = event.target.value === 'true'
               onChange({ ...value, options })
-            }}><option value="default">服务默认</option><option value="true">开启</option><option value="false">关闭</option></select>
+            }}><option value="default">{t('documentParsing.httpOcr.optionDefault')}</option><option value="true">{t('documentParsing.httpOcr.optionOn')}</option><option value="false">{t('documentParsing.httpOcr.optionOff')}</option></select>
         </label>)}
-        <label className="field"><span>HTTP 请求超时（秒）</span><input type="number" min={10} max={300} value={value.timeoutSeconds}
+        <label className="field"><span>{t('documentParsing.httpOcr.timeout')}</span><input type="number" min={10} max={300} value={value.timeoutSeconds}
           onChange={(event) => onChange({ ...value, timeoutSeconds: Number(event.target.value) })} /></label>
       </div>
-      <details className="document-parsing-subsection"><summary>版面与生成参数</summary><p>留空使用服务默认；接口字段的实际边界与效果需用当前部署测试。</p>
+      <details className="document-parsing-subsection"><summary>{t('documentParsing.httpOcr.generationTitle')}</summary><p>{t('documentParsing.httpOcr.generationNote')}</p>
         <div className="document-parsing-grid">
-          {Object.entries(numericOptions).map(([key, label]) => <label className="field" key={key}><span>{label}</span>
-            <input type="number" step="any" value={value.options[key as keyof typeof numericOptions] ?? ''} onChange={(event) => {
+          {numericOptionKeys.map((key) => <label className="field" key={key}><span>{t(`documentParsing.httpOcr.numericOptions.${key}`)}</span>
+            <input type="number" step="any" value={value.options[key] ?? ''} onChange={(event) => {
               const options = { ...value.options }
-              if (event.target.value === '') delete options[key as keyof typeof numericOptions]
-              else options[key as keyof typeof numericOptions] = Number(event.target.value)
+              if (event.target.value === '') delete options[key]
+              else options[key] = Number(event.target.value)
               onChange({ ...value, options })
             }} />
           </label>)}
-          {(['promptLabel', 'layoutMergeBboxesMode'] as const).map((key) => <label className="field" key={key}><span>{key === 'promptLabel' ? '提示标签' : '边框合并模式'}</span>
+          {textOptionKeys.map((key) => <label className="field" key={key}><span>{t(`documentParsing.httpOcr.textOptions.${key}`)}</span>
             <input value={value.options[key] ?? ''} onChange={(event) => {
               const options = { ...value.options }
               if (event.target.value) options[key] = event.target.value
               else delete options[key]
               onChange({ ...value, options })
             }} /></label>)}
-          <label className="field"><span>版面形状</span><select value={value.options.layoutShapeMode ?? ''} onChange={(event) => {
+          <label className="field"><span>{t('documentParsing.httpOcr.layoutShape')}</span><select value={value.options.layoutShapeMode ?? ''} onChange={(event) => {
             const options = { ...value.options }
             if (event.target.value) options.layoutShapeMode = event.target.value as NonNullable<typeof options.layoutShapeMode>
             else delete options.layoutShapeMode
             onChange({ ...value, options })
-          }}><option value="">服务默认</option>{['rect', 'quad', 'poly', 'auto'].map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select></label>
+          }}><option value="">{t('documentParsing.httpOcr.optionDefault')}</option>{['rect', 'quad', 'poly', 'auto'].map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select></label>
         </div>
       </details>
-      {(['mergeTables', 'relevelTitles'] as const).map((key) => <label className="toggle-row" key={key}>
-        <span>{key === 'mergeTables' ? '合并跨页表格' : '调整标题层级'}</span>
+      {restructureOptionKeys.map((key) => <label className="toggle-row" key={key}>
+        <span>{t(`documentParsing.httpOcr.restructureOptions.${key}`)}</span>
         <input type="checkbox" role="switch" checked={value[key]} onChange={(event) => onChange({ ...value, [key]: event.target.checked })} />
       </label>)}
-      <small>跨页整理会增加请求；当前部署尚未验证合并效果。来源无法映射时报告未完成并保留逐页结果。</small>
+      <small>{t('documentParsing.httpOcr.restructureNote')}</small>
     </details>
     </div>
   </section>

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AttachmentActions, AttachmentStatus } from './AttachmentActions'
 import { AttachmentResultButton } from './AttachmentResultButton'
 import type { ContextAttachment } from '../../shared/contracts'
+import { changeUiLocale } from './i18n'
 
 vi.mock('./DocumentResultPreview', () => ({ DocumentResultPreview: () => <p>Saved result</p> }))
 
@@ -68,4 +69,23 @@ it('keeps queued attachments read-only and exposes no action for legacy attachme
   fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
   rerender(<AttachmentActions attachment={{ ...attachment, resourceId: undefined }} />)
   expect(screen.queryByRole('button')).not.toBeInTheDocument()
+})
+
+it('names the attachment actions in English when the UI language is English', async () => {
+  await changeUiLocale('en-US')
+  try {
+    render(<>
+      <AttachmentStatus attachment={attachment} />
+      <div className="attachment-actions">
+        <AttachmentResultButton resultId={attachment.resultId!} name={attachment.name} />
+        <AttachmentActions attachment={attachment} />
+      </div>
+    </>)
+    expect(screen.getByText('Parsed')).toBeVisible()
+    expect(screen.getByRole('button', { name: `View parse result: ${attachment.name}` })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: `More attachment actions: ${attachment.name}` })).toBeInTheDocument()
+  } finally {
+    cleanup()
+    await changeUiLocale('zh-CN')
+  }
 })

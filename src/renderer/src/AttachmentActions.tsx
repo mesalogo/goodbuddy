@@ -1,4 +1,5 @@
 import { useContext, useId, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Ellipsis } from 'lucide-react'
 import type { ContextAttachment } from '../../shared/contracts'
 import { AnchoredMenu } from './AnchoredMenu'
@@ -7,9 +8,10 @@ import { officeStore } from './office-store'
 import { isOfficeFile } from '../../shared/office-contracts'
 
 export function AttachmentStatus({ attachment }: { attachment: ContextAttachment }): React.JSX.Element {
+  const { t } = useTranslation('settings')
   return <>
-    {attachment.completeness && <small>{({ complete: '解析完成', partial: '部分解析，请查看警告', 'images-only': '仅图片，无可发送正文' })[attachment.completeness]}</small>}
-    {attachment.sendMode && <small>{attachment.sendMode === 'text' ? '仅发送提取文字，原图保留' : '图片输入'}</small>}
+    {attachment.completeness && <small>{t(`documentParsing.attachmentStatus.${attachment.completeness}`)}</small>}
+    {attachment.sendMode && <small>{attachment.sendMode === 'text' ? t('documentParsing.attachmentStatus.textMode') : t('documentParsing.attachmentStatus.imageMode')}</small>}
   </>
 }
 
@@ -17,6 +19,7 @@ export function AttachmentActions({ attachment, conversationId, onBusyChange, re
   attachment: ContextAttachment; conversationId?: string; onBusyChange?: (busy: boolean) => void; readOnly?: boolean
 }): React.JSX.Element {
   const target = useContext(DocumentConversationContext)
+  const { t } = useTranslation('settings')
   const [menu, setMenu] = useState(false)
   const [operation, setOperation] = useState('')
   const [error, setError] = useState('')
@@ -27,35 +30,36 @@ export function AttachmentActions({ attachment, conversationId, onBusyChange, re
   const run = (action: (operationId: string) => Promise<unknown>): void => {
     const operationId = crypto.randomUUID()
     setMenu(false); setError(''); setOperation(operationId); onBusyChange?.(true)
-    void action(operationId).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '附件操作失败'))
+    void action(operationId).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : t('documentParsing.attachmentActions.actionFailed')))
       .finally(() => { setOperation(''); onBusyChange?.(false) })
   }
+  const more = t('documentParsing.attachmentActions.more')
   return <>
-    <button type="button" className="icon-button attachment-action" title="更多附件操作" data-tooltip="更多附件操作" ref={anchor} aria-haspopup="menu" aria-expanded={menu} aria-controls={menu ? id : undefined}
-      aria-label={`更多附件操作：${attachment.name}`} disabled={Boolean(operation)} onClick={() => {
+    <button type="button" className="icon-button attachment-action" title={more} data-tooltip={more} ref={anchor} aria-haspopup="menu" aria-expanded={menu} aria-controls={menu ? id : undefined}
+      aria-label={t('documentParsing.attachmentActions.moreNamed', { name: attachment.name })} disabled={Boolean(operation)} onClick={() => {
         if (!menu && !readOnly) {
-          setProvider('正在读取已保存的解析来源')
-          void window.goodbuddy.documentParsing!.getSnapshot().then((snapshot) => setProvider(snapshot.settings.ocrProvider === 'paddleocr-vl' ? '解析来源：HTTP PaddleOCR-VL（远程服务）' : '解析来源：本地 OCR'), () => setProvider('来源读取失败；操作仍使用已保存的解析设置'))
+          setProvider(t('documentParsing.attachmentActions.readingSource'))
+          void window.goodbuddy.documentParsing!.getSnapshot().then((snapshot) => setProvider(snapshot.settings.ocrProvider === 'paddleocr-vl' ? t('documentParsing.attachmentActions.sourceHttp') : t('documentParsing.attachmentActions.sourceLocal')), () => setProvider(t('documentParsing.attachmentActions.sourceReadFailed')))
         }
         setMenu((value) => !value)
       }}><Ellipsis size={16} aria-hidden="true" /></button>
-    {menu && <AnchoredMenu anchorRef={anchor} id={id} label={`附件操作：${attachment.name}`} onClose={() => setMenu(false)}>
+    {menu && <AnchoredMenu anchorRef={anchor} id={id} label={t('documentParsing.attachmentActions.menuLabel', { name: attachment.name })} onClose={() => setMenu(false)}>
       {!readOnly && <small>{provider}</small>}
-      <button type="button" role="menuitem" onClick={() => run(() => window.goodbuddy.context.openOriginal(attachment.resourceId!))}>打开原文件：{attachment.originalName ?? attachment.name}</button>
+      <button type="button" role="menuitem" onClick={() => run(() => window.goodbuddy.context.openOriginal(attachment.resourceId!))}>{t('documentParsing.attachmentActions.openOriginal', { name: attachment.originalName ?? attachment.name })}</button>
       {isOfficeFile(attachment.originalName ?? attachment.name) && <button type="button" role="menuitem" onClick={() => {
         setMenu(false); officeStore.requestOpen({ kind: 'attachment', resourceId: attachment.resourceId! }, attachment.originalName ?? attachment.name)
-      }}>在文档页签中编辑</button>}
+      }}>{t('documentParsing.attachmentActions.editInDocumentTab')}</button>}
       {!readOnly && conversationId && <button type="button" role="menuitem" onClick={() => run((operationId) => window.goodbuddy.context.reparseDraft(conversationId, attachment.id, operationId))}>
-        {attachment.sendMode ? '提取图片文字' : '使用当前设置重新解析'}：{attachment.originalName ?? attachment.name}
+        {t(attachment.sendMode ? 'documentParsing.attachmentActions.extractText' : 'documentParsing.attachmentActions.reparse', { name: attachment.originalName ?? attachment.name })}
       </button>}
-      {!readOnly && conversationId && attachment.sendMode === 'text' && <button type="button" role="menuitem" onClick={() => run(() => window.goodbuddy.context.sendOriginal(conversationId, attachment.id))}>改为发送原图：{attachment.originalName}</button>}
+      {!readOnly && conversationId && attachment.sendMode === 'text' && <button type="button" role="menuitem" onClick={() => run(() => window.goodbuddy.context.sendOriginal(conversationId, attachment.id))}>{t('documentParsing.attachmentActions.sendOriginal', { name: attachment.originalName ?? '' })}</button>}
       {!readOnly && !conversationId && target?.activeId && <button type="button" role="menuitem" onClick={() => run(async (operationId) => {
         await window.goodbuddy.context.copyToDraft(target.activeId!, attachment.resourceId!, operationId)
-        target.notify('已按当前设置解析并添加到目标会话草稿')
-      })}>{attachment.sendMode ? '添加到当前草稿并提取文字' : '添加到当前草稿重新解析'}：{attachment.originalName ?? attachment.name}</button>}
-      {!readOnly && <button type="button" role="menuitem" onClick={() => { setMenu(false); void window.goodbuddy.localInference.openSettings('document-parsing') }}>前往文档解析设置</button>}
+        target.notify(t('documentParsing.attachmentActions.copiedToDraft'))
+      })}>{t(attachment.sendMode ? 'documentParsing.attachmentActions.copyAndExtract' : 'documentParsing.attachmentActions.copyAndReparse', { name: attachment.originalName ?? attachment.name })}</button>}
+      {!readOnly && <button type="button" role="menuitem" onClick={() => { setMenu(false); void window.goodbuddy.localInference.openSettings('document-parsing') }}>{t('documentParsing.attachmentActions.openSettings')}</button>}
     </AnchoredMenu>}
-    {operation && <span role="status">正在处理附件<button type="button" className="secondary-button" onClick={() => void window.goodbuddy.context.cancelParsing(operation)}>取消解析</button></span>}
+    {operation && <span role="status">{t('documentParsing.attachmentActions.processing')}<button type="button" className="secondary-button" onClick={() => void window.goodbuddy.context.cancelParsing(operation)}>{t('documentParsing.attachmentActions.cancelParsing')}</button></span>}
     {error && <span role="alert">{error}</span>}
   </>
 }

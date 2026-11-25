@@ -1724,7 +1724,7 @@ function App(): React.JSX.Element {
       if (!active || attachmentsRef.current.has(activeId) || !saved.length) return;
       attachmentsRef.current.set(activeId, saved);
       setAttachmentsByConversation((current) => ({ ...current, [activeId]: saved }));
-    }).catch((error: unknown) => notify({ tone: 'error', message: error instanceof Error ? error.message : '附件草稿读取失败' }));
+    }).catch((error: unknown) => notify({ tone: 'error', message: error instanceof Error ? error.message : tRef.current("notices.attachmentDraftReadFailed") }));
     return () => { active = false; };
   }, [activeId, conversationStore]);
   const updateAttachments = useCallback(
@@ -1738,13 +1738,13 @@ function App(): React.JSX.Element {
       attachmentSaveQueue.current = attachmentSaveQueue.current.catch(() => undefined).then(async () => {
         await conversationPersistence.idle();
         const owner = conversationStore.getState().find((conversation) => conversation.id === activeId);
-        if (!owner || owner.remote) throw new Error('附件目标会话不可编辑');
+        if (!owner || owner.remote) throw new Error(tRef.current("notices.attachmentTargetNotEditable"));
         if (next.length && !conversationPersistence.acknowledged().has(activeId)) {
           await window.goodbuddy.conversations.saveLocal([{ header: toLocalConversationHeader(owner), messages: [] }]);
         }
         await window.goodbuddy.context.saveDraft(activeId, next.map((attachment) => attachment.id));
       });
-      void attachmentSaveQueue.current.catch((error: unknown) => notify({ tone: 'error', message: error instanceof Error ? error.message : '附件草稿保存失败' }));
+      void attachmentSaveQueue.current.catch((error: unknown) => notify({ tone: 'error', message: error instanceof Error ? error.message : tRef.current("notices.attachmentDraftSaveFailed") }));
       if (next.length > 0) {
         attachmentsRef.current.set(activeId, next);
       } else {
@@ -3687,7 +3687,7 @@ function App(): React.JSX.Element {
       setProjects(value);
       const project = value.find(isOrdinaryLocalProject);
       if (!project) {
-        throw new Error("没有可用的本地项目");
+        throw new Error(tRef.current("notices.noLocalProject"));
       }
       setActiveProjectId(project.id);
       const initialConversation = persistedConversations.find(item => item.projectId === project.id);
@@ -5680,7 +5680,7 @@ function App(): React.JSX.Element {
       await conversationPersistence.idle();
       if (!conversationPersistence.acknowledged().has(conversationId)) {
         const owner = conversationStore.getState().find((conversation) => conversation.id === conversationId);
-        if (!owner || owner.remote) throw new Error('附件目标会话不可编辑');
+        if (!owner || owner.remote) throw new Error(tRef.current("notices.attachmentTargetNotEditable"));
         await window.goodbuddy.conversations.saveLocal([{ header: toLocalConversationHeader(owner), messages: owner.messages.map(toConversationMessage) }]);
       }
       const result = await action();
@@ -6830,7 +6830,7 @@ function App(): React.JSX.Element {
         (profile) => profile.id === runtimeSettings.roleSelectionModelProfileId,
       )?.name
     : runtimeSettings?.subagentSmartRoutingEnabled
-      ? "关键词"
+      ? t("composer.experts.keywordRouting")
       : undefined;
 
   const messageEdit = useMessageEdit({
@@ -7025,7 +7025,7 @@ function App(): React.JSX.Element {
             void window.goodbuddy.conversations.saveLocal([{ header: toLocalConversationHeader(conversation), messages: conversation.messages.map(toConversationMessage) }])
               .then(() => resolve({ id: conversation.id, title: conversation.title }), reject);
           } });
-          if (!created) reject(new Error('当前项目不能创建会话，请先选择普通项目'));
+          if (!created) reject(new Error(tRef.current("notices.projectCannotCreateConversation")));
         }),
         navigate: (id) => { setActiveId(id); setView('chat'); },
         notify: (message) => notify({ tone: 'success', message }),

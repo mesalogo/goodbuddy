@@ -91,6 +91,27 @@ export const app = {
       obsidian: '读取、搜索和管理本机 Obsidian 仓库中的笔记。'
     }
   },
+  localInference: {
+    title: '本机推理监控', close: '关闭本机推理监控', help: '每 5 秒刷新 · CPU 100% = 一个逻辑核心',
+    openSettings: '模型与连接设置', refresh: '刷新状态',
+    stale: '状态刷新失败；以下为上次成功读取的状态，操作已禁用。', loadFailed: '无法读取本机推理状态。', retry: '重试',
+    loading: '正在读取服务状态…', dismissError: '关闭提示',
+    servicesLabel: '本机推理服务', noServices: '暂无本机推理服务', documentParsingSettings: '文档解析设置',
+    states: {
+      idle: '未加载 / 按需运行', running: '运行中', starting: '启动中', stopping: '停止中', stopped: '已停止',
+      error: '异常', unavailable: '不可用', unknown: '未知', cancelling: '等待取消确认',
+      completed: '已完成', cancelled: '已取消', failed: '失败'
+    },
+    onDemandUnknown: '按需运行（状态未知）',
+    actions: { start: '启动服务', stop: '停止服务', restart: '重启服务', load: '加载模型', release: '释放模型' },
+    confirmTitle: '{{action}}：{{service}}',
+    confirmDescription: '此操作影响整个执行服务。被中断的任务不会在服务重新启动后自动重放。',
+    noActiveTasks: '当前没有已登记的活动任务。执行前将再次核对。',
+    keepRunning: '保留运行状态', working: '操作中…', confirm: '确认{{action}}',
+    apiUnavailable: '本机推理管理接口不可用，请重启应用后重试',
+    processResources: '服务进程 PID {{pid}} · CPU {{cpu}} · 工作集 {{memory}}',
+    cpuMemory: 'CPU / 内存：{{value}}', unavailableValue: '暂不可用'
+  },
   remoteHosts: {
     title: '主机管理',
     description: '接入 SSH 主机，安装远端执行环境，管理 Agent 离线包。本机配置的 Skills 和 MCP 不会应用到远程主机。',
@@ -397,7 +418,8 @@ export const app = {
       label: '附件',
       region: '消息附件',
       exportHeading: '附件：',
-      exportItem: '- {{name}}（{{size}}）'
+      exportItem: '- {{name}}（{{size}}）',
+      openOriginal: '打开原文件：{{name}}'
     },
     exportSpeaker: '{{speaker}}：\n{{content}}',
     images: {
@@ -626,7 +648,8 @@ export const app = {
       waiting: '选择文件后将自动读取并解析',
       fileCount: '第 {{current}} / {{total}} 个文件',
       progressLabel: '附件读取与解析进度',
-      waitBeforeSending: '附件仍在解析，请等待完成后再发送'
+      waitBeforeSending: '附件仍在解析，请等待完成后再发送',
+      cancelImport: '取消文件导入'
     },
     removeAttachment: '移除 {{name}}',
     settings: '对话设置',
@@ -659,6 +682,8 @@ export const app = {
     queueMessageTitle: '当前回复结束后按顺序发送',
     queue: {
       ariaLabel: '对话待发送队列',
+      viewAttachments: '查看附件', viewAttachmentsNamed: '查看入队附件：{{label}}',
+      restoreToDraft: '恢复到草稿', restoreToDraftNamed: '恢复到草稿：{{label}}',
       scheduledTask: '定时任务',
       message: '消息',
       interrupt: '立即中断并插入',
@@ -702,6 +727,13 @@ export const app = {
     },
     experts: {
       general: '通用助手',
+      expertAuto: '{{name}} · 自动 · {{model}}',
+      autoWithModel: '自动 · {{model}}',
+      keywordRouting: '关键词',
+      selecting: '正在选择角色… · {{model}}',
+      generalKeywordMissed: '通用助手 · 自动 · 关键词未匹配',
+      generalUncertain: '通用助手 · 自动选择未采用（置信度不足） · {{model}}',
+      generalSelectionFailed: '通用助手 · 自动选择失败 · {{model}}',
       generalDescription: '默认单助手',
       team: '专家团队（并行）',
       teamDescription: '多个专家并行协作',
@@ -710,6 +742,8 @@ export const app = {
     voice: {
       stopRecording: '停止录音',
       cancel: '取消语音识别',
+      serviceUnavailable: '语音识别服务不可用',
+      alreadyRunning: '已有语音识别正在运行，请稍后重试',
       input: '语音输入',
       stopAndRecognize: '停止录音并开始识别',
       description: '语音转文字，转写后可编辑再发送',
@@ -827,6 +861,11 @@ export const app = {
     memoryReadFailed: '长期记忆读取失败',
     schedulesReadFailed: '定时任务读取失败',
     taskHistoryReadFailed: '历史任务读取失败',
+    attachmentDraftReadFailed: '附件草稿读取失败',
+    attachmentDraftSaveFailed: '附件草稿保存失败',
+    attachmentTargetNotEditable: '附件目标会话不可编辑',
+    noLocalProject: '没有可用的本地项目',
+    projectCannotCreateConversation: '当前项目不能创建会话，请先选择普通项目',
     resultHistoryReadFailed: '历史成果读取失败',
     knowledgeReadFailed: '本地知识库读取失败',
     selectProject: '请先选择项目',

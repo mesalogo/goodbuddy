@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import i18n from './i18n'
 import type { ContextAttachment } from '../../shared/contracts'
 
 export function PendingDocumentImports({ conversationId, refreshing, onBusyChange }: {
   conversationId: string; refreshing: boolean; onBusyChange: (busy: boolean) => void
 }): React.JSX.Element | null {
+  const { t } = useTranslation('settings')
   const [items, setItems] = useState<ContextAttachment[]>([])
   const [revision, setRevision] = useState(0)
   const [operation, setOperation] = useState('')
@@ -11,27 +14,27 @@ export function PendingDocumentImports({ conversationId, refreshing, onBusyChang
   useEffect(() => {
     let active = true
     void window.goodbuddy.context.pendingParsing(conversationId).then((value) => { if (active) setItems(value) },
-      (reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : '解析记录读取失败') })
+      (reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : i18n.t('settings:documentParsing.pendingImports.loadFailed')) })
     return () => { active = false }
   }, [conversationId, refreshing, revision])
   if (!items.length && !error) return null
-  return <div className="settings-warning" aria-label="未完成的文件解析">
+  return <div className="settings-warning" aria-label={t('documentParsing.pendingImports.regionLabel')}>
     {items.map((item) => <div key={item.id}>
-      <strong>{item.name} · {item.parsingState === 'interrupted' ? '解析已中断' : '解析失败'}</strong>
-      <p>{item.parsingError ?? '原文件已保存，可使用当前设置手动重试。'}</p>
+      <strong>{item.name} · {item.parsingState === 'interrupted' ? t('documentParsing.pendingImports.interrupted') : t('documentParsing.pendingImports.failed')}</strong>
+      <p>{item.parsingError ?? t('documentParsing.pendingImports.retryHint')}</p>
       <button type="button" className="secondary-button" disabled={Boolean(operation)} onClick={() => {
         const id = crypto.randomUUID()
         setOperation(id); setError(''); onBusyChange(true)
         void window.goodbuddy.context.retryParsing(conversationId, item.id, id).then(() => setRevision((value) => value + 1))
-          .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '重试失败'))
+          .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : t('documentParsing.pendingImports.retryFailed')))
           .finally(() => { setOperation(''); onBusyChange(false) })
-      }}>使用当前设置重试</button>
+      }}>{t('documentParsing.pendingImports.retry')}</button>
       <button type="button" className="secondary-button" disabled={Boolean(operation)} onClick={() => {
         void window.goodbuddy.context.dismissParsing(conversationId, item.id).then(() => setRevision((value) => value + 1))
-          .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '移除记录失败'))
-      }}>移除记录与暂存原件</button>
+          .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : t('documentParsing.pendingImports.dismissFailed')))
+      }}>{t('documentParsing.pendingImports.dismiss')}</button>
     </div>)}
-    {operation && <button type="button" className="secondary-button" onClick={() => void window.goodbuddy.context.cancelParsing(operation)}>取消解析</button>}
+    {operation && <button type="button" className="secondary-button" onClick={() => void window.goodbuddy.context.cancelParsing(operation)}>{t('documentParsing.pendingImports.cancelParsing')}</button>}
     {error && <p role="alert">{error}</p>}
   </div>
 }

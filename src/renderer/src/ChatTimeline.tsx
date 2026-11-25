@@ -812,20 +812,20 @@ function ChatMessageRowView({
     ? undefined
     : message.expert?.kind === 'expert'
       ? message.expert.selection
-        ? `${message.expert.name} · 自动 · ${message.expert.selection.modelName}`
+        ? t('composer.experts.expertAuto', { name: message.expert.name, model: message.expert.selection.modelName })
         : message.expert.name
       : message.expert?.kind === 'team'
         ? t('composer.experts.team')
         : message.expert?.kind === 'general'
           ? message.expert.selection.outcome === 'selecting'
             ? message.state === 'streaming'
-              ? `正在选择角色… · ${message.expert.selection.modelName}`
+              ? t('composer.experts.selecting', { model: message.expert.selection.modelName })
               : undefined
             : message.expert.selection.outcome === 'uncertain'
               ? message.expert.selection.mode === 'keyword'
-                ? '通用助手 · 自动 · 关键词未匹配'
-                : `通用助手 · 自动选择未采用（置信度不足） · ${message.expert.selection.modelName}`
-              : `通用助手 · 自动选择失败 · ${message.expert.selection.modelName}`
+                ? t('composer.experts.generalKeywordMissed')
+                : t('composer.experts.generalUncertain', { model: message.expert.selection.modelName })
+              : t('composer.experts.generalSelectionFailed', { model: message.expert.selection.modelName })
           : undefined
 
   return (
@@ -919,7 +919,7 @@ function ChatMessageRowView({
                       <button
                         className="message-attachment__name"
                         onClick={() => void window.goodbuddy.context.openOriginal(attachment.resourceId!)}
-                        title={`打开原文件：${attachment.originalName ?? attachment.name}`}
+                        title={t('chat.attachments.openOriginal', { name: attachment.originalName ?? attachment.name })}
                         type="button"
                       >
                         {attachment.name}
