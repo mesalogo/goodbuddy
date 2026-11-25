@@ -235,8 +235,9 @@ describe('assistant readonly worker', () => {
       expect(await Promise.all(detailSets.map(ids => reader.call('listConversationSummaries', [ids])))).toEqual(expected)
       expect(await Promise.all(conversations.map(item => reader.call('getConversation', [item.id])))).toEqual(expectedFull)
       expect(reader.pendingCount).toBe(0)
-      // Missing conversations reject with the synchronous error.
-      await expect(reader.call('getConversation', [randomUUID()])).rejects.toThrow('对话不存在')
+      await expect(reader.call('getConversation', [randomUUID()])).rejects.toMatchObject({
+        code: 'conversation-not-found'
+      })
 
       // Read after write: a synchronous write on Main is visible to the next worker read.
       database.saveLocalConversations([{ header: { id: conversations[1]!.id, title: 'Renamed', updatedAt: 500 },

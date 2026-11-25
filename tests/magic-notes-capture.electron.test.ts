@@ -61,7 +61,7 @@ it('captures messages and full history from App through real Electron preload, I
     expect(result.dangerButtonStyles.map((style: { theme: string }) => style.theme)).toEqual(['light', 'dark'])
     expect(result).toMatchObject({ sidebarSearch: 6, existingSaved: true, newSaved: true, fullHistoryCount: 502,
       sourceOpened: true, workspaceOpened: true, keyboard: true, narrowPanel: true,
-      sqliteReopened: true, sourceSurvivesDeletion: true, modelAttempts: 0 })
+      sqliteReopened: true, sourceSurvivesDeletion: true, notFoundTransport: true, modelAttempts: 0 })
   } finally {
     await server.close()
     await rm(directory, { recursive: true, force: true })

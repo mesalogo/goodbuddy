@@ -834,7 +834,9 @@ SQLite/files backups include the source metadata.
 leave guard. Message navigation increases the mounted timeline range before
 scrolling and focusing. A missing message opens its conversation with a notice;
 a confirmed missing conversation disables that source bar's jump buttons. Other
-read errors remain retryable. No deleted-source flag is stored.
+read errors remain retryable. No deleted-source flag is stored. The source read,
+selected note read and append pass expected not-found codes as plain IPC
+results, while unexpected failures still reject.
 
 ### Refresh and Validation
 

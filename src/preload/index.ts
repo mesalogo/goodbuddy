@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { unwrapIpcNotFound } from '../shared/error-codes'
 import {
   type AgentEvent,
   type AgentQuestionAnswer,
@@ -1222,8 +1223,8 @@ const desktopApi: DesktopApi = {
       ) as Promise<ConversationSnapshot[]>,
     listSummaries: (detailIds = []) =>
       ipcRenderer.invoke(ipcChannels.conversationsListSummaries, { detailIds }),
-    get: (conversationId) =>
-      ipcRenderer.invoke(ipcChannels.conversationsGet, conversationId),
+    get: async (conversationId) =>
+      unwrapIpcNotFound<ConversationSnapshot>(await ipcRenderer.invoke(ipcChannels.conversationsGet, conversationId)),
     search: (query, conversationIds = []) =>
       ipcRenderer.invoke(ipcChannels.conversationsSearch, { query, conversationIds }),
     saveLocal: async (batch: LocalConversationSaveBatch) => {
@@ -1788,10 +1789,8 @@ const desktopApi: DesktopApi = {
       ipcRenderer.invoke(
         ipcChannels.magicNotesList
       ) as Promise<MagicNotesSnapshot>,
-    get: (noteId: string) =>
-      ipcRenderer.invoke(ipcChannels.magicNotesGet, {
-        noteId
-      }) as Promise<MagicNoteDetail>,
+    get: async (noteId: string) =>
+      unwrapIpcNotFound<MagicNoteDetail>(await ipcRenderer.invoke(ipcChannels.magicNotesGet, { noteId })),
     create: (input) =>
       ipcRenderer.invoke(
         ipcChannels.magicNotesCreate,
@@ -1818,11 +1817,8 @@ const desktopApi: DesktopApi = {
     removeTag: async (tagId: string) => {
       await ipcRenderer.invoke(ipcChannels.magicNotesDeleteTag, { tagId })
     },
-    createEntry: (input) =>
-      ipcRenderer.invoke(
-        ipcChannels.magicNotesCreateEntry,
-        input
-      ) as Promise<MagicNoteEntryCreateResult>,
+    createEntry: async (input) =>
+      unwrapIpcNotFound<MagicNoteEntryCreateResult>(await ipcRenderer.invoke(ipcChannels.magicNotesCreateEntry, input)),
     updateEntry: (input) =>
       ipcRenderer.invoke(
         ipcChannels.magicNotesUpdateEntry,

@@ -244,6 +244,34 @@ app.whenReady().then(async () => {
     await wait('!document.querySelector("#note-draft-title")', 'continue editing retains draft')
     assert.equal(await run('document.querySelector("#compact-note-append").value'), 'Unsaved style regression draft')
     await run('window.goodbuddy.magicNotes.get(' + JSON.stringify(newNote.id) + ')')
+    const { invalidNote, ...transport } = await run<Record<string, { code?: string | null; message?: string }>>(`(async () => {
+      const outcome = async (read) => {
+        try { return { id: (await read()).id }; }
+        catch (error) { return { code: error.code ?? null, ...(typeof error.message === 'string' ? { message: error.message } : {}) }; }
+      };
+      const record = ${JSON.stringify({ conversationId: header.id, noteId: newNote.id, missingId: randomUUID() })};
+      const { conversations, magicNotes } = window.goodbuddy;
+      return {
+        conversation: await outcome(() => conversations.get(record.conversationId)),
+        note: await outcome(() => magicNotes.get(record.noteId)),
+        missingConversation: await outcome(() => conversations.get(record.missingId)),
+        missingNote: await outcome(() => magicNotes.get(record.missingId)),
+        missingAppend: await outcome(() => magicNotes.createEntry({
+          noteId: record.missingId, content: { version: 1, ops: [{ insert: 'Keep draft\\n' }] }
+        })),
+        invalidNote: await outcome(() => magicNotes.get('invalid ID'))
+      };
+    })()`);
+    assert.deepEqual(transport, {
+      conversation: { id: header.id },
+      note: { id: newNote.id },
+      missingConversation: { code: 'conversation-not-found' },
+      missingNote: { code: 'magic-note-not-found' },
+      missingAppend: { code: 'magic-note-not-found' },
+    })
+    assert.equal(invalidNote?.code, null)
+    assert.match(invalidNote?.message ?? '', /noteId/)
+    evidence.notFoundTransport = true
     await dispose()
     database.close()
     closed = true

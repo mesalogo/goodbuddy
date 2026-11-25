@@ -37,6 +37,21 @@ describe('async magic notes IPC', () => {
     expect(createMagicNoteEntry).toHaveBeenCalledWith(expect.objectContaining({ content, plainText: '' }))
   })
 
+  it('returns missing note codes without swallowing other storage errors', async () => {
+    const noteId = randomUUID()
+    const missing = Object.assign(new Error('fixture missing note'), { code: 'magic-note-not-found' })
+    const failure = new Error('fixture storage failure')
+    const getMagicNote = vi.fn<AssistantStoragePort['getMagicNote']>()
+      .mockRejectedValueOnce(missing).mockRejectedValueOnce(failure)
+    const f = fixture({ getMagicNote, createMagicNoteEntry: async () => { throw missing } })
+
+    await expect(f.invoke(ipcChannels.magicNotesGet, { noteId })).resolves.toEqual({ ok: false, code: 'magic-note-not-found' })
+    await expect(f.invoke(ipcChannels.magicNotesCreateEntry, {
+      noteId, content: { version: 1, ops: [{ insert: 'Keep draft' }] }
+    })).resolves.toEqual({ ok: false, code: 'magic-note-not-found' })
+    await expect(f.invoke(ipcChannels.magicNotesGet, { noteId })).rejects.toBe(failure)
+  })
+
   it('resolves list DTOs and preserves sender/schema checks before storage', async () => {
     const listMagicNotes = vi.fn(async () => [])
     const createMagicNote = vi.fn()
