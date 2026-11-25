@@ -246,7 +246,7 @@
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  font-size: 10px;
+  font-size: var(--font-caption);
   line-height: 16px;
   background: var(--accent-solid);
   color: var(--text-on-accent);

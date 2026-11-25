@@ -1294,7 +1294,7 @@
 .assistant-sidebar__preview-more-error {
   margin: 0;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .assistant-sidebar__preview-more-error {
@@ -1339,7 +1339,7 @@
 
 .assistant-sidebar__result time {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-caption);
 }
 
 .assistant-sidebar__result .assistant-sidebar__image-preview {
@@ -1367,7 +1367,7 @@
   overflow: auto;
   border-radius: 8px;
   background: var(--surface-subtle);
-  font-size: 9px;
+  font-size: var(--font-caption);
   white-space: pre-wrap;
 }
 

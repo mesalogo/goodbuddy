@@ -428,7 +428,7 @@
   border-radius: 999px;
   background: var(--warning-subtle);
   color: var(--warning);
-  font-size: 9px;
+  font-size: var(--font-caption);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -2526,7 +2526,7 @@
   display: flex;
   align-items: center;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--font-caption);
   gap: 7px;
 }
 
@@ -2543,7 +2543,7 @@
   background: transparent;
   color: var(--danger);
   cursor: pointer;
-  font-size: 9px;
+  font-size: var(--font-caption);
 }
 
 .credential-state button:hover {
@@ -3377,7 +3377,7 @@
   border-radius: 10px;
   background: var(--accent-subtle);
   color: var(--accent);
-  font-size: 8px;
+  font-size: var(--font-caption);
 }
 
 .capability-remove {
@@ -3385,7 +3385,7 @@
   background: transparent;
   color: var(--danger);
   cursor: pointer;
-  font-size: 9px;
+  font-size: var(--font-caption);
   gap: 3px;
 }
 
@@ -3400,7 +3400,7 @@
   background: var(--surface-raised);
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 8px;
+  font-size: var(--font-caption);
   gap: 3px;
 }
 

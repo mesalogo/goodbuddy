@@ -379,7 +379,7 @@
   border-radius: 999px;
   background: var(--surface-muted);
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: var(--font-caption);
   place-items: center;
 }
 
